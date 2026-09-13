@@ -261,7 +261,7 @@ static void sm_Run(sm_t *ptThis)
 | 超时判断 | `perfc_is_time_out_ms()`、`perfc_is_time_out_us()` | 手写毫秒计数比较 |
 | 硬件访问 | MDI 层，即 `peripheral/<chip>/` 适配和 `peripheral/driver/` 芯片无关驱动 | 业务代码直接 include vendor HAL 或寄存器 |
 | 调试 | `tools/aitrace.exe` 和 RTT | 裸串口自造 AI 调试协议 |
-| 运动控制 | grblhal 的 `mc_`、`protocol_`、`settings_` API，经 `grblhal_adapt` 适配 | 业务代码直接调用 grblhal 内部实现 |
+| 运动控制 | grblhal 的 `mc_`、`protocol_`、`settings_` API；板级适配源码放在 `target/<chip>/` | 业务代码直接调用 grblhal 内部实现 |
 | Class 私有子模块 | `Mdriver/<class_name>/<submodule>/`，由父 Class 组合和调度 | 隐藏 `static` runtime 或父子反向耦合 |
 | 多 Class 可复用子模块 | `Mdriver/<submodule>/`，每个 Class 持有独立成员实例 | 放入某个 Class 目录后跨 Class 直接引用 |
 | 共享物理资源 | 显式 Manager、client 或接口注入 | 多个 Class 偷偷共用静态资源 |

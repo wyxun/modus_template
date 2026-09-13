@@ -26,7 +26,7 @@
 #endif
 
 #if MWAVEFORM_ENABLE
-/* 1 kHz FOC waveform needs headroom: small buffers wrap in tens of ms and
+/* 10 kHz FOC waveform needs headroom: small buffers wrap in tens of ms and
  * make the OpenOCD RTT read race much more likely (see mwaveform.c wedge
  * recovery). */
 #   ifndef MWAVEFORM_RTT_BUFFER_SIZE

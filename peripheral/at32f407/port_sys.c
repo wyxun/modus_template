@@ -11,7 +11,6 @@
 #include "peripheral.h"
 #include "at32f403a_407.h"
 #include "port_mdi.h"
-#include "grblhal_driver.h"
 
 /* --------------------------------------------------------------------------
  *  System clock: HEXT 8MHz / 2 × 60 = 240MHz
@@ -136,82 +135,6 @@ static void halled_Init(void)
 }
 
 /* --------------------------------------------------------------------------
- *  CNC Shield GPIO Pin Initialization (based on cnc_pin_mapping.md)
- * -------------------------------------------------------------------------- */
-static void cnc_gpio_Init(void)
-{
-    gpio_init_type gpio_init_struct;
-
-    /* 1. Enable clocks for GPIOA, GPIOB, GPIOC and IOMUX */
-    crm_periph_clock_enable(CRM_GPIOA_PERIPH_CLOCK, TRUE);
-    crm_periph_clock_enable(CRM_GPIOB_PERIPH_CLOCK, TRUE);
-    crm_periph_clock_enable(CRM_GPIOC_PERIPH_CLOCK, TRUE);
-    crm_periph_clock_enable(CRM_IOMUX_PERIPH_CLOCK, TRUE);
-
-    /* 2. Configure SWJTAG to SWD-only mode to free JTAG pins (PA15, PB3, PB4) for GPIO use */
-    gpio_pin_remap_config(SWJTAG_MUX_010, TRUE);
-
-    gpio_default_para_init(&gpio_init_struct);
-
-    /* 3. Configure Stepper Outputs */
-    gpio_init_struct.gpio_drive_strength = GPIO_DRIVE_STRENGTH_STRONGER;
-    gpio_init_struct.gpio_out_type       = GPIO_OUTPUT_PUSH_PULL;
-    gpio_init_struct.gpio_mode           = GPIO_MODE_OUTPUT;
-    gpio_init_struct.gpio_pull           = GPIO_PULL_NONE;
-
-    /* Enable Pin */
-    gpio_init_struct.gpio_pins = STEPPER_EN_PIN;
-    gpio_init(STEPPER_EN_PORT, &gpio_init_struct);
-
-    /* X, Y, Z Step Pins */
-    gpio_init_struct.gpio_pins = X_STEP_PIN;
-    gpio_init(X_STEP_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Y_STEP_PIN;
-    gpio_init(Y_STEP_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Z_STEP_PIN;
-    gpio_init(Z_STEP_PORT, &gpio_init_struct);
-
-    /* X, Y, Z Dir Pins */
-    gpio_init_struct.gpio_pins = X_DIR_PIN;
-    gpio_init(X_DIR_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Y_DIR_PIN;
-    gpio_init(Y_DIR_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Z_DIR_PIN;
-    gpio_init(Z_DIR_PORT, &gpio_init_struct);
-
-    /* Set EN to HIGH by default to keep stepper drivers disabled on boot */
-    gpio_bits_set(STEPPER_EN_PORT, STEPPER_EN_PIN);
-
-    /* Set step and dir pins to LOW by default */
-    gpio_bits_reset(X_STEP_PORT, X_STEP_PIN);
-    gpio_bits_reset(Y_STEP_PORT, Y_STEP_PIN);
-    gpio_bits_reset(Z_STEP_PORT, Z_STEP_PIN);
-    gpio_bits_reset(X_DIR_PORT, X_DIR_PIN);
-    gpio_bits_reset(Y_DIR_PORT, Y_DIR_PIN);
-    gpio_bits_reset(Z_DIR_PORT, Z_DIR_PIN);
-
-    /* 4. Configure Limit Inputs */
-    gpio_init_struct.gpio_mode = GPIO_MODE_INPUT;
-    gpio_init_struct.gpio_pull = GPIO_PULL_UP;
-
-    gpio_init_struct.gpio_pins = X_LIMIT_PIN;
-    gpio_init(X_LIMIT_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Y_LIMIT_PIN;
-    gpio_init(Y_LIMIT_PORT, &gpio_init_struct);
-    gpio_init_struct.gpio_pins = Z_LIMIT_PIN;
-    gpio_init(Z_LIMIT_PORT, &gpio_init_struct);
-
-    /* 5. Configure Spindle Outputs (D12 -> PA6, D13 -> PA5) */
-    gpio_init_struct.gpio_mode           = GPIO_MODE_OUTPUT;
-    gpio_init_struct.gpio_pull           = GPIO_PULL_NONE;
-    gpio_init_struct.gpio_pins           = GPIO_PINS_5 | GPIO_PINS_6;
-    gpio_init(GPIOA, &gpio_init_struct);
-
-    /* Default spindle to inactive (LOW) */
-    gpio_bits_reset(GPIOA, GPIO_PINS_5 | GPIO_PINS_6);
-}
-
-/* --------------------------------------------------------------------------
  *  peripheral_Init — main() calls this first
  * -------------------------------------------------------------------------- */
 void peripheral_Init(void)
@@ -223,9 +146,6 @@ void peripheral_Init(void)
 
     halled_Init();
     
-    /* Initialize CNC Shield GPIO Pin Configurations */
-    cnc_gpio_Init();
-
     /* Initialize USART2 on PA2/PA3 for telemetry/MDI */
     halusart2_Init();
 
@@ -235,7 +155,7 @@ void peripheral_Init(void)
 
     /* SysTick 1ms interrupt */
     SysTick_Config(SystemCoreClock / 1000U);
-    NVIC_SetPriority(SysTick_IRQn, 4); /* Priority 4: Higher than USART/DMA (8), lower than stepper timer (0) */
+    NVIC_SetPriority(SysTick_IRQn, 4);
 }
 
 /* --------------------------------------------------------------------------

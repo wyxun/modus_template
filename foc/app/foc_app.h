@@ -20,10 +20,18 @@ typedef struct {
     foc_encoder_cfg_t tEncoderCfg;
 } foc_app_cfg_t;
 
+/** @brief ISR-owned cycle window consumed by the foreground reporter. */
+typedef struct {
+    volatile uint32_t wCycleTotal;
+    volatile uint32_t wSampleCount;
+    int64_t lReportTimestamp;
+} foc_app_hf_stats_t;
+
 typedef struct {
     modus_base_t *ptBase;
     motor_t tMotor;
     foc_encoder_t tEncoder;
+    foc_app_hf_stats_t tHfStats;
     uint8_t chRunPt;
     int64_t lForegroundTimestamp;
     int64_t lBackoffTimestamp;

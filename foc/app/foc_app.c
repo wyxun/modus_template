@@ -13,6 +13,7 @@
 #include <string.h>
 
 #include "foc_port_config.h"
+#include "mdebug/mwaveform.h"
 #include "mdebug/util_debug.h"
 #include "perf_counter.h"
 #include "perfc_task_pt.h"
@@ -25,6 +26,30 @@ static modus_base_t s_tFocAppBase;
 extern foc_app_t tFocApp;
 static int foc_app_Clock(uintptr_t wObjectAddr);
 static int foc_app_Run(uintptr_t wObjectAddr);
+static bool foc_app_GetHfAverage(foc_app_t *ptThis,
+                                 uint32_t *pwAverageTicks);
+static void foc_app_ReportHfAverage(foc_app_t *ptThis);
+#if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
+static void foc_app_WaveformInit(foc_app_t *ptThis);
+static void foc_app_WaveformStep(void);
+#define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
+#define FOC_WAVEFORM_SINE_POINTS    40U
+static const float s_afWaveSine[FOC_WAVEFORM_SINE_POINTS] = {
+    0.000000f, 0.156434f, 0.309017f, 0.453990f,
+    0.587785f, 0.707107f, 0.809017f, 0.891007f,
+    0.951057f, 0.987688f, 1.000000f, 0.987688f,
+    0.951057f, 0.891007f, 0.809017f, 0.707107f,
+    0.587785f, 0.453990f, 0.309017f, 0.156434f,
+    0.000000f, -0.156434f, -0.309017f, -0.453990f,
+    -0.587785f, -0.707107f, -0.809017f, -0.891007f,
+    -0.951057f, -0.987688f, -1.000000f, -0.987688f,
+    -0.951057f, -0.891007f, -0.809017f, -0.707107f,
+    -0.587785f, -0.453990f, -0.309017f, -0.156434f,
+};
+static float s_fWaveSine = 0.0f;
+static uint8_t s_chWaveSineIndex = 0U;
+static int16_t s_hwWaveSequence = 0;
+#endif
 
 static modus_base_cfg_t s_tFocAppBaseCfg = {
     .wId = FOC_APP,
@@ -75,6 +100,107 @@ static void foc_app_BindMotorConfig(foc_app_t *ptApp,
     }
 }
 
+#if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
+/**
+ * @brief Register 10 kHz diagnostics and 1 kHz reference channels.
+ * @param ptThis FOC App object owning the sampled speed.
+ * @return None.
+ */
+static void foc_app_WaveformInit(foc_app_t *ptThis)
+{
+    uint8_t chSine = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chSequence = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chSpeed = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chSpeedRef = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chIq = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chIqRef = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint32_t wActualRateHz = 0U;
+    uint32_t wActualSpeedRefHz = 0U;
+    uint32_t wActualIqRefHz = 0U;
+    int nResult = MODUS_SUCCESS;
+
+    if (ptThis == NULL) {
+        return;
+    }
+    s_fWaveSine = 0.0f;
+    s_chWaveSineIndex = 0U;
+    s_hwWaveSequence = 0;
+    nResult = mwaveform.Init(NULL);
+    if (nResult != MODUS_SUCCESS) {
+        MLOGF(W, "FOC waveform init failed (%d)\r\n", nResult);
+        return;
+    }
+    chSine = mwaveform.AddVariable(
+        "Sine500", 1000.0f, (void *)&s_fWaveSine,
+        MWAVEFORM_VAR_FLOAT);
+    chSequence = mwaveform.AddVariable(
+        "WaveSeq", 1.0f, (void *)&s_hwWaveSequence,
+        MWAVEFORM_VAR_RAW);
+    chSpeed = mwaveform.AddVariable(
+        "Speed", 100.0f,
+        (void *)&ptThis->tMotor.tInput.qElectricalSpeed,
+        MWAVEFORM_VAR_FLOAT);
+    chSpeedRef = mwaveform.AddVariable(
+        "SpeedRef", 100.0f,
+        (void *)&ptThis->tMotor.tCommand.qSpeedReference,
+        MWAVEFORM_VAR_FLOAT);
+    chIq = mwaveform.AddVariable(
+        "Iq", 1000.0f,
+        (void *)&ptThis->tMotor.tCore.tCurrent.qQ,
+        MWAVEFORM_VAR_FLOAT);
+    chIqRef = mwaveform.AddVariable(
+        "IqRef", 1000.0f,
+        (void *)&ptThis->tMotor.tCommand.tCurrentReference.qQ,
+        MWAVEFORM_VAR_FLOAT);
+    if (chSine == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chSequence == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chSpeed == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chSpeedRef == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chIq == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chIqRef == FOC_WAVEFORM_CHANNEL_INVALID) {
+        MLOGF(W, "%s\r\n", "FOC waveform channel registration failed");
+        return;
+    }
+    mwaveform.SetRate(0U);
+    wActualRateHz = mwaveform.SetStreamRate(50000U, 10000U);
+    if (wActualRateHz != 10000U) {
+        MLOGF(W, "%s\r\n", "FOC waveform 10 kHz stream unavailable");
+        return;
+    }
+    wActualSpeedRefHz = mwaveform.SetChannelRate(chSpeedRef, 1000U);
+    wActualIqRefHz = mwaveform.SetChannelRate(chIqRef, 1000U);
+    if (wActualSpeedRefHz != 1000U || wActualIqRefHz != 1000U) {
+        MLOGF(W, "%s\r\n", "FOC waveform reference rate unavailable");
+        return;
+    }
+    mwaveform.Start();
+    MLOGF(I, "FOC waveform %lu Hz; refs 1000 Hz\r\n",
+          (unsigned long)wActualRateHz);
+}
+
+/**
+ * @brief Update the reference sine and sequence before each 20 kHz sample.
+ * @param None.
+ * @return None.
+ */
+static void foc_app_WaveformStep(void)
+{
+    if (s_chWaveSineIndex >=
+        (uint8_t)(FOC_WAVEFORM_SINE_POINTS - 1U)) {
+        s_chWaveSineIndex = 0U;
+    } else {
+        s_chWaveSineIndex = (uint8_t)(s_chWaveSineIndex + 1U);
+    }
+    s_fWaveSine = s_afWaveSine[s_chWaveSineIndex];
+    if (s_hwWaveSequence >= 29999) {
+        s_hwWaveSequence = 0;
+    } else {
+        s_hwWaveSequence = (int16_t)(s_hwWaveSequence + 1);
+    }
+    mwaveform.Step();
+}
+#endif
+
 int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
@@ -94,6 +220,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     ptThis->chRunPt = 0U;
     ptThis->lForegroundTimestamp = 0;
     ptThis->lBackoffTimestamp = 0;
+    ptThis->tHfStats.lReportTimestamp = get_system_ticks();
     ptThis->bReady = false;
 
     tEncoderConfig = ptConfig->tEncoderCfg;
@@ -121,6 +248,9 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         return nBaseResult;
     }
     ptThis->bReady = eEncoder == FOC_RESULT_OK;
+#if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
+    foc_app_WaveformInit(ptThis);
+#endif
     return MODUS_SUCCESS;
 }
 
@@ -144,6 +274,7 @@ static int foc_app_Run(uintptr_t wObjectAddr)
     while (true) {
         PERFC_PT_WAIT_UNTIL(perfc_is_time_out_us(
             1000U, &ptThis->lForegroundTimestamp, true))
+        foc_app_ReportHfAverage(ptThis);
         if (!ptThis->bReady) {
             continue;
         }
@@ -166,13 +297,83 @@ static int foc_app_Run(uintptr_t wObjectAddr)
 
 void foc_app_HighFrequencyISR(void)
 {
+    int64_t lStartTicks = get_system_ticks();
+    int64_t lElapsedTicks = 0;
     uint32_t wNowTick = 0U;
+    uint32_t wElapsedTicks = 0U;
 
-    if (!tFocApp.bReady) {
+    wNowTick = (uint32_t)lStartTicks;
+    if (tFocApp.bReady) {
+        motor_HighFrequencyStep(&tFocApp.tMotor, wNowTick);
+    }
+#if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
+    foc_app_WaveformStep();
+#endif
+    lElapsedTicks = get_system_ticks() - lStartTicks -
+                    (int64_t)g_nOffset;
+    if (lElapsedTicks > 0) {
+        wElapsedTicks = (uint32_t)lElapsedTicks;
+    } else {
+        wElapsedTicks = 0U;
+    }
+    tFocApp.tHfStats.wCycleTotal =
+        tFocApp.tHfStats.wCycleTotal + wElapsedTicks;
+    tFocApp.tHfStats.wSampleCount =
+        tFocApp.tHfStats.wSampleCount + 1U;
+}
+
+/**
+ * @brief Copy and reset the high-frequency cycle window.
+ * @param ptThis FOC App object.
+ * @param pwAverageTicks Output average perf_counter ticks per ISR.
+ * @return true when the window contains at least one sample.
+ * @note Interrupts are masked only while copying and resetting the counters.
+ */
+static bool foc_app_GetHfAverage(foc_app_t *ptThis,
+                                 uint32_t *pwAverageTicks)
+{
+    perfc_global_interrupt_status_t tIrqState = 0U;
+    uint32_t wCycleTotal = 0U;
+    uint32_t wSampleCount = 0U;
+
+    if (ptThis == NULL || pwAverageTicks == NULL) {
+        return false;
+    }
+    tIrqState = perfc_port_disable_global_interrupt();
+    wCycleTotal = ptThis->tHfStats.wCycleTotal;
+    wSampleCount = ptThis->tHfStats.wSampleCount;
+    ptThis->tHfStats.wCycleTotal = 0U;
+    ptThis->tHfStats.wSampleCount = 0U;
+    perfc_port_resume_global_interrupt(tIrqState);
+    if (wSampleCount == 0U) {
+        return false;
+    }
+    *pwAverageTicks = wCycleTotal / wSampleCount;
+    return true;
+}
+
+/**
+ * @brief Report the average ISR cycles once per second from foreground.
+ * @param ptThis FOC App object.
+ * @return None.
+ */
+static void foc_app_ReportHfAverage(foc_app_t *ptThis)
+{
+    uint32_t wAverageTicks = 0U;
+    uint32_t wAverageMicroseconds = 0U;
+
+    if (!perfc_is_time_out_ms(1000U,
+                              &ptThis->tHfStats.lReportTimestamp, true)) {
         return;
     }
-    wNowTick = (uint32_t)get_system_ticks();
-    motor_HighFrequencyStep(&tFocApp.tMotor, wNowTick);
+    if (!foc_app_GetHfAverage(ptThis, &wAverageTicks)) {
+        return;
+    }
+    wAverageMicroseconds = (uint32_t)perfc_convert_ticks_to_us(
+        (int64_t)wAverageTicks);
+    MLOGF(T, "FOC HF ISR avg=%lu cycles/%lu us\r\n",
+          (unsigned long)wAverageTicks,
+          (unsigned long)wAverageMicroseconds);
 }
 
 #if MSHELL_ENABLE
@@ -193,6 +394,28 @@ static void foc_app_PrintStatus(const motor_t *ptMotor)
     MLOGF(I, "motor state=%u fault=0x%08X mode=%u pwm=%u\r\n",
           (unsigned)tStatus.eState, (unsigned)tStatus.wFaults,
           (unsigned)tStatus.eMode, (unsigned)tStatus.bPwmEnabled);
+}
+
+/**
+ * @brief Print the latest age-checked mechanical Encoder snapshot.
+ * @param ptEncoder Encoder object.
+ * @return None.
+ */
+static void foc_app_PrintEncoder(const foc_encoder_t *ptEncoder)
+{
+    foc_position_t tPosition = {0};
+    uint32_t wNowTick = (uint32_t)get_system_ticks();
+    foc_result_t eResult = foc_encoder_GetPosition(
+        ptEncoder, wNowTick, &tPosition);
+
+    if (eResult != FOC_RESULT_OK) {
+        MLOGF(W, "encoder data unavailable (%d)\r\n", (int)eResult);
+        return;
+    }
+    MLOGF(I, "encoder valid=%u mech=%.2f deg speed=%.3f turn/s\r\n",
+          (unsigned)tPosition.bValid,
+          foc_angle_to_turns(tPosition.tMechanicalAngle) * 360.0f,
+          foc_to_float(tPosition.qMechanicalSpeed));
 }
 
 /**
@@ -259,9 +482,13 @@ static void foc_app_CmdMotor(const char *args)
     } else if (strncmp(args, "status", 6U) == 0) {
         foc_app_PrintStatus(&tFocApp.tMotor);
         return;
+    } else if (strncmp(args, "encoder", 7U) == 0) {
+        foc_app_PrintEncoder(&tFocApp.tEncoder);
+        return;
     } else {
         MLOGF(I, "usage: motor speed <e-turn/s> | current <d> <q> | "
-              "voltage <d> <q> | align | stop | clear | status\r\n");
+              "voltage <d> <q> | align | stop | clear | status | "
+              "encoder\r\n");
         return;
     }
     if (bStarted && eResult != FOC_RESULT_OK) {
@@ -273,7 +500,8 @@ static void foc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, foc_app_CmdMotor,
-                "FOC Motor control: speed/current/voltage/align/stop/");
+                "FOC Motor: speed/current/voltage/align/stop/clear/status/"
+                "encoder");
 #endif
 
 #if FOC_PORT_HAS_POSITION
@@ -308,7 +536,7 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .wAdcCalibrationTimeoutSteps = 2000U,
             .wAlignSteps = 30000U,
             .chSpeedLoopDiv = 20U,
-            .qAlignCurrent = FOC_SCALAR(0.10f),
+            .qAlignCurrent = FOC_SCALAR(0.1f),
         },
     },
     .tEncoderCfg = {
@@ -352,7 +580,7 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .wAdcCalibrationTimeoutSteps = 2000U,
             .wAlignSteps = 30000U,
             .chSpeedLoopDiv = 20U,
-            .qAlignCurrent = FOC_SCALAR(0.10f),
+            .qAlignCurrent = FOC_SCALAR(0.1f),
         },
     },
     .tEncoderCfg = {0}

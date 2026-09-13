@@ -46,13 +46,6 @@ static int32_t at32_gpio_Set(void *pPriv, mdi_gpio_level_t eLevel)
     return 0;
 }
 
-static int32_t at32_gpio_Get(void *pPriv)
-{
-    void **ap = (void **)pPriv;
-    uint16_t hwPins = (uint16_t)(uintptr_t)ap[1];
-    return ((gpio_type *)ap[0])->idt & hwPins ? MDI_GPIO_HIGH : MDI_GPIO_LOW;
-}
-
 static int32_t at32_gpio_Toggle(void *pPriv)
 {
     void **ap = (void **)pPriv;
@@ -156,10 +149,7 @@ void at32_usart_rx_dma_poll(void)
         uint8_t ch = s_chUsart2RxBuf[s_wRxReadPtr];
         s_wRxReadPtr = (s_wRxReadPtr + 1) % USART2_RX_BUFFER_SIZE;
         
-        extern bool protocol_enqueue_realtime_command(uint8_t c);
-        if (!protocol_enqueue_realtime_command(ch)) {
-            mringbuf_Write(&s_tUsart2Priv.tRxQueue, ch);
-        }
+        mringbuf_Write(&s_tUsart2Priv.tRxQueue, ch);
     }
     
     nvic_irq_enable(USART2_IRQn, 8, 0);

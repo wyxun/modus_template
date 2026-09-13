@@ -3,16 +3,11 @@
 # AT32F407VGT7 — Cortex-M4F, single-precision FPU (AT-START-F407)
 # =============================================================================
 
-# grblHAL CNC controller — full features, UART stream
-GRBLHAL_ENABLE = 1
-
 # CPU architecture (FPU enabled)
 CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 # Chip preprocessor defines
 C_DEFS += -DAT32F407VGT7 -DUSE_STDPERIPH_DRIVER
-C_DEFS += -DGRBLHAL_FULL_FEATURES=1 -DGRBLHAL_STREAM_USB=1
-
 # CMSIS / peripheral library paths
 CHIPLIB_ROOT = vendor/cortex-m/AT32F403A_407_Firmware_Library/libraries
 CMSIS_CORE   = vendor/cortex-m/cmsis_core
@@ -120,11 +115,6 @@ CHIP_SOURCES = $(DRV_SOURCES) \
                $(USB_MID_SRC)/usbd_drivers/src/usbd_sdr.c \
                $(USB_MID_SRC)/usbd_class/cdc/cdc_class.c \
                $(USB_MID_SRC)/usbd_class/cdc/cdc_desc.c
-
-# grblHAL class source has been deprecated and removed
-
-# Compile grblHAL settings.c with __SETTINGS_C__ defined
-build/settings.o: CFLAGS += -D__SETTINGS_C__
 
 # 启用 MODUS 默认内置的 perf_counter 移植
 MODUS_USE_DEFAULT_PERFC_PORT = 1

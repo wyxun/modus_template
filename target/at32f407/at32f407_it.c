@@ -43,8 +43,6 @@ void SysTick_Handler(void)
 #if MODUS_ENABLE
     modus_Clock();
 #endif
-    extern void grblhal_ticks_inc(void);
-    grblhal_ticks_inc();
     at32_usart_timer_1ms(&s_tUsart2Priv);
 
     if (++s_wLedTicks >= 500) {
@@ -57,7 +55,7 @@ void SysTick_Handler(void)
  *  AT32F407 Peripheral Interrupts
  * -------------------------------------------------------------------------- */
 
-/* ---- USART1 (grblHAL serial I/O) ---- */
+/* ---- USART1 ---- */
 void USART1_IRQHandler(void)        {}
 void USART2_IRQHandler(void)        { at32_usart_irq_handler(&s_tUsart2Priv); }
 
@@ -112,14 +110,7 @@ void TMR1_CH_IRQHandler(void)               {}
 void TMR2_GLOBAL_IRQHandler(void)           {}
 void TMR3_GLOBAL_IRQHandler(void)           {}
 void TMR4_GLOBAL_IRQHandler(void)           {}
-void TMR5_GLOBAL_IRQHandler(void)
-{
-    if (TMR5->ists & 0x0001) { /* OVF / Update interrupt flag */
-        TMR5->ists = ~0x0001;  /* Clear flag */
-        extern void grblhal_stepper_isr(void);
-        grblhal_stepper_isr();
-    }
-}
+void TMR5_GLOBAL_IRQHandler(void)         {}
 void TMR8_BRK_IRQHandler(void)              {}
 void TMR8_OVF_IRQHandler(void)              {}
 void TMR8_TRG_HALL_IRQHandler(void)         {}

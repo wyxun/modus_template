@@ -118,12 +118,6 @@ else
         $(MODUS_ROOT)/src/utilities/mringbuf.c
 endif
 
-# grblHAL CNC controller (opt-in per target via GRBLHAL_ENABLE=1)
-ifdef GRBLHAL_ENABLE
-GRBLHAL_ROOT = third_party/grblhal
-include $(GRBLHAL_ROOT)/grblhal.mk
-endif
-
 LIB_PERF_DIR  = $(MODUS_ROOT)/lib/perf_counter
 LIB_PLOOC_DIR = $(MODUS_ROOT)/lib/plooc
 
@@ -175,12 +169,6 @@ ifeq ($(MODUS_ENABLE),1)
     C_SOURCES += $(CLASS_SOURCES)
 endif
 
-# grblHAL sources (only when enabled)
-ifdef GRBLHAL_ENABLE
-C_SOURCES += $(GRBLHAL_SRCS)
-C_SOURCES += $(wildcard grblhal_adapt/*.c)
-endif
-
 ASM_SOURCES = $(STARTUP_S)
 
 # ------------------------------------------------------------------------------
@@ -216,13 +204,6 @@ C_INCLUDES = \
     -Iperipheral/driver \
     -Iclass \
     $(FOC_INCLUDES)
-
-# grblHAL includes and defines (only when enabled, after C_INCLUDES is fully built)
-ifdef GRBLHAL_ENABLE
-C_INCLUDES += $(GRBLHAL_INCLUDES)
-C_INCLUDES += -Igrblhal_adapt
-C_DEFS     += $(GRBLHAL_CFLAGS)
-endif
 
 # ------------------------------------------------------------------------------
 # Flags
