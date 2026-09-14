@@ -4,7 +4,9 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/foc_app_encoder_command_test.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
-    (Join-Path $repoRoot "foc/math/foc_trig_lut.c")
+    (Join-Path $repoRoot "foc/math/foc_trig_lut.c"),
+    (Join-Path $repoRoot "foc/observer/foc_observer.c"),
+    (Join-Path $repoRoot "foc/observer/foc_smo.c")
 )
 $includePaths = @(
     ".", "src", "modus/src", "modus/src/mdi", "modus/src/arch",
@@ -31,7 +33,7 @@ $commonArgs = @(
 )
 
 foreach ($backend in @("FLOAT", "FIXED")) {
-    $testExe = Join-Path $env:TEMP "foc_app_encoder_$backend.exe"
+    $testExe = Join-Path $env:TEMP "foc_app_encoder_check_$backend.exe"
     $numericDefine = "-DFOC_NUMERIC_$backend=1"
     $waveformDefine = if ($backend -eq "FLOAT") {
         "-DMWAVEFORM_ENABLE=1"

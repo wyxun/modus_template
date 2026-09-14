@@ -12,7 +12,7 @@
 产品入口 / 高频采样中断 / 产品命令
                  │
                  ▼
-foc_app_t ─── 调度、命令适配、持有 Motor 与 Encoder
+foc_app_t ─── 调度、命令适配、持有 Motor、Encoder 与 Observer
    ├── motor_t       生命周期、参考值、电气量换算与控制编排
    └── foc_encoder_t 机械位置样本、速度估算与当前角度外推
                  │
@@ -31,7 +31,7 @@ Motor 不拥有传感器驱动对象。
 
 | 模块 | 当前职责 |
 | --- | --- |
-| `foc_app_t` | MODUS 生命周期入口、前台调度、产品命令、波形和高频统计；持有 Motor 与 Encoder |
+| `foc_app_t` | MODUS 生命周期入口、前台调度、产品命令、波形和高频统计；持有 Motor、Encoder 与 Observer |
 | `motor_t` | 单电机状态、参数与控制配置、命令参考、ADC 校准状态、Core/PID 状态、电气零位和高频控制步骤 |
 | `foc_encoder_t` | 调用已绑定的位置源、缓存机械位置样本、滤波机械速度并提供带时间戳的位置读数 |
 | `foc_core` | 数值后端无关的 Clarke/Park 变换、电流 PI、反变换和 SVPWM 编排 |
@@ -100,9 +100,12 @@ ADC 单元/通道、定时器、引脚、采样拓扑和驱动器连接属于板
 
 - `foc_app_cfg_t` 组合 Motor 控制配置与 Encoder 配置；当前产品配置在 `foc/app/foc_app.c` 的 MODUS 对象声明中。
 - `motor_params_t` 保存极对数、定子电阻和 D/Q 轴电感。极对数用于机械量到电气量的换算；电阻和电感当前要求非零并保留，不参与当前 Core 的控制参数计算。
+- `motor_params_t` 另保存观测器使用的电压、电流 pu 基准。当前示例为 12 V / 7 A；7 A 由 `0.1 pu ≈ 0.7 A` 推估，属于待台架确认的初值，不是电流采样标定结果。
+- App 持有单实例 `foc_observer_t`，Motor 借用它并在 Encoder 控制时每拍运行 SMO Shadow。Observer 使用本拍 `Iαβ` 和 Core 上一采样区间的 `Vmodel`；当前产品没有配置质量门限，因此输出保持 `valid=false`，不会切换 FOC 反馈源。
+- SMO 使用标幺化模型：电压、电流分别除以 Motor 的基准；时间基准取固定 `Ts`，因此模型的电阻、电感和 PLL 系数在 Init 时换算。SMO 不把物理大增益作为 Q15 普通 pu 乘数使用。
 - 电流 PI、速度 PI、ADC 校准超时、ALIGN 步数、电流参考和速度环分频由 Motor 控制配置提供。`motor_limits_t` 当前只声明，运行路径不读取。
 - `FOC_NUMERIC_FLOAT` 与 `FOC_NUMERIC_FIXED` 编译期二选一；Core、Motor 和 Encoder 共用相同的控制逻辑。
-- `foc/foc.mk` 当前仅编译数值/角度数学、Core、PID、调制、Encoder、Motor 和 App。SMO、NLFO、HFI 等 observer 文件不在当前构建源列表中，也没有参与角度选择。
+- `foc/foc.mk` 编译数值/角度数学、Core、PID、调制、Encoder、SMO Observer、Motor 和 App。NLFO、HFI 等其它算法仍不进入当前构建。
 
 ## 6. 命令与观测边界
 

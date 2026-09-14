@@ -16,6 +16,9 @@
 
 #define FOC_PORT_ADC_SAMPLES   512U
 #define FOC_PORT_CURRENT_BASE  2048U
+#define FOC_PORT_CURRENT_BASE_MA 7000U
+
+static uint32_t s_wCurrentBaseMilliamp = 0U;
 
 /**
  * @brief Read the three preempt ADC channels.
@@ -61,14 +64,38 @@ static bool port_offsets_are_valid(const foc_adc_calib_t *ptCalibration)
 static foc_scalar_t port_normalize_current(int32_t nDelta)
 {
     const int32_t nBase = (int32_t)FOC_PORT_CURRENT_BASE;
+    int64_t llMaximumCounts = ((int64_t)nBase *
+                               (int64_t)s_wCurrentBaseMilliamp) /
+                              FOC_PORT_CURRENT_BASE_MA;
 
-    nDelta = nDelta > nBase ? nBase : nDelta;
-    nDelta = nDelta < -nBase ? -nBase : nDelta;
+    nDelta = (int64_t)nDelta > llMaximumCounts
+        ? (int32_t)llMaximumCounts : nDelta;
+    nDelta = (int64_t)nDelta < -llMaximumCounts
+        ? (int32_t)-llMaximumCounts : nDelta;
 #if defined(FOC_NUMERIC_FIXED)
-    return (foc_scalar_t)(((int64_t)nDelta * FOC_Q_SCALE) / nBase);
+    return (foc_scalar_t)(((int64_t)nDelta *
+                           FOC_PORT_CURRENT_BASE_MA * FOC_Q_SCALE) /
+                          ((int64_t)nBase * s_wCurrentBaseMilliamp));
 #else
-    return (foc_scalar_t)nDelta / (foc_scalar_t)nBase;
+    return ((foc_scalar_t)nDelta *
+            (foc_scalar_t)FOC_PORT_CURRENT_BASE_MA) /
+           ((foc_scalar_t)nBase *
+            (foc_scalar_t)s_wCurrentBaseMilliamp);
 #endif
+}
+
+/**
+ * @brief Configure the current scale used by subsequent ADC samples.
+ * @param wCurrentBaseMilliamp Current base in milliamps.
+ * @return FOC_RESULT_OK or an invalid argument result.
+ */
+foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp)
+{
+    if (wCurrentBaseMilliamp == 0U) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    s_wCurrentBaseMilliamp = wCurrentBaseMilliamp;
+    return FOC_RESULT_OK;
 }
 
 /**
@@ -142,6 +169,9 @@ foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
 
     if (ptCalibration == NULL || ptCurrent == NULL) {
         return FOC_RESULT_NULL;
+    }
+    if (s_wCurrentBaseMilliamp == 0U) {
+        return FOC_RESULT_INVALID_ARGUMENT;
     }
     if (!ptCalibration->bIsCalibrated) {
         return FOC_RESULT_SAFETY;

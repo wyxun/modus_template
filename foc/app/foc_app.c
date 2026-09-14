@@ -11,8 +11,10 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 
 #include "foc_port_config.h"
+#include "foc_config.h"
 #include "mdebug/mwaveform.h"
 #include "mdebug/util_debug.h"
 #include "perf_counter.h"
@@ -30,7 +32,8 @@ static bool foc_app_GetHfAverage(foc_app_t *ptThis,
                                  uint32_t *pwAverageTicks);
 static void foc_app_ReportHfAverage(foc_app_t *ptThis);
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
-static void foc_app_WaveformInit(foc_app_t *ptThis);
+static void foc_app_WaveformInit(foc_app_t *ptThis,
+                                 uint32_t wPeriodNanoseconds);
 static void foc_app_WaveformStep(void);
 #define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
 #define FOC_WAVEFORM_SINE_POINTS    40U
@@ -78,19 +81,101 @@ static foc_result_t foc_app_GetPosition(void *pContext,
 }
 
 /**
+ * @brief Scale one speed PID coefficient from turns/s to PU input.
+ * @param ptGain PID gain to convert in place.
+ * @param qSpeedBase Electrical speed base in turns/s.
+ * @return FOC_RESULT_OK or a numeric range error.
+ */
+static foc_result_t foc_app_ScaleSpeedGain(foc_gain_t *ptGain,
+                                           foc_scalar_t qSpeedBase)
+{
+    if (ptGain == NULL || !foc_gain_IsValid(ptGain) ||
+        qSpeedBase <= FOC_ZERO) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+#if defined(FOC_NUMERIC_FIXED)
+    {
+        int64_t llGainQ = ((int64_t)ptGain->nInteger * FOC_Q_SCALE) +
+                          (int64_t)ptGain->qFraction;
+        int64_t llScaledGainQ = (llGainQ * (int64_t)qSpeedBase) /
+                                FOC_Q_SCALE;
+        int64_t llInteger = llScaledGainQ / FOC_Q_SCALE;
+        int64_t llFraction = llScaledGainQ -
+                             (llInteger * FOC_Q_SCALE);
+
+        if (llInteger > INT16_MAX || llInteger < INT16_MIN) {
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        ptGain->nInteger = (int16_t)llInteger;
+        ptGain->qFraction = (foc_scalar_t)llFraction;
+    }
+#else
+    {
+        float fGain = ((float)ptGain->nInteger + ptGain->qFraction) *
+                      qSpeedBase;
+
+        if (!isfinite(fGain)) {
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        return foc_gain_from_float(fGain, ptGain);
+    }
+#endif
+    return FOC_RESULT_OK;
+}
+
+/**
  * @brief Build the Motor config bound to this App's Encoder.
- * @param ptApp App object.
  * @param ptConfig App configuration.
  * @param ptMotorConfig Output Motor configuration.
  * @param bEncoderReady Whether the Encoder was initialized.
- * @return None.
+ * @return FOC_RESULT_OK or an invalid speed configuration.
  */
-static void foc_app_BindMotorConfig(foc_app_t *ptApp,
-                                    const foc_app_cfg_t *ptConfig,
-                                    motor_cfg_t *ptMotorConfig,
-                                    bool bEncoderReady)
+static foc_result_t foc_app_BindMotorConfig(
+    foc_app_t *ptApp,
+    const foc_app_cfg_t *ptConfig,
+    motor_cfg_t *ptMotorConfig,
+    bool bEncoderReady)
 {
+    foc_result_t eResult = FOC_RESULT_OK;
+
     *ptMotorConfig = ptConfig->tMotorCfg;
+#if FOC_ENABLE_SMO
+    ptMotorConfig->ptObserver = &ptApp->tObserver;
+    ptMotorConfig->tParams.wVoltageBaseMillivolt =
+        ptConfig->wVoltageBaseMillivolt;
+    ptMotorConfig->tParams.wCurrentBaseMilliamp =
+        ptConfig->wCurrentBaseMilliamp;
+#else
+    (void)ptApp;
+    ptMotorConfig->ptObserver = NULL;
+#endif
+    ptMotorConfig->qElectricalSpeedBaseTurnsPerSecond =
+        ptConfig->qElectricalSpeedBaseTurnsPerSecond;
+    eResult = foc_div_checked(
+        ptMotorConfig->tLimits.qMaxSpeedReference,
+        ptConfig->qElectricalSpeedBaseTurnsPerSecond,
+        &ptMotorConfig->tLimits.qMaxSpeedReference);
+    if (eResult != FOC_RESULT_OK ||
+        ptMotorConfig->tLimits.qMaxSpeedReference <= FOC_ZERO ||
+        ptMotorConfig->tLimits.qMaxSpeedReference > FOC_ONE) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
+    eResult = foc_app_ScaleSpeedGain(
+        &ptMotorConfig->tControl.tSpeedPiParams.tKp,
+        ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+    if (eResult == FOC_RESULT_OK) {
+        eResult = foc_app_ScaleSpeedGain(
+            &ptMotorConfig->tControl.tSpeedPiParams.tKiTs,
+            ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+    }
+    if (eResult == FOC_RESULT_OK) {
+        eResult = foc_app_ScaleSpeedGain(
+            &ptMotorConfig->tControl.tSpeedPiParams.tKdOverTs,
+            ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+    }
+    if (eResult != FOC_RESULT_OK) {
+        return eResult;
+    }
     if (bEncoderReady) {
         ptMotorConfig->fnGetPosition = foc_app_GetPosition;
         ptMotorConfig->pPositionContext = &ptApp->tEncoder;
@@ -98,6 +183,7 @@ static void foc_app_BindMotorConfig(foc_app_t *ptApp,
         ptMotorConfig->fnGetPosition = NULL;
         ptMotorConfig->pPositionContext = NULL;
     }
+    return FOC_RESULT_OK;
 }
 
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
@@ -106,7 +192,8 @@ static void foc_app_BindMotorConfig(foc_app_t *ptApp,
  * @param ptThis FOC App object owning the sampled speed.
  * @return None.
  */
-static void foc_app_WaveformInit(foc_app_t *ptThis)
+static void foc_app_WaveformInit(foc_app_t *ptThis,
+                                 uint32_t wPeriodNanoseconds)
 {
     uint8_t chSine = FOC_WAVEFORM_CHANNEL_INVALID;
     uint8_t chSequence = FOC_WAVEFORM_CHANNEL_INVALID;
@@ -137,12 +224,12 @@ static void foc_app_WaveformInit(foc_app_t *ptThis)
         "WaveSeq", 1.0f, (void *)&s_hwWaveSequence,
         MWAVEFORM_VAR_RAW);
     chSpeed = mwaveform.AddVariable(
-        "Speed", 100.0f,
-        (void *)&ptThis->tMotor.tInput.qElectricalSpeed,
+        "SpeedPU", 100.0f,
+        (void *)&ptThis->tMotor.tInput.qElectricalSpeedPu,
         MWAVEFORM_VAR_FLOAT);
     chSpeedRef = mwaveform.AddVariable(
-        "SpeedRef", 100.0f,
-        (void *)&ptThis->tMotor.tCommand.qSpeedReference,
+        "SpeedRefPU", 100.0f,
+        (void *)&ptThis->tMotor.tCommand.qSpeedReferencePu,
         MWAVEFORM_VAR_FLOAT);
     chIq = mwaveform.AddVariable(
         "Iq", 1000.0f,
@@ -162,7 +249,7 @@ static void foc_app_WaveformInit(foc_app_t *ptThis)
         return;
     }
     mwaveform.SetRate(0U);
-    wActualRateHz = mwaveform.SetStreamRate(50000U, 10000U);
+    wActualRateHz = mwaveform.SetStreamRate(wPeriodNanoseconds, 10000U);
     if (wActualRateHz != 10000U) {
         MLOGF(W, "%s\r\n", "FOC waveform 10 kHz stream unavailable");
         return;
@@ -208,6 +295,10 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     motor_cfg_t tMotorConfig = {0};
     foc_encoder_cfg_t tEncoderConfig = {0};
     foc_result_t eEncoder = FOC_RESULT_OK;
+    foc_result_t eResult = FOC_RESULT_OK;
+#if FOC_ENABLE_SMO
+    foc_result_t eObserver = FOC_RESULT_OK;
+#endif
     foc_result_t eMotor = FOC_RESULT_OK;
     int nBaseResult = MODUS_SUCCESS;
 
@@ -235,8 +326,33 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         foc_pwm_Stop();
         return (int)eEncoder;
     }
-    foc_app_BindMotorConfig(ptThis, ptConfig, &tMotorConfig,
-                            eEncoder == FOC_RESULT_OK);
+    if (ptConfig->wVoltageBaseMillivolt == 0U ||
+        ptConfig->wCurrentBaseMilliamp == 0U ||
+        ptConfig->wHighFrequencyPeriodNanoseconds == 0U ||
+        ptConfig->qElectricalSpeedBaseTurnsPerSecond <= FOC_ZERO) {
+        foc_pwm_Stop();
+        return MODUS_EFAIL;
+    }
+    eResult = foc_adc_SetCurrentBaseMilliamp(
+        ptConfig->wCurrentBaseMilliamp);
+    if (eResult != FOC_RESULT_OK) {
+        foc_pwm_Stop();
+        return (int)eResult;
+    }
+    eResult = foc_app_BindMotorConfig(
+        ptThis, ptConfig, &tMotorConfig, eEncoder == FOC_RESULT_OK);
+    if (eResult != FOC_RESULT_OK) {
+        foc_pwm_Stop();
+        return (int)eResult;
+    }
+#if FOC_ENABLE_SMO
+    eObserver = foc_observer_Init(&ptThis->tObserver,
+        &tMotorConfig.tParams, &ptConfig->tObserverCfg);
+    if (eObserver != FOC_RESULT_OK) {
+        foc_pwm_Stop();
+        return (int)eObserver;
+    }
+#endif
     eMotor = motor_Init(&ptThis->tMotor, &tMotorConfig);
     if (eMotor != FOC_RESULT_OK) {
         foc_pwm_Stop();
@@ -249,7 +365,8 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     }
     ptThis->bReady = eEncoder == FOC_RESULT_OK;
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
-    foc_app_WaveformInit(ptThis);
+    foc_app_WaveformInit(
+        ptThis, ptConfig->wHighFrequencyPeriodNanoseconds);
 #endif
     return MODUS_SUCCESS;
 }
@@ -412,7 +529,7 @@ static void foc_app_PrintEncoder(const foc_encoder_t *ptEncoder)
         MLOGF(W, "encoder data unavailable (%d)\r\n", (int)eResult);
         return;
     }
-    MLOGF(I, "encoder valid=%u mech=%.2f deg speed=%.3f turn/s\r\n",
+    MLOGF(I, "encoder valid=%u mech=%.2f deg mech_speed=%.3f turn/s\r\n",
           (unsigned)tPosition.bValid,
           foc_angle_to_turns(tPosition.tMechanicalAngle) * 360.0f,
           foc_to_float(tPosition.qMechanicalSpeed));
@@ -486,7 +603,7 @@ static void foc_app_CmdMotor(const char *args)
         foc_app_PrintEncoder(&tFocApp.tEncoder);
         return;
     } else {
-        MLOGF(I, "usage: motor speed <e-turn/s> | current <d> <q> | "
+        MLOGF(I, "usage: motor speed <e-speed-pu> | current <d> <q> | "
               "voltage <d> <q> | align | stop | clear | status | "
               "encoder\r\n");
         return;
@@ -513,7 +630,9 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .wInductanceDMicroHenry = 1000U,
             .wInductanceQMicroHenry = 1000U,
         },
-        .tLimits = {0},
+        .tLimits = {
+            .qMaxSpeedReference = FOC_SCALAR(100.0f),
+        },
         .tControl = {
             .tCurrentPiParams = {
                 .tKp = {0, FOC_SCALAR(0.20f)},
@@ -546,7 +665,24 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         .fnSensorInit = foc_port_PositionInit,
         .fnSensorRead = foc_port_PositionRead,
         .pSensorContext = NULL,
-    }
+    },
+#if FOC_ENABLE_SMO
+    .tObserverCfg = {
+        .tSmo = {
+            .wSamplePeriodNanoseconds = 50000U,
+            .wBemfCutoffRadiansPerSecond = 10000U,
+            .wSlidingGainMillivolt = 3500U,
+            .wPllKpRadiansPerSecondPerVolt = 650U,
+            .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
+            .qCurrentEstimateLimit = FOC_ONE,
+        },
+    },
+#endif
+    .wVoltageBaseMillivolt = 12000U,
+    .wCurrentBaseMilliamp = 7000U,
+    .wHighFrequencyPeriodNanoseconds = 50000U,
+    /* The electrical-speed scale remains a Gate 0 measurement. */
+    .qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f),
     )
 #else
 MODUS_DECLARE_OBJECT(foc_app, FocApp,
@@ -557,7 +693,9 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .wInductanceDMicroHenry = 1000U,
             .wInductanceQMicroHenry = 1000U,
         },
-        .tLimits = {0},
+        .tLimits = {
+            .qMaxSpeedReference = FOC_SCALAR(100.0f),
+        },
         .tControl = {
             .tCurrentPiParams = {
                 .tKp = {0, FOC_SCALAR(0.20f)},
@@ -583,6 +721,23 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .qAlignCurrent = FOC_SCALAR(0.1f),
         },
     },
-    .tEncoderCfg = {0}
+    .tEncoderCfg = {0},
+#if FOC_ENABLE_SMO
+    .tObserverCfg = {
+        .tSmo = {
+            .wSamplePeriodNanoseconds = 50000U,
+            .wBemfCutoffRadiansPerSecond = 10000U,
+            .wSlidingGainMillivolt = 3500U,
+            .wPllKpRadiansPerSecondPerVolt = 650U,
+            .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
+            .qCurrentEstimateLimit = FOC_ONE,
+        },
+    },
+#endif
+    .wVoltageBaseMillivolt = 12000U,
+    .wCurrentBaseMilliamp = 7000U,
+    .wHighFrequencyPeriodNanoseconds = 50000U,
+    /* The electrical-speed scale remains a Gate 0 measurement. */
+    .qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f),
     )
 #endif

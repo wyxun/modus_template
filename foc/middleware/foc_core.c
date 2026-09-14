@@ -72,11 +72,7 @@ foc_result_t foc_core_step(foc_core_state_t *ptState,
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
-    eResult = foc_clarke(ptInput->qIu, ptInput->qIv, ptInput->qIw,
-                         &ptState->tCurrentAlphaBeta);
-    if (eResult != FOC_RESULT_OK) {
-        return eResult;
-    }
+    ptState->tCurrentAlphaBeta = ptInput->tCurrentAlphaBeta;
     foc_angle_sincos(ptInput->tElectricalAngle, &qSin, &qCos);
     eResult = foc_park_cached(&ptState->tCurrentAlphaBeta, qSin, qCos,
                               &ptState->tCurrent);

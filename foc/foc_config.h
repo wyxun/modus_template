@@ -42,6 +42,10 @@
 #define FOC_ENABLE_EXPERIMENTAL_IDENTIFY  0   /**< 使能参数辨识实验模块 */
 #endif
 
+#ifndef FOC_ENABLE_SMO
+#define FOC_ENABLE_SMO                   0   /**< 使能 SMO 运行路径 */
+#endif
+
 #ifndef FOC_ENABLE_MOTOR_VERIFY
 #define FOC_ENABLE_MOTOR_VERIFY 1           /**< 使能电机验证函数 */
 #endif

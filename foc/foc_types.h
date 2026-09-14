@@ -21,6 +21,12 @@ typedef struct {
 } foc_dq_t;
 
 typedef struct {
+    foc_angle_t tElectricalAngle;
+    foc_scalar_t qElectricalSpeedTurnsPerSecond;
+    bool bValid;
+} foc_observer_output_t;
+
+typedef struct {
     foc_scalar_t qU;
     foc_scalar_t qV;
     foc_scalar_t qW;
@@ -52,11 +58,9 @@ typedef enum {
 } foc_control_mode_e;
 
 typedef struct {
-    foc_scalar_t qIu;
-    foc_scalar_t qIv;
-    foc_scalar_t qIw;
+    foc_ab_t tCurrentAlphaBeta;
     foc_angle_t tElectricalAngle;
-    foc_scalar_t qElectricalSpeed;
+    foc_scalar_t qElectricalSpeedPu;
     bool bAngleValid;
 } foc_core_input_t;
 
@@ -64,7 +68,7 @@ typedef struct {
     foc_control_mode_e eMode;
     foc_dq_t tVoltageReference;
     foc_dq_t tCurrentReference;
-    foc_scalar_t qSpeedReference;
+    foc_scalar_t qSpeedReferencePu;
 } foc_core_command_t;
 
 #endif /* FOC_TYPES_H */

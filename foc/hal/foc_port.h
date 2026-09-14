@@ -17,6 +17,13 @@ typedef enum {
 } foc_calibration_state_e;
 
 /**
+ * @brief Set the physical current represented by 1.0 PU at the ADC boundary.
+ * @param wCurrentBaseMilliamp Current base in milliamps.
+ * @return FOC_RESULT_OK or an invalid-range result.
+ */
+foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp);
+
+/**
  * @brief Begin ADC offset calibration.
  * @param ptCalibration Calibration state owned by Motor.
  * @return None.

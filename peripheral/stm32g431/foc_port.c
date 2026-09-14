@@ -21,8 +21,11 @@
 #define FOC_PORT_ADC_SAMPLES        512U
 #define FOC_PORT_PWM_PERIOD         4250U
 #define FOC_PORT_CURRENT_COUNTS_PU  1390U
+#define FOC_PORT_CURRENT_BASE_MA    7000U
 #define FOC_PORT_OFFSET_MIN         20000U
 #define FOC_PORT_OFFSET_MAX         60000U
+
+static uint32_t s_wCurrentBaseMilliamp = 0U;
 
 /**
  * @brief Read the three injected ADC channels with the board mapping.
@@ -48,13 +51,23 @@ static void port_read_raw(uint32_t *pwRawU,
 static foc_scalar_t port_normalize_current(int32_t nDelta)
 {
     const int32_t nBase = (int32_t)FOC_PORT_CURRENT_COUNTS_PU;
+    int64_t llMaximumCounts = ((int64_t)nBase *
+                               (int64_t)s_wCurrentBaseMilliamp) /
+                              FOC_PORT_CURRENT_BASE_MA;
 
-    nDelta = nDelta > nBase ? nBase : nDelta;
-    nDelta = nDelta < -nBase ? -nBase : nDelta;
+    nDelta = (int64_t)nDelta > llMaximumCounts
+        ? (int32_t)llMaximumCounts : nDelta;
+    nDelta = (int64_t)nDelta < -llMaximumCounts
+        ? (int32_t)-llMaximumCounts : nDelta;
 #if defined(FOC_NUMERIC_FIXED)
-    return (foc_scalar_t)(((int64_t)nDelta * FOC_Q_SCALE) / nBase);
+    return (foc_scalar_t)(((int64_t)nDelta *
+                           FOC_PORT_CURRENT_BASE_MA * FOC_Q_SCALE) /
+                          ((int64_t)nBase * s_wCurrentBaseMilliamp));
 #else
-    return (foc_scalar_t)nDelta / (foc_scalar_t)nBase;
+    return ((foc_scalar_t)nDelta *
+            (foc_scalar_t)FOC_PORT_CURRENT_BASE_MA) /
+           ((foc_scalar_t)nBase *
+            (foc_scalar_t)s_wCurrentBaseMilliamp);
 #endif
 }
 
@@ -72,6 +85,20 @@ static uint32_t port_duty_to_counts(foc_scalar_t qDuty)
 #else
     return (uint32_t)(qDuty * (foc_scalar_t)FOC_PORT_PWM_PERIOD);
 #endif
+}
+
+/**
+ * @brief Configure the current scale used by subsequent ADC samples.
+ * @param wCurrentBaseMilliamp Current base in milliamps.
+ * @return FOC_RESULT_OK or an invalid argument result.
+ */
+foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp)
+{
+    if (wCurrentBaseMilliamp == 0U) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    s_wCurrentBaseMilliamp = wCurrentBaseMilliamp;
+    return FOC_RESULT_OK;
 }
 
 /**
@@ -156,6 +183,9 @@ foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
 
     if (ptCalibration == NULL || ptCurrent == NULL) {
         return FOC_RESULT_NULL;
+    }
+    if (s_wCurrentBaseMilliamp == 0U) {
+        return FOC_RESULT_INVALID_ARGUMENT;
     }
     if (!ptCalibration->bIsCalibrated) {
         return FOC_RESULT_SAFETY;

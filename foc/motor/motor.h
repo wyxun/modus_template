@@ -12,6 +12,7 @@
 #include <stdint.h>
 
 #include "foc_core.h"
+#include "foc_observer.h"
 #include "foc_position.h"
 #include "foc_port.h"
 
@@ -19,11 +20,13 @@
  * @brief Physical motor metadata owned by Motor.
  * @note Rs/Ld/Lq are validated and retained as explicit motor metadata.
  */
-typedef struct {
+typedef struct motor_params_t {
     uint8_t chPolePairs;
     uint32_t wResistanceMilliohm;
     uint32_t wInductanceDMicroHenry;
     uint32_t wInductanceQMicroHenry;
+    uint32_t wVoltageBaseMillivolt;
+    uint32_t wCurrentBaseMilliamp;
 } motor_params_t;
 
 typedef struct {
@@ -48,8 +51,10 @@ typedef foc_result_t (*motor_get_position_fn)(
 typedef struct {
     motor_params_t tParams;
     motor_limits_t tLimits;
+    foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
     motor_get_position_fn fnGetPosition;
     void *pPositionContext;
+    foc_observer_t *ptObserver;
     motor_control_cfg_t tControl;
 } motor_cfg_t;
 
@@ -76,6 +81,7 @@ typedef struct {
     motor_cfg_t tCfg;
     foc_core_state_t tCore;
     foc_pid_t tSpeedPi;
+    foc_scalar_t qMechanicalToElectricalSpeedPuGain;
     foc_adc_calib_t tCalib;
     foc_core_command_t tCommand;
     foc_core_input_t tInput;
@@ -150,11 +156,11 @@ foc_result_t motor_SetCurrentReference(motor_t *ptMotor,
 /**
  * @brief Set the speed reference through the Motor API.
  * @param ptMotor Motor object.
- * @param qSpeedReference Electrical speed reference.
+ * @param qSpeedReferencePu Electrical speed reference in PU.
  * @return FOC_RESULT_OK or an argument/state error.
  */
 foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
-                                     foc_scalar_t qSpeedReference);
+                                     foc_scalar_t qSpeedReferencePu);
 
 /**
  * @brief Request a non-blocking electrical-zero alignment sequence.

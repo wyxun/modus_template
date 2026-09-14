@@ -152,6 +152,8 @@ static int64_t s_lTickStep = 0;
 static uint32_t s_wShortTimeoutBudget = 0U;
 static bool s_bReportTimeout = false;
 static uint32_t s_wMotorStepCount = 0U;
+static uint32_t s_wCurrentBaseMilliamp = 0U;
+static motor_cfg_t s_tCapturedMotorConfig = {0};
 
 uint8_t g_chGLogMask = MLOG_MASK_ALL;
 volatile int32_t g_nOffset = 0;
@@ -246,8 +248,20 @@ void foc_pwm_Stop(void)
 foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
 {
     (void)ptMotor;
-    (void)ptConfig;
+    s_tCapturedMotorConfig = *ptConfig;
     return FOC_RESULT_OK;
+}
+
+/**
+ * @brief Capture the ADC physical current base.
+ * @param wCurrentBaseMilliamp Requested base in milliamps.
+ * @return FOC_RESULT_OK for a nonzero base.
+ */
+foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp)
+{
+    s_wCurrentBaseMilliamp = wCurrentBaseMilliamp;
+    return (wCurrentBaseMilliamp != 0U) ? FOC_RESULT_OK :
+                                          FOC_RESULT_INVALID_ARGUMENT;
 }
 
 /**
@@ -492,7 +506,7 @@ int main(void)
     assert(s_ptReadEncoder == &tFocApp.tEncoder);
     assert(s_wReadTick == 1234U);
     assert(strstr(s_chLog, "mech=90.00 deg") != NULL);
-    assert(strstr(s_chLog, "speed=0.500 turn/s") != NULL);
+    assert(strstr(s_chLog, "mech_speed=0.500 turn/s") != NULL);
 
     s_ePositionResult = FOC_RESULT_SAFETY;
     s_chLog[0] = '\0';
@@ -528,16 +542,46 @@ int main(void)
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     {
         foc_app_cfg_t tConfig = {0};
+        tConfig.tMotorCfg.tParams.chPolePairs = 7U;
+        tConfig.tMotorCfg.tParams.wResistanceMilliohm = 500U;
+        tConfig.tMotorCfg.tParams.wInductanceDMicroHenry = 1000U;
+        tConfig.tMotorCfg.tParams.wInductanceQMicroHenry = 1000U;
+        tConfig.tMotorCfg.tLimits.qMaxSpeedReference =
+            FOC_SCALAR(100.0f);
+        tConfig.wVoltageBaseMillivolt = 12000U;
+        tConfig.wCurrentBaseMilliamp = 7000U;
+        tConfig.wHighFrequencyPeriodNanoseconds = 50000U;
+        tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+        assert(foc_gain_from_float(0.2f,
+            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKp) ==
+               FOC_RESULT_OK);
+        assert(foc_gain_from_float(0.005f,
+            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKiTs) ==
+               FOC_RESULT_OK);
+        assert(foc_gain_from_float(0.0f,
+            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKdOverTs) ==
+               FOC_RESULT_OK);
         int nInitResult = foc_app_Init((uintptr_t)&tFocApp,
                                        (uintptr_t)&tConfig);
 
         assert(nInitResult == MODUS_SUCCESS);
+        assert(s_wCurrentBaseMilliamp == 7000U);
+        assert(s_tCapturedMotorConfig.ptObserver == NULL);
+        assert(s_tCapturedMotorConfig.qElectricalSpeedBaseTurnsPerSecond ==
+               FOC_SCALAR(100.0f));
+        assert(s_tCapturedMotorConfig.tLimits.qMaxSpeedReference == FOC_ONE);
+        assert(fabsf(foc_to_float(foc_gain_apply(
+                   &s_tCapturedMotorConfig.tControl.tSpeedPiParams.tKp,
+                   FOC_SCALAR(0.1f))) - 2.0f) < 0.001f);
+        assert(fabsf(foc_to_float(foc_gain_apply(
+                   &s_tCapturedMotorConfig.tControl.tSpeedPiParams.tKiTs,
+                   FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
         assert(s_chWaveCount == 6U);
         assert(strcmp(s_achWaveNames[0], "Sine500") == 0);
         assert(strcmp(s_achWaveNames[1], "WaveSeq") == 0);
-        assert(strcmp(s_achWaveNames[2], "Speed") == 0);
-        assert(strcmp(s_achWaveNames[3], "SpeedRef") == 0);
+        assert(strcmp(s_achWaveNames[2], "SpeedPU") == 0);
+        assert(strcmp(s_achWaveNames[3], "SpeedRefPU") == 0);
         assert(strcmp(s_achWaveNames[4], "Iq") == 0);
         assert(strcmp(s_achWaveNames[5], "IqRef") == 0);
         assert(s_afWaveScales[0] == 1000.0f);
@@ -555,9 +599,9 @@ int main(void)
         assert(s_apvWaveValues[0] != NULL);
         assert(s_apvWaveValues[1] != NULL);
         assert(s_apvWaveValues[2] ==
-               &tFocApp.tMotor.tInput.qElectricalSpeed);
+               &tFocApp.tMotor.tInput.qElectricalSpeedPu);
         assert(s_apvWaveValues[3] ==
-               &tFocApp.tMotor.tCommand.qSpeedReference);
+               &tFocApp.tMotor.tCommand.qSpeedReferencePu);
         assert(s_apvWaveValues[4] ==
                &tFocApp.tMotor.tCore.tCurrent.qQ);
         assert(s_apvWaveValues[5] ==
