@@ -148,8 +148,12 @@ endif
 # Motor-energizing experiments are opt-in for product builds.
 FOC_EXPERIMENTAL_NSD ?= 0
 FOC_EXPERIMENTAL_IDENTIFY ?= 0
+FOC_ENABLE_SMO ?= 0
+FOC_ENABLE_HFI ?= 0
 C_DEFS += -DFOC_ENABLE_EXPERIMENTAL_NSD=$(FOC_EXPERIMENTAL_NSD)
 C_DEFS += -DFOC_ENABLE_EXPERIMENTAL_IDENTIFY=$(FOC_EXPERIMENTAL_IDENTIFY)
+C_DEFS += -DFOC_ENABLE_SMO=$(FOC_ENABLE_SMO)
+C_DEFS += -DFOC_ENABLE_HFI=$(FOC_ENABLE_HFI)
 
 # ------------------------------------------------------------------------------
 # All C sources  (chip-specific vars set by target.mk)
@@ -251,7 +255,7 @@ $(BUILD_DIR)/motor.o: CFLAGS += -O2
 # Build configuration signature tracking
 # Triggers recompile whenever target, flags, or numeric backend changes
 # ------------------------------------------------------------------------------
-BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(FOC_NUMERIC)-id_$(FOC_EXPERIMENTAL_IDENTIFY)-nsd_$(FOC_EXPERIMENTAL_NSD)-mod_$(MODUS_ENABLE)
+BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(FOC_NUMERIC)-id_$(FOC_EXPERIMENTAL_IDENTIFY)-nsd_$(FOC_EXPERIMENTAL_NSD)-smo_$(FOC_ENABLE_SMO)-hfi_$(FOC_ENABLE_HFI)-mod_$(MODUS_ENABLE)
 
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp
 

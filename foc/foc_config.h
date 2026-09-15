@@ -46,6 +46,25 @@
 #define FOC_ENABLE_SMO                   0   /**< 使能 SMO 运行路径 */
 #endif
 
+#ifndef FOC_ENABLE_HFI
+#define FOC_ENABLE_HFI                   0   /**< 预留 HFI 运行路径 */
+#endif
+
+#define FOC_OBSERVER_BACKEND_NONE        0
+#define FOC_OBSERVER_BACKEND_SMO         1
+
+#ifndef FOC_OBSERVER_BACKEND
+#if FOC_ENABLE_SMO
+#define FOC_OBSERVER_BACKEND             FOC_OBSERVER_BACKEND_SMO
+#else
+#define FOC_OBSERVER_BACKEND             FOC_OBSERVER_BACKEND_NONE
+#endif
+#endif
+
+#if (FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO) && !FOC_ENABLE_SMO
+#error "SMO observer backend requires FOC_ENABLE_SMO=1"
+#endif
+
 #ifndef FOC_ENABLE_MOTOR_VERIFY
 #define FOC_ENABLE_MOTOR_VERIFY 1           /**< 使能电机验证函数 */
 #endif

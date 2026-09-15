@@ -186,14 +186,11 @@ int main(void)
 {
     motor_t tMotor = {0};
     motor_cfg_t tConfig = {0};
-    foc_observer_t tObserver = {0};
     const foc_observer_cfg_t tObserverConfig = {
         .tSmo = {
             .wSamplePeriodNanoseconds = 50000U,
             .wBemfCutoffRadiansPerSecond = 10000U,
             .wSlidingGainMillivolt = 3500U,
-            .wPllKpRadiansPerSecondPerVolt = 650U,
-            .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
             .qCurrentEstimateLimit = FOC_ONE,
         },
     };
@@ -209,10 +206,7 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    eResult = foc_observer_Init(&tObserver, &tConfig.tParams,
-                                &tObserverConfig);
-    assert(eResult == FOC_RESULT_OK);
-    tConfig.ptObserver = &tObserver;
+    tConfig.tObserverCfg = tObserverConfig;
     tConfig.fnGetPosition = test_GetPosition;
     tConfig.tControl.tCurrentPiParams.qOutputMinimum = FOC_NEG_ONE;
     tConfig.tControl.tCurrentPiParams.qOutputMaximum = FOC_ONE;
@@ -235,18 +229,20 @@ int main(void)
 
     assert(s_wClarkeCalls == 1U);
     assert(s_wCoreCalls == 1U);
-    assert(tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage < FOC_ZERO);
+    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage <
+           FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);
     motor_HighFrequencyStep(&tMotor, 2U);
     assert(s_wClarkeCalls == 2U);
     assert(s_wCoreCalls == 2U);
-    assert(foc_to_float(tObserver.tSmo.tAxis[0].qCurrentEstimate) >
+    assert(foc_to_float(tMotor.tObserver.tSmo.tAxis[0].qCurrentEstimate) >
            0.006f);
 
     motor_Stop(&tMotor);
-    assert(tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage == FOC_ZERO);
+    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
+           FOC_ZERO);
     eResult = motor_RequestPositionCalibration(&tMotor);
     assert(eResult == FOC_RESULT_OK);
     motor_HighFrequencyStep(&tMotor, 3U);
@@ -254,7 +250,8 @@ int main(void)
     assert(s_wClarkeCalls == 3U);
     assert(s_wCoreCalls == 3U);
     assert(s_tLastCoreInput.tElectricalAngle.wBam32 == 0U);
-    assert(tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage == FOC_ZERO);
+    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
+           FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);

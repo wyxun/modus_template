@@ -13,6 +13,47 @@
 #include "perf_counter.h"
 
 /**
+ * @brief Reset the optional Motor-owned Observer.
+ * @param ptMotor Motor object.
+ * @return None.
+ */
+static void motor_ResetObserver(motor_t *ptMotor)
+{
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    if (ptMotor == NULL) {
+        return;
+    }
+    foc_observer_Reset(&ptMotor->tObserver);
+#else
+    (void)ptMotor;
+#endif
+}
+
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+/**
+ * @brief Build the common Observer input for the current Motor sample.
+ * @param ptMotor Motor object.
+ * @param ptInput Observer input to fill.
+ * @return None.
+ */
+static void motor_BuildObserverInput(
+    const motor_t *ptMotor,
+    foc_observer_input_t *ptInput)
+{
+    if (ptMotor == NULL || ptInput == NULL) {
+        return;
+    }
+    ptInput->ptCurrentAlphaBeta = &ptMotor->tInput.tCurrentAlphaBeta;
+    ptInput->ptVoltageModelAlphaBeta =
+        &ptMotor->tCore.tVoltageAlphaBeta;
+    ptInput->ptVoltageAppliedAlphaBeta = NULL;
+    ptInput->qDcBusVoltagePu = FOC_ZERO;
+    ptInput->bVoltageAppliedValid = false;
+    ptInput->bDcBusVoltageValid = false;
+}
+#endif
+
+/**
  * @brief Enter the latched fault state with PWM already stopped.
  * @param ptMotor Motor object.
  * @param eFault Fault bit to latch.
@@ -26,7 +67,7 @@ static void motor_EnterFault(motor_t *ptMotor, motor_fault_e eFault)
     if (ptMotor->eState != MOTOR_STATE_FAULT) {
         foc_pwm_Stop();
     }
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     ptMotor->bPwmEnabled = false;
     ptMotor->wFaults |= (uint32_t)eFault;
     ptMotor->eState = MOTOR_STATE_FAULT;
@@ -56,10 +97,6 @@ static bool motor_ConfigValid(const motor_cfg_t *ptConfig)
         ptConfig->tControl.wAlignSteps == 0U ||
         ptConfig->tControl.qAlignCurrent <= FOC_ZERO ||
         ptConfig->tControl.qAlignCurrent > FOC_ONE) {
-        return false;
-    }
-    if (ptConfig->ptObserver != NULL &&
-        ptConfig->ptObserver->fnSelectedStep == NULL) {
         return false;
     }
     return true;
@@ -127,7 +164,7 @@ static foc_result_t motor_EnablePwm(motor_t *ptMotor)
     foc_result_t eResult = FOC_RESULT_OK;
 
     foc_core_Reset(&ptMotor->tCore);
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     eResult = foc_pwm_SetDuty(&ptMotor->tCore.tDuty);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
@@ -228,23 +265,25 @@ static void motor_SpeedLoopStep(motor_t *ptMotor)
 static void motor_RunStep(motor_t *ptMotor, uint32_t wNowTick)
 {
     foc_result_t eResult = FOC_RESULT_OK;
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    foc_observer_input_t tObserverInput = {0};
     foc_result_t eObserver = FOC_RESULT_OK;
+#endif
 
     eResult = motor_ReadInput(ptMotor, wNowTick);
     if (eResult != FOC_RESULT_OK) {
         motor_EnterFault(ptMotor, MOTOR_FAULT_POSITION);
         return;
     }
-    if (ptMotor->tCfg.ptObserver != NULL) {
-        eObserver = ptMotor->tCfg.ptObserver->fnSelectedStep(
-            &ptMotor->tCfg.ptObserver->tSmo,
-            &ptMotor->tInput.tCurrentAlphaBeta,
-            &ptMotor->tCore.tVoltageAlphaBeta,
-            &ptMotor->tCfg.ptObserver->tOutput);
-        if (eObserver != FOC_RESULT_OK) {
-            ptMotor->tCfg.ptObserver->tOutput.bValid = false;
-        }
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    /* HFI is not implemented, so only the model voltage is valid. */
+    motor_BuildObserverInput(ptMotor, &tObserverInput);
+    eObserver = foc_observer_Step(&ptMotor->tObserver,
+                                  &tObserverInput);
+    if (eObserver != FOC_RESULT_OK) {
+        ptMotor->tObserver.tOutput.bValid = false;
     }
+#endif
     motor_SpeedLoopStep(ptMotor);
     eResult = foc_core_step(&ptMotor->tCore, &ptMotor->tCommand,
                             &ptMotor->tInput);
@@ -316,7 +355,7 @@ static void motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
     ptMotor->bElectricalZeroValid = true;
     foc_pwm_Stop();
     ptMotor->bPwmEnabled = false;
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     ptMotor->eState = MOTOR_STATE_IDLE;
 }
 
@@ -334,6 +373,15 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
     }
     *ptMotor = (motor_t){0};
     ptMotor->tCfg = *ptConfig;
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    eResult = foc_observer_Init(&ptMotor->tObserver,
+                                &ptMotor->tCfg.tParams,
+                                &ptMotor->tCfg.tObserverCfg);
+    if (eResult != FOC_RESULT_OK) {
+        foc_pwm_Stop();
+        return eResult;
+    }
+#endif
     qPolePairs = foc_from_float((float)ptConfig->tParams.chPolePairs);
     eResult = foc_div_checked(qPolePairs,
         ptConfig->qElectricalSpeedBaseTurnsPerSecond,
@@ -360,7 +408,7 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
         return eResult;
     }
     foc_core_Reset(&ptMotor->tCore);
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     foc_adc_CalibBegin(&ptMotor->tCalib);
     ptMotor->eState = MOTOR_STATE_ADC_CAL;
     return FOC_RESULT_OK;
@@ -415,7 +463,7 @@ void motor_Stop(motor_t *ptMotor)
     foc_pwm_Stop();
     ptMotor->bPwmEnabled = false;
     foc_pid_Reset(&ptMotor->tSpeedPi);
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     if (ptMotor->eState != MOTOR_STATE_FAULT &&
         ptMotor->eState != MOTOR_STATE_ADC_CAL &&
         ptMotor->eState != MOTOR_STATE_INITIALIZING) {
@@ -447,7 +495,7 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
                             (uint32_t)MOTOR_FAULT_ADC_CAL) != 0U;
     ptMotor->wFaults = MOTOR_FAULT_NONE;
     foc_core_Reset(&ptMotor->tCore);
-    foc_observer_Reset(ptMotor->tCfg.ptObserver);
+    motor_ResetObserver(ptMotor);
     foc_pid_Reset(&ptMotor->tSpeedPi);
     if (bAdcCalibrationFault) {
         foc_adc_CalibBegin(&ptMotor->tCalib);

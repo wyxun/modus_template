@@ -278,6 +278,16 @@ void motor_HighFrequencyStep(motor_t *ptMotor, uint32_t wNowTick)
 }
 
 /**
+ * @brief Stub foreground hardware-break polling for the App test.
+ * @param ptMotor Motor object.
+ * @return None.
+ */
+void motor_PollBreakFault(motor_t *ptMotor)
+{
+    (void)ptMotor;
+}
+
+/**
  * @brief Stub MODUS base initialization for the unused App path.
  * @param ptBase MODUS base object.
  * @param ptConfig MODUS base configuration.
@@ -569,7 +579,10 @@ int main(void)
 
         assert(nInitResult == MODUS_SUCCESS);
         assert(s_wCurrentBaseMilliamp == 7000U);
-        assert(s_tCapturedMotorConfig.ptObserver == NULL);
+        assert(s_tCapturedMotorConfig.tParams.wVoltageBaseMillivolt ==
+               12000U);
+        assert(s_tCapturedMotorConfig.tParams.wCurrentBaseMilliamp ==
+               7000U);
         assert(s_tCapturedMotorConfig.qElectricalSpeedBaseTurnsPerSecond ==
                FOC_SCALAR(100.0f));
         assert(s_tCapturedMotorConfig.tLimits.qMaxSpeedReference == FOC_ONE);

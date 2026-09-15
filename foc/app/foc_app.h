@@ -19,9 +19,6 @@
 typedef struct {
     motor_cfg_t tMotorCfg;
     foc_encoder_cfg_t tEncoderCfg;
-#if FOC_ENABLE_SMO
-    foc_observer_cfg_t tObserverCfg;
-#endif
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;
     uint32_t wHighFrequencyPeriodNanoseconds;
@@ -50,9 +47,6 @@ typedef struct {
     foc_identify_t tIdentify;
     foc_dq_t tLastVoltageCommandDqPu;
     volatile uint8_t chIdentifyCommand;
-#endif
-#if FOC_ENABLE_SMO
-    foc_observer_t tObserver;
 #endif
     foc_app_hf_stats_t tHfStats;
     uint8_t chRunPt;

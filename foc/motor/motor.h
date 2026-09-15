@@ -11,6 +11,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "foc_config.h"
 #include "foc_core.h"
 #include "foc_observer.h"
 #include "foc_position.h"
@@ -54,7 +55,9 @@ typedef struct {
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
     motor_get_position_fn fnGetPosition;
     void *pPositionContext;
-    foc_observer_t *ptObserver;
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    foc_observer_cfg_t tObserverCfg;
+#endif
     motor_control_cfg_t tControl;
 } motor_cfg_t;
 
@@ -85,6 +88,9 @@ typedef struct {
     foc_adc_calib_t tCalib;
     foc_core_command_t tCommand;
     foc_core_input_t tInput;
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    foc_observer_t tObserver;
+#endif
     foc_angle_t tElectricalZero;
     uint32_t wCalibrationSteps;
     uint32_t wAlignSteps;

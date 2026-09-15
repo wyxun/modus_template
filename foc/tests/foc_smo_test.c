@@ -1,8 +1,8 @@
 /****************************************************************************
  * @file    foc_smo_test.c
- * @brief   Host tests for the normalized Sguan-style SMO/PLL adapter.
+ * @brief   Host tests for the normalized simple SMO.
  * @author  Codex
- * @date    2026-09-13
+ * @date    2026-09-15
  ****************************************************************************/
 
 #include <assert.h>
@@ -24,7 +24,6 @@ static void test_AssertNear(foc_scalar_t qActual,
 {
     assert(fabsf(foc_to_float(qActual) - fExpected) < fTolerance);
 }
-
 /**
  * @brief Build the provisional 12 V / 7 A theoretical test configuration.
  * @param ptMotorParams Output motor parameters.
@@ -46,14 +45,12 @@ static void test_BuildConfig(motor_params_t *ptMotorParams,
         .wSamplePeriodNanoseconds = 50000U,
         .wBemfCutoffRadiansPerSecond = 10000U,
         .wSlidingGainMillivolt = 3500U,
-        .wPllKpRadiansPerSecondPerVolt = 650U,
-        .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
         .qCurrentEstimateLimit = FOC_ONE,
     };
 }
 
 /**
- * @brief Verify Init validation, normalized coefficients, step, and Reset.
+ * @brief Verify the simple SMO model, filter, angle and reset behavior.
  * @param None.
  * @return Zero on success.
  */
@@ -69,100 +66,58 @@ int main(void)
 
     eResult = foc_smo_Init(NULL, &tMotorParams, &tConfig);
     assert(eResult == FOC_RESULT_NULL);
+
     test_BuildConfig(&tMotorParams, &tConfig);
     eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
     assert(eResult == FOC_RESULT_OK);
+    test_AssertNear(tSmo.qVoltageCurrentGain, 0.0857143f, 0.0003f);
+    test_AssertNear(tSmo.qResistanceGain, 0.025f, 0.0003f);
+    test_AssertNear(tSmo.qCrossAxisGain, 0.0f, 0.0001f);
+    test_AssertNear(tSmo.qBemfFilterNumerator, 0.2f, 0.0003f);
+    test_AssertNear(tSmo.qBemfFilterDenominator, -0.6f, 0.0003f);
+    test_AssertNear(tSmo.qSlidingGain, 0.291667f, 0.0003f);
 
     eResult = foc_smo_Step(NULL, &tCurrent, &tVoltage, &tOutput);
     assert(eResult == FOC_RESULT_NULL);
     eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
     assert(eResult == FOC_RESULT_OK);
-    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.0042857f, 0.0002f);
+    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate,
+                    0.0042857f, 0.0003f);
     test_AssertNear(tSmo.tAxis[0].qBemf, 0.0583333f, 0.001f);
-    assert(!tOutput.bValid);
-    assert(tOutput.tElectricalAngle.wBam32 != 0U);
-    test_AssertNear(tOutput.qElectricalSpeedTurnsPerSecond,
-                    -511.0f, 2.0f);
+    assert(tOutput.bValid);
+    assert(tOutput.tElectricalAngle.wBam32 > 0x80000000U);
+    assert(tOutput.qElectricalSpeedTurnsPerSecond == FOC_ZERO);
 
     foc_smo_Reset(&tSmo);
     assert(tSmo.tAxis[0].qCurrentEstimate == FOC_ZERO);
     assert(tSmo.tAxis[0].qBemf == FOC_ZERO);
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.0042857f, 0.0002f);
+    assert(!tSmo.tAxis[0].bIntegratorFrozen);
+    assert(!tSmo.bHasPreviousElectricalAngle);
 
-    tMotorParams.wInductanceQMicroHenry = 1500U;
-    eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
-    assert(eResult == FOC_RESULT_OK);
-    tSmo.tAxis[0].qCurrentEstimate = FOC_SCALAR(0.2f);
-    tSmo.tAxis[1].qCurrentEstimate = FOC_SCALAR(0.1f);
-    tSmo.qPllMechanicalSpeed = FOC_SCALAR(0.5f / 7.0f);
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    test_AssertNear(tSmo.tAxis[1].qCurrentEstimate,
-                    0.12375f, 0.0003f);
-
-    tMotorParams.wInductanceQMicroHenry = 1000U;
-    tConfig.qMinimumBemf = FOC_SCALAR(0.01f);
-    tConfig.qMaximumPhaseError = FOC_SCALAR(0.2f);
-    tConfig.qMaximumElectricalSpeed = FOC_SCALAR(3000.0f);
-    tConfig.hwQualificationSamples = 2U;
-    eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
-    assert(eResult == FOC_RESULT_OK);
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    assert(!tOutput.bValid);
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    assert(tOutput.bValid);
-    tSmo.tCfg.qMaximumPhaseError = FOC_SCALAR(0.0001f);
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    assert(!tOutput.bValid);
-
-    tMotorParams.chPolePairs = 1U;
-    tConfig.wSamplePeriodNanoseconds = 10000U;
-    tConfig.wBemfCutoffRadiansPerSecond = 1U;
-    eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
-#if defined(FOC_NUMERIC_FIXED)
-    assert(eResult == FOC_RESULT_OUT_OF_RANGE);
-#else
-    assert(eResult == FOC_RESULT_OK);
-#endif
-
-    tConfig.wSamplePeriodNanoseconds = 50000U;
-    tConfig.wBemfCutoffRadiansPerSecond = 10000U;
-    tConfig.qMinimumBemf = FOC_ZERO;
-    tConfig.qMaximumPhaseError = FOC_ZERO;
-    tConfig.qMinimumElectricalSpeed = FOC_ZERO;
-    tConfig.qMaximumElectricalSpeed = FOC_ZERO;
-    tConfig.hwQualificationSamples = 0U;
     tConfig.qCurrentEstimateLimit = FOC_SCALAR(0.01f);
     eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
     assert(eResult == FOC_RESULT_OK);
-    tSmo.tPllMechanicalAngle = (foc_angle_t){0xFFFFFFF0U};
-    tSmo.qPllMechanicalSpeed = FOC_SCALAR(0.5f);
-    tSmo.qPreviousPllMechanicalSpeed = FOC_SCALAR(0.5f);
-    tVoltage = (foc_ab_t){FOC_ZERO, FOC_ZERO};
-    eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
-    assert(eResult == FOC_RESULT_OK);
-    assert(tOutput.tElectricalAngle.wBam32 < 0x80000000U);
-
-    foc_smo_Reset(&tSmo);
     tVoltage = (foc_ab_t){FOC_ONE, FOC_ZERO};
     eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
     assert(eResult == FOC_RESULT_OK);
     assert(tSmo.tAxis[0].bIntegratorFrozen);
-    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.01f, 0.0001f);
+    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.01f, 0.0003f);
+
     tVoltage.qAlpha = FOC_NEG_ONE;
     eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
     assert(eResult == FOC_RESULT_OK);
     assert(!tSmo.tAxis[0].bIntegratorFrozen);
-    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.01f, 0.0001f);
+    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, 0.01f, 0.0003f);
+
+    tMotorParams.wInductanceQMicroHenry = 1500U;
+    tConfig.qCurrentEstimateLimit = FOC_ONE;
+    eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
+    assert(eResult == FOC_RESULT_OK);
+    test_AssertNear(tSmo.qCrossAxisGain, -0.5f, 0.0003f);
+    tSmo.qElectricalSpeedRadiansPerSample = FOC_SCALAR(0.5f);
+    tSmo.tAxis[1].qCurrentEstimate = FOC_SCALAR(0.1f);
     eResult = foc_smo_Step(&tSmo, &tCurrent, &tVoltage, &tOutput);
     assert(eResult == FOC_RESULT_OK);
-    assert(tSmo.tAxis[0].bIntegratorFrozen);
-    test_AssertNear(tSmo.tAxis[0].qCurrentEstimate, -0.01f, 0.0001f);
 
     tMotorParams.wCurrentBaseMilliamp = 0U;
     eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);

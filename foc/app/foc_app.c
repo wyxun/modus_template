@@ -146,16 +146,10 @@ static foc_result_t foc_app_BindMotorConfig(
     foc_result_t eResult = FOC_RESULT_OK;
 
     *ptMotorConfig = ptConfig->tMotorCfg;
-#if FOC_ENABLE_SMO
-    ptMotorConfig->ptObserver = &ptApp->tObserver;
     ptMotorConfig->tParams.wVoltageBaseMillivolt =
         ptConfig->wVoltageBaseMillivolt;
     ptMotorConfig->tParams.wCurrentBaseMilliamp =
         ptConfig->wCurrentBaseMilliamp;
-#else
-    (void)ptApp;
-    ptMotorConfig->ptObserver = NULL;
-#endif
     ptMotorConfig->qElectricalSpeedBaseTurnsPerSecond =
         ptConfig->qElectricalSpeedBaseTurnsPerSecond;
     eResult = foc_div_checked(
@@ -328,9 +322,6 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     foc_encoder_cfg_t tEncoderConfig = {0};
     foc_result_t eEncoder = FOC_RESULT_OK;
     foc_result_t eResult = FOC_RESULT_OK;
-#if FOC_ENABLE_SMO
-    foc_result_t eObserver = FOC_RESULT_OK;
-#endif
     foc_result_t eMotor = FOC_RESULT_OK;
     int nBaseResult = MODUS_SUCCESS;
 
@@ -377,14 +368,6 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         foc_pwm_Stop();
         return (int)eResult;
     }
-#if FOC_ENABLE_SMO
-    eObserver = foc_observer_Init(&ptThis->tObserver,
-        &tMotorConfig.tParams, &ptConfig->tObserverCfg);
-    if (eObserver != FOC_RESULT_OK) {
-        foc_pwm_Stop();
-        return (int)eObserver;
-    }
-#endif
     eMotor = motor_Init(&ptThis->tMotor, &tMotorConfig);
     if (eMotor != FOC_RESULT_OK) {
         foc_pwm_Stop();
@@ -895,6 +878,16 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .qMaxPhaseCurrent = FOC_SCALAR(1.0f),
             .qMaxModulation = FOC_SCALAR(0.5773502692f),
         },
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+        .tObserverCfg = {
+            .tSmo = {
+                .wSamplePeriodNanoseconds = 50000U,
+                .wBemfCutoffRadiansPerSecond = 10000U,
+                .wSlidingGainMillivolt = 3500U,
+                .qCurrentEstimateLimit = FOC_ONE,
+            },
+        },
+#endif
         .tControl = {
             .tCurrentPiParams = {
                 .tKp = {0, FOC_SCALAR(0.20f)},
@@ -928,18 +921,6 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         .fnSensorRead = foc_port_PositionRead,
         .pSensorContext = NULL,
     },
-#if FOC_ENABLE_SMO
-    .tObserverCfg = {
-        .tSmo = {
-            .wSamplePeriodNanoseconds = 50000U,
-            .wBemfCutoffRadiansPerSecond = 10000U,
-            .wSlidingGainMillivolt = 3500U,
-            .wPllKpRadiansPerSecondPerVolt = 650U,
-            .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
-            .qCurrentEstimateLimit = FOC_ONE,
-        },
-    },
-#endif
     .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
     .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
     .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,
@@ -960,6 +941,16 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
             .qMaxPhaseCurrent = FOC_SCALAR(1.0f),
             .qMaxModulation = FOC_SCALAR(0.5773502692f),
         },
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+        .tObserverCfg = {
+            .tSmo = {
+                .wSamplePeriodNanoseconds = 50000U,
+                .wBemfCutoffRadiansPerSecond = 10000U,
+                .wSlidingGainMillivolt = 3500U,
+                .qCurrentEstimateLimit = FOC_ONE,
+            },
+        },
+#endif
         .tControl = {
             .tCurrentPiParams = {
                 .tKp = {0, FOC_SCALAR(0.20f)},
@@ -986,18 +977,6 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         },
     },
     .tEncoderCfg = {0},
-#if FOC_ENABLE_SMO
-    .tObserverCfg = {
-        .tSmo = {
-            .wSamplePeriodNanoseconds = 50000U,
-            .wBemfCutoffRadiansPerSecond = 10000U,
-            .wSlidingGainMillivolt = 3500U,
-            .wPllKpRadiansPerSecondPerVolt = 650U,
-            .wPllKiRadiansPerSecondSquaredPerVolt = 210000U,
-            .qCurrentEstimateLimit = FOC_ONE,
-        },
-    },
-#endif
     .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
     .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
     .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,

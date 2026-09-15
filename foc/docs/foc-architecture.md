@@ -6,14 +6,14 @@
 
 ## 1. 范围与分层
 
-当前实现由一个产品组合对象管理一个 Motor 和一个位置观测对象。职责按实际调用关系划分：
+当前实现由一个产品组合对象管理一个 Motor 和一个 Encoder；Motor 内部拥有可选 Observer。职责按实际调用关系划分：
 
 ~~~text
 产品入口 / 高频采样中断 / 产品命令
                  │
                  ▼
-foc_app_t ─── 调度、命令适配、持有 Motor、Encoder 与 Observer
-   ├── motor_t       生命周期、参考值、电气量换算与控制编排
+foc_app_t ─── 调度、命令适配、持有 Motor 与 Encoder
+   ├── motor_t       生命周期、参考值、电气量换算、Observer 与控制编排
    └── foc_encoder_t 机械位置样本、速度估算与当前角度外推
                  │
                  ├── foc_core：Clarke / Park / 电流 PI / 反 Park / SVPWM
@@ -31,8 +31,8 @@ Motor 不拥有传感器驱动对象。
 
 | 模块 | 当前职责 |
 | --- | --- |
-| `foc_app_t` | MODUS 生命周期入口、前台调度、产品命令、波形和高频统计；持有 Motor、Encoder 与 Observer |
-| `motor_t` | 单电机状态、参数与控制配置、命令参考、ADC 校准状态、Core/PID 状态、电气零位和高频控制步骤 |
+| `foc_app_t` | MODUS 生命周期入口、前台调度、产品命令、波形和高频统计；持有 Motor 与 Encoder |
+| `motor_t` | 单电机状态、参数与控制配置、命令参考、ADC 校准状态、Core/PID 状态、电气零位、Observer 和高频控制步骤 |
 | `foc_encoder_t` | 调用已绑定的位置源、缓存机械位置样本、滤波机械速度并提供带时间戳的位置读数 |
 | `foc_core` | 数值后端无关的 Clarke/Park 变换、电流 PI、反变换和 SVPWM 编排 |
 | `foc_pid` | 电流环和速度环使用的 PI 算法实现 |
@@ -75,6 +75,7 @@ INITIALIZING → ADC_CAL → IDLE ── Start ──→ RUNNING
       ├─ ALIGN：采样三相电流 → 固定角度 Core → PWM
       └─ RUNNING：采样三相电流 + 读取位置缓存
                    → 机械角 × 极对数 − 电气零位
+                   → Motor-owned SMO 验证路径（若启用）
                    → 速度 PI（按配置分频）
                    → `foc_core_step()` → 三相 PWM 提交
 ~~~
@@ -101,8 +102,8 @@ ADC 单元/通道、定时器、引脚、采样拓扑和驱动器连接属于板
 - `foc_app_cfg_t` 组合 Motor 控制配置与 Encoder 配置；当前产品配置在 `foc/app/foc_app.c` 的 MODUS 对象声明中。
 - `motor_params_t` 保存极对数、定子电阻和 D/Q 轴电感。极对数用于机械量到电气量的换算；电阻和电感当前要求非零并保留，不参与当前 Core 的控制参数计算。
 - `motor_params_t` 另保存观测器使用的电压、电流 pu 基准。当前示例为 12 V / 7 A；7 A 由 `0.1 pu ≈ 0.7 A` 推估，属于待台架确认的初值，不是电流采样标定结果。
-- App 持有单实例 `foc_observer_t`，Motor 借用它并在 Encoder 控制时每拍运行 SMO Shadow。Observer 使用本拍 `Iαβ` 和 Core 上一采样区间的 `Vmodel`；当前产品没有配置质量门限，因此输出保持 `valid=false`，不会切换 FOC 反馈源。
-- SMO 使用标幺化模型：电压、电流分别除以 Motor 的基准；时间基准取固定 `Ts`，因此模型的电阻、电感和 PLL 系数在 Init 时换算。SMO 不把物理大增益作为 Q15 普通 pu 乘数使用。
+- Motor 持有单实例 `foc_observer_t`，并在编码器控制时每拍运行 SMO 验证路径。Observer 使用本拍 `Iαβ` 和 Core 上一采样区间的 `Vmodel`；当前 SMO 尚未接管 Core 反馈，启动仍由现有编码器路径完成。
+- SMO 使用标幺化模型：电压、电流分别除以 Motor 的基准；时间基准取固定 `Ts`，因此模型的电阻、电感和 PLL 系数在 Init 时换算。运行态不携带 SI 量；FIXED 后端的 Init 使用整数比例生成 Q15 系数，不依赖浮点计算。SMO 不把物理大增益作为 Q15 普通 pu 乘数使用。
 - 电流 PI、速度 PI、ADC 校准超时、ALIGN 步数、电流参考和速度环分频由 Motor 控制配置提供。`motor_limits_t` 当前只声明，运行路径不读取。
 - `FOC_NUMERIC_FLOAT` 与 `FOC_NUMERIC_FIXED` 编译期二选一；Core、Motor 和 Encoder 共用相同的控制逻辑。
 - `foc/foc.mk` 编译数值/角度数学、Core、PID、调制、Encoder、SMO Observer、Motor 和 App。NLFO、HFI 等其它算法仍不进入当前构建。
@@ -121,7 +122,7 @@ float 且启用 `MWAVEFORM_ENABLE` 时，App 注册 `Sine500`、`WaveSeq`、
 
 ## 7. 当前实现边界
 
-- 当前运行角度源是位置传感器；无感 shadow、无感接管和融合控制均未接入。
+- 当前运行角度源是位置传感器；SMO 已由 Motor 实例化并运行验证，但无感接管和融合控制均未接入。HFI 只保留编译宏预留，尚未实现。
 - 当前不实现位置闭环、多电机管理或运行时算法切换。
 - 本文只维护模块职责和架构关系；具体板卡配置与电机调试由独立使用指南维护。
 - 若增加控制模式或改变对象边界，应先更新模块图/状态机并审核，再修改实现；不能把未来设计提案误当成当前架构。
