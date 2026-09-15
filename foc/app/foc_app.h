@@ -35,10 +35,22 @@ typedef struct {
     int64_t lReportTimestamp;
 } foc_app_hf_stats_t;
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+#include "foc_identify.h"
+#define FOC_IDENTIFY_CMD_NONE   0U
+#define FOC_IDENTIFY_CMD_START  1U
+#define FOC_IDENTIFY_CMD_CANCEL 2U
+#endif
+
 typedef struct {
     modus_base_t *ptBase;
     motor_t tMotor;
     foc_encoder_t tEncoder;
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    foc_identify_t tIdentify;
+    foc_dq_t tLastVoltageCommandDqPu;
+    volatile uint8_t chIdentifyCommand;
+#endif
 #if FOC_ENABLE_SMO
     foc_observer_t tObserver;
 #endif

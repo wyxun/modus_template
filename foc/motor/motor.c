@@ -47,6 +47,10 @@ static bool motor_ConfigValid(const motor_cfg_t *ptConfig)
         ptConfig->qElectricalSpeedBaseTurnsPerSecond <= FOC_ZERO ||
         ptConfig->tLimits.qMaxSpeedReference <= FOC_ZERO ||
         ptConfig->tLimits.qMaxSpeedReference > FOC_ONE ||
+        ptConfig->tLimits.qMaxPhaseCurrent <= FOC_ZERO ||
+        ptConfig->tLimits.qMaxPhaseCurrent > FOC_ONE ||
+        ptConfig->tLimits.qMaxModulation <= FOC_ZERO ||
+        ptConfig->tLimits.qMaxModulation > FOC_ONE ||
         ptConfig->tControl.chSpeedLoopDiv == 0U ||
         ptConfig->tControl.wAdcCalibrationTimeoutSteps == 0U ||
         ptConfig->tControl.wAlignSteps == 0U ||
@@ -309,6 +313,7 @@ static void motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
     }
     ptMotor->tElectricalZero = motor_MechanicalToElectrical(
         ptMotor, tPosition.tMechanicalAngle);
+    ptMotor->bElectricalZeroValid = true;
     foc_pwm_Stop();
     ptMotor->bPwmEnabled = false;
     foc_observer_Reset(ptMotor->tCfg.ptObserver);
@@ -375,6 +380,10 @@ foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
     if (ptMotor->tCfg.fnGetPosition == NULL) {
         return FOC_RESULT_DISABLED;
     }
+    /* 硬件 break 锁存未清除时禁止重新使能功率级 */
+    if (foc_pwm_GetFaultStatus()) {
+        return FOC_RESULT_SAFETY;
+    }
     tIrqState = perfc_port_disable_global_interrupt();
     if (ptMotor->eState != MOTOR_STATE_IDLE ||
         ptMotor->wFaults != MOTOR_FAULT_NONE ||
@@ -428,6 +437,12 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
         perfc_port_resume_global_interrupt(tIrqState);
         return FOC_RESULT_BUSY;
     }
+    /* 清除 PWM 故障前先确认硬件 break 源已释放，否则拒绝 */
+    if ((ptMotor->wFaults & (uint32_t)MOTOR_FAULT_PWM) != 0U &&
+        foc_pwm_ClearFaultStatus() != FOC_RESULT_OK) {
+        perfc_port_resume_global_interrupt(tIrqState);
+        return FOC_RESULT_SAFETY;
+    }
     bAdcCalibrationFault = (ptMotor->wFaults &
                             (uint32_t)MOTOR_FAULT_ADC_CAL) != 0U;
     ptMotor->wFaults = MOTOR_FAULT_NONE;
@@ -445,6 +460,18 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
     return FOC_RESULT_OK;
 }
 
+void motor_PollBreakFault(motor_t *ptMotor)
+{
+    perfc_global_interrupt_status_t tIrqState = 0U;
+
+    if (ptMotor == NULL || !foc_pwm_GetFaultStatus()) {
+        return;
+    }
+    tIrqState = perfc_port_disable_global_interrupt();
+    motor_EnterFault(ptMotor, MOTOR_FAULT_PWM);
+    perfc_port_resume_global_interrupt(tIrqState);
+}
+
 /**
  * @brief Update one selected reference under the ISR handoff guard.
  * @param ptMotor Motor object.
@@ -452,7 +479,9 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
  * @param ptReference Reference pair to write.
  * @param qD D-axis value.
  * @param qQ Q-axis value.
- * @return FOC_RESULT_OK or a state/mode error.
+ * @return FOC_RESULT_OK, FOC_RESULT_OUT_OF_RANGE when the vector
+ *         magnitude exceeds the mode limit, or FOC_RESULT_INVALID_ARGUMENT
+ *         for a non-finite value or state/mode error.
  */
 static foc_result_t motor_SetDqReference(motor_t *ptMotor,
                                          foc_control_mode_e eMode,
@@ -461,9 +490,28 @@ static foc_result_t motor_SetDqReference(motor_t *ptMotor,
                                          foc_scalar_t qQ)
 {
     perfc_global_interrupt_status_t tIrqState = 0U;
+    foc_scalar_t qLimit = FOC_ZERO;
+    foc_scalar_t qMagSq = FOC_ZERO;
+    foc_scalar_t qLimSq = FOC_ZERO;
 
     if (ptMotor == NULL || ptReference == NULL) {
         return FOC_RESULT_NULL;
+    }
+    /* NaN/Inf 会使幅值比较恒为 false 而被放行，必须先拒 */
+    if (!foc_scalar_is_finite(qD) || !foc_scalar_is_finite(qQ)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    /* 电压用调制度上限、电流用相电流上限；拒绝越界参考，
+       避免浮点/定点行为分叉及逆变器饱和。 */
+    if (eMode == FOC_MODE_VOLTAGE) {
+        qLimit = ptMotor->tCfg.tLimits.qMaxModulation;
+    } else {
+        qLimit = ptMotor->tCfg.tLimits.qMaxPhaseCurrent;
+    }
+    qMagSq = foc_add_sat(foc_mul_wide(qD, qD), foc_mul_wide(qQ, qQ));
+    qLimSq = foc_mul_wide(qLimit, qLimit);
+    if (qMagSq > qLimSq) {
+        return FOC_RESULT_OUT_OF_RANGE;
     }
     tIrqState = perfc_port_disable_global_interrupt();
     if (ptMotor->tCommand.eMode != eMode ||
@@ -508,6 +556,9 @@ foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
 
     if (ptMotor == NULL) {
         return FOC_RESULT_NULL;
+    }
+    if (!foc_scalar_is_finite(qSpeedReferencePu)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
     }
     tIrqState = perfc_port_disable_global_interrupt();
     if (ptMotor->tCommand.eMode != FOC_MODE_SPEED ||
@@ -599,6 +650,7 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
     ptStatus->wFaults = ptMotor->wFaults;
     ptStatus->eMode = ptMotor->tCommand.eMode;
     ptStatus->bPwmEnabled = ptMotor->bPwmEnabled;
+    ptStatus->bElectricalZeroValid = ptMotor->bElectricalZeroValid;
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;
 }

@@ -110,6 +110,7 @@ void peripheral_Init(void)
 
     extern void haladc_EnableISR(void);
     haladc_EnableISR();
+    haltim1_EnableISR();
 }
 
 /* --------------------------------------------------------------------------

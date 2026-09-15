@@ -92,6 +92,7 @@ typedef struct {
     motor_state_e eState;
     uint32_t wFaults;
     bool bPwmEnabled;
+    bool bElectricalZeroValid;
 } motor_t;
 
 typedef struct {
@@ -99,6 +100,7 @@ typedef struct {
     uint32_t wFaults;
     foc_control_mode_e eMode;
     bool bPwmEnabled;
+    bool bElectricalZeroValid;
 } motor_status_t;
 
 /**
@@ -130,6 +132,16 @@ void motor_Stop(motor_t *ptMotor);
  * @return FOC_RESULT_OK or a state error.
  */
 foc_result_t motor_ClearFault(motor_t *ptMotor);
+
+/**
+ * @brief Latch MOTOR_FAULT_PWM when the power-stage break fault is active.
+ * @param ptMotor Motor object.
+ * @return None.
+ * @note Called from the foreground loop: the hardware break clears MOE,
+ *       which stops the ADC trigger and thus the high-frequency ISR, so
+ *       this polling path is the only way to reflect the fault in state.
+ */
+void motor_PollBreakFault(motor_t *ptMotor);
 
 /**
  * @brief Set voltage references through the Motor API.

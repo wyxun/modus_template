@@ -66,4 +66,22 @@ foc_result_t foc_pwm_Enable(void);
  */
 void foc_pwm_Stop(void);
 
+/**
+ * @brief Read the power-stage fault latch owned by the port adapter.
+ * @return true when a hardware break/OCP event is latched.
+ */
+bool foc_pwm_GetFaultStatus(void);
+
+/**
+ * @brief Clear a released power-stage fault latch.
+ * @return FOC_RESULT_OK only when the source and latch are clear.
+ */
+foc_result_t foc_pwm_ClearFaultStatus(void);
+
+/**
+ * @brief Notify the port adapter that its break IRQ has fired.
+ * @note Called only by the target interrupt adapter.
+ */
+void foc_pwm_NotifyBreak(void);
+
 #endif /* FOC_PORT_H */

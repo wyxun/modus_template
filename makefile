@@ -247,7 +247,34 @@ vpath %.S $(sort $(dir $(ASM_SOURCES)))
 $(BUILD_DIR)/foc_%.o: CFLAGS += -O2
 $(BUILD_DIR)/motor.o: CFLAGS += -O2
 
-$(BUILD_DIR)/%.o: %.c | $(BUILD_DIR)
+# ------------------------------------------------------------------------------
+# Build configuration signature tracking
+# Triggers recompile whenever target, flags, or numeric backend changes
+# ------------------------------------------------------------------------------
+BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(FOC_NUMERIC)-id_$(FOC_EXPERIMENTAL_IDENTIFY)-nsd_$(FOC_EXPERIMENTAL_NSD)-mod_$(MODUS_ENABLE)
+
+CONFIG_STAMP = $(BUILD_DIR)/.config_stamp
+
+ifeq ($(OS),Windows_NT)
+    PREV_CONFIG := $(shell if exist $(subst /,\,$(CONFIG_STAMP)) type $(subst /,\,$(CONFIG_STAMP)) 2>nul)
+else
+    PREV_CONFIG := $(shell cat $(CONFIG_STAMP) 2>/dev/null)
+endif
+
+ifneq ($(strip $(PREV_CONFIG)),$(strip $(BUILD_CONFIG_SIGNATURE)))
+.PHONY: $(CONFIG_STAMP)
+endif
+
+$(CONFIG_STAMP): | $(BUILD_DIR)
+ifeq ($(OS),Windows_NT)
+	@echo $(BUILD_CONFIG_SIGNATURE)> $(subst /,\,$(CONFIG_STAMP))
+else
+	@echo $(BUILD_CONFIG_SIGNATURE) > $(CONFIG_STAMP)
+endif
+
+$(OBJECTS): $(CONFIG_STAMP)
+
+$(BUILD_DIR)/%.o: %.c $(CONFIG_STAMP) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -o $@ $<
 
 $(BUILD_DIR)/%.o: %.s | $(BUILD_DIR)

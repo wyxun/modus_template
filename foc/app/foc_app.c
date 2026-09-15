@@ -15,6 +15,10 @@
 
 #include "foc_port_config.h"
 #include "foc_config.h"
+#include "motor_config.h"
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+#include "foc_port.h"
+#endif
 #include "mdebug/mwaveform.h"
 #include "mdebug/util_debug.h"
 #include "perf_counter.h"
@@ -31,6 +35,9 @@ static int foc_app_Run(uintptr_t wObjectAddr);
 static bool foc_app_GetHfAverage(foc_app_t *ptThis,
                                  uint32_t *pwAverageTicks);
 static void foc_app_ReportHfAverage(foc_app_t *ptThis);
+#if MSHELL_ENABLE && FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+static void foc_app_PrintIdentify(foc_identify_t *ptIdentify);
+#endif
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 static void foc_app_WaveformInit(foc_app_t *ptThis,
                                  uint32_t wPeriodNanoseconds);
@@ -288,6 +295,31 @@ static void foc_app_WaveformStep(void)
 }
 #endif
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+/**
+ * @brief Initialize the embedded parameter identify controller.
+ * @param ptThis FOC App instance.
+ * @return FOC_RESULT_OK on success or an identify initialization error.
+ */
+static foc_result_t foc_app_InitIdentify(foc_app_t *ptThis)
+{
+    foc_identify_cfg_t tIdCfg = {
+        .qV_low = IDENTIFY_V_LOW_PU,
+        .qV_high = IDENTIFY_V_HIGH_PU,
+        .qV_Ld = IDENTIFY_V_LD_PU,
+        .qV_Lq = IDENTIFY_V_LQ_PU,
+        .qCurrentLimit = IDENTIFY_CURRENT_LIMIT_PU,
+        .qMinDeltaI = IDENTIFY_MIN_DELTA_I_PU,
+        .qRadiansPerSample = IDENTIFY_RADIANS_PER_SAMPLE,
+        .qMaxDisplacement = IDENTIFY_MAX_DISPLACEMENT_PU,
+    };
+
+    ptThis->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
+    ptThis->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    return foc_identify_Init(&ptThis->tIdentify, &tIdCfg);
+}
+#endif
+
 int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
@@ -358,6 +390,13 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         foc_pwm_Stop();
         return (int)eMotor;
     }
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    eResult = foc_app_InitIdentify(ptThis);
+    if (eResult != FOC_RESULT_OK) {
+        foc_pwm_Stop();
+        return (int)eResult;
+    }
+#endif
     nBaseResult = mbase_Init(ptThis->ptBase, &s_tFocAppBaseCfg);
     if (nBaseResult != MODUS_SUCCESS) {
         foc_pwm_Stop();
@@ -392,6 +431,7 @@ static int foc_app_Run(uintptr_t wObjectAddr)
         PERFC_PT_WAIT_UNTIL(perfc_is_time_out_us(
             1000U, &ptThis->lForegroundTimestamp, true))
         foc_app_ReportHfAverage(ptThis);
+        motor_PollBreakFault(&ptThis->tMotor);
         if (!ptThis->bReady) {
             continue;
         }
@@ -412,6 +452,105 @@ static int foc_app_Run(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+/**
+ * @brief Consume pending identify commands before the PWM duty calculation.
+ * @param ptApp FOC App object.
+ * @return None.
+ */
+static void foc_app_IdentifyCommandISR(foc_app_t *ptApp)
+{
+    foc_identify_t *ptId = &ptApp->tIdentify;
+
+    if (ptApp->chIdentifyCommand == FOC_IDENTIFY_CMD_START) {
+        ptApp->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
+        (void)foc_identify_ConsumeTerminal(ptId);
+        if (foc_identify_Start(ptId) == FOC_RESULT_OK) {
+            if (ptApp->tMotor.eState == MOTOR_STATE_RUNNING) {
+                motor_Stop(&ptApp->tMotor);
+            }
+            if (motor_Start(&ptApp->tMotor, FOC_MODE_VOLTAGE) ==
+                FOC_RESULT_OK) {
+                foc_result_t eSet = motor_SetVoltageReference(
+                    &ptApp->tMotor,
+                    ptId->tOutput.tVoltageRefPu.qD,
+                    ptId->tOutput.tVoltageRefPu.qQ);
+
+                if (eSet == FOC_RESULT_OK) {
+                    ptApp->tLastVoltageCommandDqPu =
+                        ptId->tOutput.tVoltageRefPu;
+                } else {
+                    foc_identify_Abort(ptId);
+                    motor_Stop(&ptApp->tMotor);
+                    ptApp->tLastVoltageCommandDqPu =
+                        (foc_dq_t){FOC_ZERO, FOC_ZERO};
+                }
+            }
+        }
+    } else if (ptApp->chIdentifyCommand == FOC_IDENTIFY_CMD_CANCEL) {
+        ptApp->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
+        foc_identify_Abort(ptId);
+        motor_Stop(&ptApp->tMotor);
+        ptApp->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    } else {
+        /* No pending command. */
+    }
+}
+
+/**
+ * @brief Step the parameter identification controller after motor step.
+ * @param ptApp FOC App object.
+ * @param wNowTick Current low 32-bit system tick.
+ * @return None.
+ */
+static void foc_app_IdentifyStepISR(foc_app_t *ptApp, uint32_t wNowTick)
+{
+    foc_identify_t *ptId = &ptApp->tIdentify;
+    foc_identify_status_e eStatus = ptId->tOutput.eStatus;
+
+    if ((eStatus != FOC_IDENTIFY_STATUS_IDLE) &&
+        (eStatus != FOC_IDENTIFY_STATUS_COMPLETE) &&
+        (eStatus != FOC_IDENTIFY_STATUS_ERROR)) {
+        foc_identify_input_t tInput = {0};
+        foc_identify_output_t tOutput = {0};
+        foc_position_t tPos = {0};
+        foc_result_t ePos = foc_encoder_GetPosition(
+            &ptApp->tEncoder, wNowTick, &tPos);
+
+        tInput.tCurrentDqPu = ptApp->tMotor.tCore.tCurrent;
+        tInput.tLastVoltageCommandDqPu = ptApp->tLastVoltageCommandDqPu;
+        tInput.tMechanicalAngle = tPos.tMechanicalAngle;
+        tInput.bValid = (ePos == FOC_RESULT_OK) &&
+                        tPos.bValid &&
+                        (ptApp->tMotor.eState == MOTOR_STATE_RUNNING) &&
+                        ptApp->tMotor.bElectricalZeroValid;
+        tInput.bFault = foc_pwm_GetFaultStatus() ||
+                        (ptApp->tMotor.wFaults != MOTOR_FAULT_NONE);
+
+        (void)foc_identify_Step(ptId, &tInput, &tOutput);
+        if (tOutput.bStopPwm) {
+            motor_Stop(&ptApp->tMotor);
+            ptApp->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+        } else if (tOutput.bRefChanged) {
+            foc_result_t eSet = motor_SetVoltageReference(
+                &ptApp->tMotor,
+                tOutput.tVoltageRefPu.qD,
+                tOutput.tVoltageRefPu.qQ);
+            if (eSet == FOC_RESULT_OK) {
+                ptApp->tLastVoltageCommandDqPu = tOutput.tVoltageRefPu;
+            } else {
+                foc_identify_Abort(ptId);
+                motor_Stop(&ptApp->tMotor);
+                ptApp->tLastVoltageCommandDqPu =
+                    (foc_dq_t){FOC_ZERO, FOC_ZERO};
+            }
+        } else {
+            /* Keep voltage reference unchanged. */
+        }
+    }
+}
+#endif
+
 void foc_app_HighFrequencyISR(void)
 {
     int64_t lStartTicks = get_system_ticks();
@@ -420,9 +559,15 @@ void foc_app_HighFrequencyISR(void)
     uint32_t wElapsedTicks = 0U;
 
     wNowTick = (uint32_t)lStartTicks;
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    foc_app_IdentifyCommandISR(&tFocApp);
+#endif
     if (tFocApp.bReady) {
         motor_HighFrequencyStep(&tFocApp.tMotor, wNowTick);
     }
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    foc_app_IdentifyStepISR(&tFocApp, wNowTick);
+#endif
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     foc_app_WaveformStep();
 #endif
@@ -535,6 +680,116 @@ static void foc_app_PrintEncoder(const foc_encoder_t *ptEncoder)
           foc_to_float(tPosition.qMechanicalSpeed));
 }
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+/**
+ * @brief Print identification controller state, results, and physical units.
+ * @param ptIdentify Pointer to identify controller instance.
+ * @return None.
+ */
+static void foc_app_PrintIdentify(foc_identify_t *ptIdentify)
+{
+    static const char *const s_apcStatusNames[] = {
+        "IDLE", "RS_LOW", "RS_HIGH", "ZERO", "LD", "LQ", "COMPLETE", "ERROR"
+    };
+    foc_identify_result_t tResult = {0};
+    foc_identify_status_e eStatus = ptIdentify->tOutput.eStatus;
+    const char *pszStatus = "UNKNOWN";
+
+    if ((uint32_t)eStatus <
+        (uint32_t)(sizeof(s_apcStatusNames) / sizeof(s_apcStatusNames[0]))) {
+        pszStatus = s_apcStatusNames[(uint32_t)eStatus];
+    }
+    MLOGF(I, "identify status: %s (tick=%u)\r\n",
+          pszStatus, (unsigned)ptIdentify->hwTicks);
+
+    if (eStatus == FOC_IDENTIFY_STATUS_COMPLETE) {
+        if (foc_identify_GetResult(ptIdentify, &tResult) == FOC_RESULT_OK) {
+            float fRsPu = foc_to_float(tResult.qResistancePu);
+            float fLdPu = foc_to_float(tResult.qInductanceDPu);
+            float fLqPu = foc_to_float(tResult.qInductanceQPu);
+            float fZbase = (float)MOTOR_BASE_VOLTAGE_MV /
+                           (float)MOTOR_BASE_CURRENT_MA;
+            float fRsOhm = fRsPu * fZbase;
+            float fLbaseMicroH = (fZbase / (2.0f * 3.141592653589793f *
+                                  MOTOR_BASE_ELECTRICAL_HZ)) * 1000000.0f;
+            float fLdMicroH = fLdPu * fLbaseMicroH;
+            float fLqMicroH = fLqPu * fLbaseMicroH;
+
+            MLOGF(I, "identify PU: Rs=%.4f, Ld=%.4f, Lq=%.4f\r\n",
+                  fRsPu, fLdPu, fLqPu);
+            MLOGF(I, "identify SI: Rs=%.3f ohm, Ld=%.1f uH, Lq=%.1f uH\r\n",
+                  fRsOhm, fLdMicroH, fLqMicroH);
+        }
+        (void)foc_identify_ConsumeTerminal(ptIdentify);
+    } else if (eStatus == FOC_IDENTIFY_STATUS_ERROR) {
+        MLOGF(W, "identify failed with error code: %d\r\n",
+              (int)ptIdentify->eFailure);
+        (void)foc_identify_ConsumeTerminal(ptIdentify);
+    } else {
+        /* Identification is active or idle. */
+    }
+}
+
+/**
+ * @brief Handle 'motor identify' subcommands from the Shell.
+ * @param pszSub Subcommand string after 'identify'.
+ * @return None.
+ */
+static void foc_app_CmdIdentify(const char *pszSub)
+{
+    while (*pszSub == ' ') {
+        pszSub++;
+    }
+    if (strncmp(pszSub, "start", 5U) == 0) {
+        foc_identify_status_e eStatus = tFocApp.tIdentify.tOutput.eStatus;
+        motor_status_t tMotorStatus = {0};
+
+        if ((eStatus != FOC_IDENTIFY_STATUS_IDLE) &&
+            (eStatus != FOC_IDENTIFY_STATUS_COMPLETE) &&
+            (eStatus != FOC_IDENTIFY_STATUS_ERROR)) {
+            MLOGF(W, "identify busy (status=%u)\r\n", (unsigned)eStatus);
+            return;
+        }
+        if (motor_GetStatus(&tFocApp.tMotor, &tMotorStatus) != FOC_RESULT_OK) {
+            MLOGF(E, "cannot read motor status\r\n");
+            return;
+        }
+        if (tMotorStatus.eState != MOTOR_STATE_IDLE) {
+            MLOGF(W, "motor not idle (state=%u)\r\n",
+                  (unsigned)tMotorStatus.eState);
+            return;
+        }
+        if (!tMotorStatus.bElectricalZeroValid) {
+            MLOGF(W,
+                  "electrical zero not calibrated, run 'motor align' first\r\n");
+            return;
+        }
+        if (!tFocApp.bReady) {
+            MLOGF(W, "encoder not ready\r\n");
+            return;
+        }
+        if (tMotorStatus.wFaults != MOTOR_FAULT_NONE) {
+            MLOGF(W, "motor has fault 0x%08X, run 'motor clear'\r\n",
+                  (unsigned)tMotorStatus.wFaults);
+            return;
+        }
+        if (foc_pwm_ClearFaultStatus() != FOC_RESULT_OK) {
+            MLOGF(E, "cannot start: hardware break fault latched\r\n");
+            return;
+        }
+        tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_START;
+        MLOGF(I, "identify started\r\n");
+    } else if (strncmp(pszSub, "cancel", 6U) == 0) {
+        tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_CANCEL;
+        MLOGF(I, "identify cancelled\r\n");
+    } else if (strncmp(pszSub, "status", 6U) == 0 || *pszSub == '\0') {
+        foc_app_PrintIdentify(&tFocApp.tIdentify);
+    } else {
+        MLOGF(I, "usage: motor identify [start|cancel|status]\r\n");
+    }
+}
+#endif
+
 /**
  * @brief Parse and submit one Motor command family command.
  * @param args Command arguments after the motor command name.
@@ -602,10 +857,16 @@ static void foc_app_CmdMotor(const char *args)
     } else if (strncmp(args, "encoder", 7U) == 0) {
         foc_app_PrintEncoder(&tFocApp.tEncoder);
         return;
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    } else if (strncmp(args, "identify", 8U) == 0) {
+        foc_app_CmdIdentify(args + 8);
+        return;
+#endif
     } else {
-        MLOGF(I, "usage: motor speed <e-speed-pu> | current <d> <q> | "
-              "voltage <d> <q> | align | stop | clear | status | "
-              "encoder\r\n");
+        MLOGF(I, "usage: motor speed <pu> | current <d> <q> | "
+              "voltage <d> <q> | align | stop | clear\r\n"
+              "       motor status | encoder | "
+              "identify [start|cancel|status]\r\n");
         return;
     }
     if (bStarted && eResult != FOC_RESULT_OK) {
@@ -617,21 +878,22 @@ static void foc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, foc_app_CmdMotor,
-                "FOC Motor: speed/current/voltage/align/stop/clear/status/"
-                "encoder");
+                "FOC Motor: control/align/stop/clear/status/encoder/identify");
 #endif
 
 #if FOC_PORT_HAS_POSITION
 MODUS_DECLARE_OBJECT(foc_app, FocApp,
     .tMotorCfg = {
         .tParams = {
-            .chPolePairs = 7U,
-            .wResistanceMilliohm = 500U,
-            .wInductanceDMicroHenry = 1000U,
-            .wInductanceQMicroHenry = 1000U,
+            .chPolePairs = MOTOR_POLE_PAIRS,
+            .wResistanceMilliohm = MOTOR_RESISTANCE_MILLIOHM,
+            .wInductanceDMicroHenry = MOTOR_INDUCTANCE_D_MICROHENRY,
+            .wInductanceQMicroHenry = MOTOR_INDUCTANCE_Q_MICROHENRY,
         },
         .tLimits = {
             .qMaxSpeedReference = FOC_SCALAR(100.0f),
+            .qMaxPhaseCurrent = FOC_SCALAR(1.0f),
+            .qMaxModulation = FOC_SCALAR(0.5773502692f),
         },
         .tControl = {
             .tCurrentPiParams = {
@@ -678,23 +940,25 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         },
     },
 #endif
-    .wVoltageBaseMillivolt = 12000U,
-    .wCurrentBaseMilliamp = 7000U,
-    .wHighFrequencyPeriodNanoseconds = 50000U,
-    /* The electrical-speed scale remains a Gate 0 measurement. */
-    .qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f),
+    .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
+    .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
+    .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,
+    .qElectricalSpeedBaseTurnsPerSecond =
+        FOC_SCALAR(MOTOR_BASE_ELECTRICAL_HZ),
     )
 #else
 MODUS_DECLARE_OBJECT(foc_app, FocApp,
     .tMotorCfg = {
         .tParams = {
-            .chPolePairs = 7U,
-            .wResistanceMilliohm = 500U,
-            .wInductanceDMicroHenry = 1000U,
-            .wInductanceQMicroHenry = 1000U,
+            .chPolePairs = MOTOR_POLE_PAIRS,
+            .wResistanceMilliohm = MOTOR_RESISTANCE_MILLIOHM,
+            .wInductanceDMicroHenry = MOTOR_INDUCTANCE_D_MICROHENRY,
+            .wInductanceQMicroHenry = MOTOR_INDUCTANCE_Q_MICROHENRY,
         },
         .tLimits = {
             .qMaxSpeedReference = FOC_SCALAR(100.0f),
+            .qMaxPhaseCurrent = FOC_SCALAR(1.0f),
+            .qMaxModulation = FOC_SCALAR(0.5773502692f),
         },
         .tControl = {
             .tCurrentPiParams = {
@@ -734,10 +998,10 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         },
     },
 #endif
-    .wVoltageBaseMillivolt = 12000U,
-    .wCurrentBaseMilliamp = 7000U,
-    .wHighFrequencyPeriodNanoseconds = 50000U,
-    /* The electrical-speed scale remains a Gate 0 measurement. */
-    .qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f),
+    .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
+    .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
+    .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,
+    .qElectricalSpeedBaseTurnsPerSecond =
+        FOC_SCALAR(MOTOR_BASE_ELECTRICAL_HZ),
     )
 #endif

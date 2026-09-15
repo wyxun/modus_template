@@ -85,19 +85,19 @@ Motor 获取接口；现成固件提供的上层操作入口是下面的 `motor`
 | `motor encoder` | 显示有效性、机械角度（度）和机械速度（机械圈/秒） |
 | `motor align` | 执行固定电角度 D 轴电流对齐并捕获电气零位 |
 | `motor current <d> <q>` | 启动电流模式并设置 D/Q 电流参考 |
-| `motor speed <e-turn/s>` | 启动速度模式并设置电气圈/秒参考 |
+| `motor speed <pu>` | 启动速度模式并设置电速度标幺参考 |
 | `motor voltage <d> <q>` | 启动电压模式并设置 D/Q 电压参考 |
 | `motor stop` | 立即停止功率级 |
 | `motor clear` | 清除可恢复的锁存故障 |
 
-current 和 voltage 的数值是归一化 FOC 值，不是 SI 单位；不同板卡上相同数值可能对应不同的实际电流或电压。speed 使用电气圈/秒（electrical turn/s），机械转速与电速度的关系为：
+current、voltage 和 speed 的数值都是归一化 FOC 标幺值（pu），不是 SI 单位；不同板卡上相同数值可能对应不同的实际电流、电压或转速。speed 的 1.0 pu 对应额定电速度基准（当前 STM32G431 配置为 100 电气圈/秒），换算关系为：
 
 ~~~text
-electrical turns/s = mechanical RPM × pole_pairs / 60
+electrical turns/s = speed_pu × base_electrical_turns_per_second
 mechanical RPM     = electrical turns/s × 60 / pole_pairs
 ~~~
 
-例如，7 对极电机的 motor speed 1.0 对应约 8.57 rpm 的机械转速目标。实际响应还取决于速度 PI、电流环、负载和电压余量。
+例如，基准 100 电气圈/秒、7 对极电机时，motor speed 1.0 对应 100 电气圈/秒、约 857 rpm 的机械转速目标。实际响应还取决于速度 PI、电流环、负载和电压余量。
 
 ## 4. 新电机适配
 
@@ -216,7 +216,7 @@ motor status
 motor stop
 ~~~
 
-1.0 表示 1 电气圈/秒，不是 1 rpm。结合极对数、母线电压和负载确定合理范围，不要直接沿用旧测试报告中的速度或验收数字。
+1.0 表示 1.0 pu（即 100 电气圈/秒的额定电速度基准），不是 1 rpm。结合极对数、母线电压和负载确定合理范围，不要直接沿用旧测试报告中的速度或验收数字。
 
 ## 6. 波形、日志与故障定位
 

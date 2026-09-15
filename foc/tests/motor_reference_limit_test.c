@@ -1,27 +1,13 @@
 /****************************************************************************
- * @file    motor_speed_pu_test.c
- * @brief   Host test for mechanical-to-electrical speed PU conversion.
+ * @file    motor_reference_limit_test.c
+ * @brief   Host test for current/voltage DQ vector-magnitude limits.
  ****************************************************************************/
 
 #include <assert.h>
 #include <math.h>
+#include <stdio.h>
 
 #include "motor.h"
-
-static foc_core_input_t s_tLastInput = {0};
-static foc_core_command_t s_tLastCommand = {0};
-static foc_scalar_t s_qMechanicalSpeed = FOC_ZERO;
-
-/**
- * @brief Check a scalar value against a floating-point expectation.
- * @param qActual Actual backend value.
- * @param fExpected Expected value.
- * @return None.
- */
-static void test_AssertNear(foc_scalar_t qActual, float fExpected)
-{
-    assert(fabsf(foc_to_float(qActual) - fExpected) < 0.001f);
-}
 
 /**
  * @brief Supply one valid mechanical position.
@@ -37,46 +23,26 @@ static foc_result_t test_GetPosition(void *pContext,
     (void)pContext;
     (void)wNowTick;
     ptPosition->tMechanicalAngle = (foc_angle_t){0U};
-    ptPosition->qMechanicalSpeed = s_qMechanicalSpeed;
+    ptPosition->qMechanicalSpeed = FOC_ZERO;
     ptPosition->bValid = true;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Capture the Motor input passed to Core.
- * @param ptState Unused Core state.
- * @param ptCommand Motor command.
- * @param ptInput Motor input.
- * @return FOC_RESULT_OK.
- */
 foc_result_t foc_core_step(foc_core_state_t *ptState,
                            const foc_core_command_t *ptCommand,
                            const foc_core_input_t *ptInput)
 {
     (void)ptState;
-    s_tLastInput = *ptInput;
-    s_tLastCommand = *ptCommand;
+    (void)ptCommand;
+    (void)ptInput;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Reset the test Core state.
- * @param ptState Core state.
- * @return None.
- */
 void foc_core_Reset(foc_core_state_t *ptState)
 {
     (void)ptState;
 }
 
-/**
- * @brief Accept the test current transform.
- * @param qIu U-phase current.
- * @param qIv V-phase current.
- * @param qIw W-phase current.
- * @param ptAB Output alpha-beta current.
- * @return FOC_RESULT_OK.
- */
 foc_result_t foc_clarke(foc_scalar_t qIu,
                         foc_scalar_t qIv,
                         foc_scalar_t qIw,
@@ -89,34 +55,17 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Start test ADC calibration as complete.
- * @param ptCalibration Calibration state.
- * @return None.
- */
 void foc_adc_CalibBegin(foc_adc_calib_t *ptCalibration)
 {
     ptCalibration->bIsCalibrated = true;
 }
 
-/**
- * @brief Report test ADC calibration complete.
- * @param ptCalibration Calibration state.
- * @return FOC_CALIBRATION_COMPLETE.
- */
-foc_calibration_state_e foc_adc_CalibStep(
-    foc_adc_calib_t *ptCalibration)
+foc_calibration_state_e foc_adc_CalibStep(foc_adc_calib_t *ptCalibration)
 {
     (void)ptCalibration;
     return FOC_CALIBRATION_COMPLETE;
 }
 
-/**
- * @brief Return a zero-current sample.
- * @param ptCalibration Calibration state.
- * @param ptCurrent Sample output.
- * @return FOC_RESULT_OK.
- */
 foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
                             foc_current_abc_t *ptCurrent)
 {
@@ -125,30 +74,17 @@ foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Accept one safe test PWM duty.
- * @param ptDuty PWM duty.
- * @return FOC_RESULT_OK.
- */
 foc_result_t foc_pwm_SetDuty(const foc_duty_abc_t *ptDuty)
 {
     (void)ptDuty;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Enable the test PWM.
- * @return FOC_RESULT_OK.
- */
 foc_result_t foc_pwm_Enable(void)
 {
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Disable the test PWM.
- * @return None.
- */
 void foc_pwm_Stop(void)
 {
 }
@@ -164,7 +100,7 @@ foc_result_t foc_pwm_ClearFaultStatus(void)
 }
 
 /**
- * @brief Verify normalized speed feedback and speed-loop response.
+ * @brief Verify current/voltage reference vector-magnitude rejection.
  * @return Zero on success.
  */
 int main(void)
@@ -187,13 +123,13 @@ int main(void)
     tConfig.tControl.wAlignSteps = 1U;
     tConfig.tControl.qAlignCurrent = FOC_SCALAR(0.1f);
     eResult = foc_gain_from_float(1.0f,
-        &tConfig.tControl.tSpeedPiParams.tKp);
+                                  &tConfig.tControl.tSpeedPiParams.tKp);
     assert(eResult == FOC_RESULT_OK);
     eResult = foc_gain_from_float(0.0f,
-        &tConfig.tControl.tSpeedPiParams.tKiTs);
+                                  &tConfig.tControl.tSpeedPiParams.tKiTs);
     assert(eResult == FOC_RESULT_OK);
     eResult = foc_gain_from_float(0.0f,
-        &tConfig.tControl.tSpeedPiParams.tKdOverTs);
+                                  &tConfig.tControl.tSpeedPiParams.tKdOverTs);
     assert(eResult == FOC_RESULT_OK);
     tConfig.tControl.tSpeedPiParams.qOutputMinimum = FOC_NEG_ONE;
     tConfig.tControl.tSpeedPiParams.qOutputMaximum = FOC_ONE;
@@ -204,29 +140,43 @@ int main(void)
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
     motor_HighFrequencyStep(&tMotor, 0U);
-    eResult = motor_Start(&tMotor, FOC_MODE_SPEED);
-    assert(eResult == FOC_RESULT_OK);
 
-    s_qMechanicalSpeed = FOC_SCALAR(10.0f);
-    eResult = motor_SetSpeedReference(&tMotor, FOC_SCALAR(0.8f));
+    /* Current mode: vector magnitude limited to qMaxPhaseCurrent (1.0). */
+    eResult = motor_Start(&tMotor, FOC_MODE_CURRENT);
     assert(eResult == FOC_RESULT_OK);
-    motor_HighFrequencyStep(&tMotor, 1U);
-    test_AssertNear(s_tLastInput.qElectricalSpeedPu, 0.7f);
-    test_AssertNear(s_tLastCommand.tCurrentReference.qQ, 0.1f);
-
-    s_qMechanicalSpeed = FOC_SCALAR(-10.0f);
-    eResult = motor_SetSpeedReference(&tMotor, FOC_SCALAR(-0.8f));
+    eResult = motor_SetCurrentReference(&tMotor,
+                                        FOC_SCALAR(0.5f), FOC_SCALAR(0.5f));
     assert(eResult == FOC_RESULT_OK);
-    motor_HighFrequencyStep(&tMotor, 2U);
-    test_AssertNear(s_tLastInput.qElectricalSpeedPu, -0.7f);
-    test_AssertNear(s_tLastCommand.tCurrentReference.qQ, -0.1f);
-
-    eResult = motor_SetSpeedReference(&tMotor, FOC_SCALAR(1.1f));
+    eResult = motor_SetCurrentReference(&tMotor,
+                                        FOC_SCALAR(1.0f), FOC_SCALAR(1.0f));
     assert(eResult == FOC_RESULT_OUT_OF_RANGE);
 #if defined(FOC_NUMERIC_FLOAT)
-    eResult = motor_SetSpeedReference(&tMotor, (foc_scalar_t)NAN);
+    eResult = motor_SetCurrentReference(&tMotor, (foc_scalar_t)NAN, FOC_ZERO);
+    assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
+    eResult = motor_SetCurrentReference(&tMotor, (foc_scalar_t)INFINITY,
+                                       FOC_ZERO);
     assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
 #endif
     motor_Stop(&tMotor);
+
+    /* Voltage mode: vector magnitude limited to qMaxModulation (0.577). */
+    eResult = motor_Start(&tMotor, FOC_MODE_VOLTAGE);
+    assert(eResult == FOC_RESULT_OK);
+    eResult = motor_SetVoltageReference(&tMotor,
+                                        FOC_SCALAR(0.4f), FOC_SCALAR(0.4f));
+    assert(eResult == FOC_RESULT_OK);
+    eResult = motor_SetVoltageReference(&tMotor,
+                                        FOC_SCALAR(0.5f), FOC_SCALAR(0.5f));
+    assert(eResult == FOC_RESULT_OUT_OF_RANGE);
+#if defined(FOC_NUMERIC_FLOAT)
+    eResult = motor_SetVoltageReference(&tMotor, (foc_scalar_t)NAN, FOC_ZERO);
+    assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
+    eResult = motor_SetVoltageReference(&tMotor, (foc_scalar_t)INFINITY,
+                                       FOC_ZERO);
+    assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
+#endif
+    motor_Stop(&tMotor);
+
+    printf("Motor reference limit tests passed!\n");
     return 0;
 }

@@ -167,6 +167,16 @@ void foc_pwm_Stop(void)
     s_bPwmEnabled = false;
 }
 
+bool foc_pwm_GetFaultStatus(void)
+{
+    return false;
+}
+
+foc_result_t foc_pwm_ClearFaultStatus(void)
+{
+    return FOC_RESULT_OK;
+}
+
 /**
  * @brief Verify Run and ALIGN pass one identical Clarke result to Core.
  * @param None.
@@ -197,6 +207,8 @@ int main(void)
     tConfig.tParams.wCurrentBaseMilliamp = 7000U;
     tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
+    tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
+    tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
     eResult = foc_observer_Init(&tObserver, &tConfig.tParams,
                                 &tObserverConfig);
     assert(eResult == FOC_RESULT_OK);

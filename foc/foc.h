@@ -18,6 +18,10 @@
 #include "observer/foc_observer.h"
 #include "motor/motor.h"
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+#include "identify/foc_identify.h"
+#endif
+
 #include "app/foc_app.h"
 
 #endif /* __FOC_H__ */

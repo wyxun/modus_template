@@ -11,7 +11,9 @@
 #include <stdint.h>
 
 #include "haladc.h"
+#include "halcomp.h"
 #include "haltim1.h"
+#include "perf_counter.h"
 #include "mdi/mdi.h"
 #include "mdi_hw.h"
 #include "port_mdi.h"
@@ -26,6 +28,11 @@
 #define FOC_PORT_OFFSET_MAX         60000U
 
 static uint32_t s_wCurrentBaseMilliamp = 0U;
+
+/* 硬件 break 故障软件锁存：由 TIM1 break ISR 经 foc_pwm_NotifyBreak()
+   置位，前台确认硬件源释放后经 ClearFaultStatus 清除。ISR 与前台共享，
+   volatile 保证可见性，单 bit 读写为原子操作。 */
+static volatile bool s_bBreakLatched = false;
 
 /**
  * @brief Read the three injected ADC channels with the board mapping.
@@ -228,6 +235,44 @@ void foc_pwm_Stop(void)
             /* The hardware path is already commanded to its safe state. */
         }
     }
+}
+
+bool foc_pwm_GetFaultStatus(void)
+{
+    return s_bBreakLatched || haltim1_GetBreakFault();
+}
+
+/**
+ * @brief Check whether any overcurrent comparator input is still tripped.
+ * @return true when the break source (COMP1/2/4) is still active.
+ */
+static bool port_break_source_active(void)
+{
+    return (halcomp_GetOutput(HALCOMP_IDX_COMP1) != 0U) ||
+           (halcomp_GetOutput(HALCOMP_IDX_COMP2) != 0U) ||
+           (halcomp_GetOutput(HALCOMP_IDX_COMP4) != 0U);
+}
+
+foc_result_t foc_pwm_ClearFaultStatus(void)
+{
+    foc_result_t eResult = FOC_RESULT_SAFETY;
+    perfc_global_interrupt_status_t tIrqState = 0U;
+
+    /* 临界区内检查源并清锁存，避免 break ISR 在两步之间重入而丢失
+       新故障；源仍活跃（比较器仍触发）时禁止清除。硬件 BIF 由 ISR
+       经 haltim1_ClearBreakFault 清除，此处只负责软件锁存。 */
+    tIrqState = perfc_port_disable_global_interrupt();
+    if (!port_break_source_active()) {
+        s_bBreakLatched = false;
+        eResult = FOC_RESULT_OK;
+    }
+    perfc_port_resume_global_interrupt(tIrqState);
+    return eResult;
+}
+
+void foc_pwm_NotifyBreak(void)
+{
+    s_bBreakLatched = true;
 }
 
 as5600_t g_tFocAs5600;

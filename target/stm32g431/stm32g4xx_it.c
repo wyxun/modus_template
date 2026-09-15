@@ -13,6 +13,8 @@
 #include "halfdcan.h"
 #include "mdebug_cm.h"
 #include "foc_app.h"
+#include "foc_port.h"
+#include "haltim1.h"
 #include <math.h>
 
 /* Exported by main.c */
@@ -59,7 +61,9 @@ void FDCAN1_IT1_IRQHandler(void)    { HAL_FDCAN_IRQHandler(&hfdcan1); }
 /* ---- TIM1 (motor PWM) ---- */
 void TIM1_BRK_TIM15_IRQHandler(void)
 {
-    TIM1->SR &= ~TIM_SR_BIF;
+    /* 先锁存软件故障，再清硬件标志，避免前台读到被清空的 BIF */
+    foc_pwm_NotifyBreak();
+    (void)haltim1_ClearBreakFault();
 }
 
 void TIM1_UP_TIM16_IRQHandler(void)

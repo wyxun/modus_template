@@ -82,6 +82,25 @@ typedef struct {
 #endif
 
 /**
+ * @brief  检查标量是否为有限值（非 NaN 且非 Inf）
+ * @param  qValue  标量值
+ * @return true=有限合法值, false=NaN 或 Inf
+ */
+#if defined(FOC_NUMERIC_FLOAT)
+#include <math.h>
+static inline bool foc_scalar_is_finite(foc_scalar_t qValue)
+{
+    return isfinite(qValue) != 0;
+}
+#else
+static inline bool foc_scalar_is_finite(foc_scalar_t qValue)
+{
+    (void)qValue;
+    return true;
+}
+#endif
+
+/**
  * @brief  将 float 转换为当前数值后端表示的定点标量
  * @param  fValue  浮点输入
  * @return         定点标量

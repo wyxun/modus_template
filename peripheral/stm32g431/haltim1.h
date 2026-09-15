@@ -15,5 +15,10 @@ void haltim1_Start(void);
 /** @brief Start TIM1 CH4 ADC trigger without enabling power outputs. */
 void haltim1_StartAdcTrigger(void);
 void haltim1_Stop(void);
+bool haltim1_GetBreakFault(void);
+bool haltim1_ClearBreakFault(void);
+/** @brief Enable the TIM1 break interrupt in the NVIC (called after all
+ *  peripheral init). */
+void haltim1_EnableISR(void);
 
 #endif /* __HALTIM1_H__ */

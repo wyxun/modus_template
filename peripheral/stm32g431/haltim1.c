@@ -141,9 +141,19 @@ void haltim1_Init(void)
     gpio.Pin = GPIO_PIN_12;             /* CH2N (PA12) */
     HAL_GPIO_Init(GPIOA, &gpio);
 
+    /* Break 事件中断：硬件 MOE 已由 break 输入直接关断，此中断仅用于
+       软件锁存通知（经 foc_pwm_NotifyBreak）。 */
+    LL_TIM_EnableIT_BRK(TIM1);
+    HAL_NVIC_SetPriority(TIM1_BRK_TIM15_IRQn, 2, 0);
+
     /* Start counter (outputs disabled until haltim1_Start) */
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_EnableCounter(TIM1);
+}
+
+void haltim1_EnableISR(void)
+{
+    HAL_NVIC_EnableIRQ(TIM1_BRK_TIM15_IRQn);
 }
 
 void haltim1_SetDuty(float fU, float fV, float fW)
@@ -189,3 +199,15 @@ void haltim1_Stop(void)
     LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH2 | LL_TIM_CHANNEL_CH2N);
     LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
 }
+
+bool haltim1_GetBreakFault(void)
+{
+    return LL_TIM_IsActiveFlag_BRK(TIM1) != 0U;
+}
+
+bool haltim1_ClearBreakFault(void)
+{
+    LL_TIM_ClearFlag_BRK(TIM1);
+    return LL_TIM_IsActiveFlag_BRK(TIM1) == 0U;
+}
+

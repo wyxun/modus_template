@@ -548,6 +548,9 @@ int main(void)
         tConfig.tMotorCfg.tParams.wInductanceQMicroHenry = 1000U;
         tConfig.tMotorCfg.tLimits.qMaxSpeedReference =
             FOC_SCALAR(100.0f);
+        tConfig.tMotorCfg.tLimits.qMaxPhaseCurrent = FOC_SCALAR(1.0f);
+        tConfig.tMotorCfg.tLimits.qMaxModulation =
+            FOC_SCALAR(0.5773502692f);
         tConfig.wVoltageBaseMillivolt = 12000U;
         tConfig.wCurrentBaseMilliamp = 7000U;
         tConfig.wHighFrequencyPeriodNanoseconds = 50000U;

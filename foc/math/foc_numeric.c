@@ -111,12 +111,21 @@ foc_result_t foc_div_checked(foc_scalar_t qNumerator,
     if (pqResult == NULL) {
         return FOC_RESULT_NULL;
     }
+#if defined(FOC_NUMERIC_FLOAT)
+    if (!isfinite(qNumerator) || !isfinite(qDenominator)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
     if (qDenominator == FOC_ZERO) {
         return FOC_RESULT_DIVIDE_BY_ZERO;
     }
-#if defined(FOC_NUMERIC_FLOAT)
     *pqResult = qNumerator / qDenominator;
+    if (!isfinite(*pqResult)) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
 #else
+    if (qDenominator == FOC_ZERO) {
+        return FOC_RESULT_DIVIDE_BY_ZERO;
+    }
     int64_t llResult = ((int64_t)qNumerator * FOC_Q_SCALE) / qDenominator;
     if (llResult > INT32_MAX || llResult < INT32_MIN) {
         return FOC_RESULT_OUT_OF_RANGE;
