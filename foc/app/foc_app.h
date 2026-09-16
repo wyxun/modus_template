@@ -14,11 +14,14 @@
 #include "modus.h"
 #include "foc_config.h"
 #include "foc_encoder.h"
+#include "foc_port.h"
 #include "motor.h"
 
 typedef struct {
     motor_cfg_t tMotorCfg;
     foc_encoder_cfg_t tEncoderCfg;
+    const foc_adc_if_t *ptAdc;
+    const foc_pwm_if_t *ptPwm;
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;
     uint32_t wHighFrequencyPeriodNanoseconds;

@@ -11,20 +11,30 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "foc_position.h"
+#include "motor_position.h"
 
-typedef int32_t (*foc_encoder_sensor_init_fn)(void *pContext);
-typedef int32_t (*foc_encoder_sensor_read_fn)(void *pContext,
-                                              uint16_t *phwRawAngle);
+typedef struct {
+    foc_result_t (*fnInit)(void *pContext);
+    foc_result_t (*fnRead)(void *pContext, uint16_t *phwRawAngle);
+} foc_encoder_sensor_ops_t;
+
+typedef struct {
+    const foc_encoder_sensor_ops_t *ptOps;
+    void *pContext;
+} foc_encoder_sensor_if_t;
 
 typedef struct {
     foc_scalar_t qSpeedFilterAlpha;
     uint32_t wInvalidTimeoutUs;
     bool bDirectionInvert;
-    foc_encoder_sensor_init_fn fnSensorInit;
-    foc_encoder_sensor_read_fn fnSensorRead;
-    void *pSensorContext;
+    const foc_encoder_sensor_if_t *ptSensor;
 } foc_encoder_cfg_t;
+
+typedef enum {
+    FOC_ENCODER_STATE_UNINITIALIZED = 0,
+    FOC_ENCODER_STATE_IDLE,
+    FOC_ENCODER_STATE_ERROR,
+} foc_encoder_state_e;
 
 typedef struct {
     foc_position_t tPosition;
@@ -32,7 +42,9 @@ typedef struct {
 } foc_encoder_position_slot_t;
 
 typedef struct {
-    foc_encoder_cfg_t tCfg;
+    foc_encoder_sensor_if_t tSensor;
+    foc_scalar_t qSpeedFilterAlpha;
+    bool bDirectionInvert;
     foc_encoder_position_slot_t atPosition[2];
     uint32_t wTickFrequency;
     uint32_t wInvalidTimeoutTicks;
@@ -41,7 +53,17 @@ typedef struct {
     /* Publication metadata is atomic on the target and orders slot access. */
     volatile uint8_t chPublishedIndex;
     volatile bool bHasSample;
+    foc_encoder_state_e eState;
+    foc_result_t eLastError;
+    uint32_t wFaults;
 } foc_encoder_t;
+
+typedef struct {
+    foc_encoder_state_e eState;
+    foc_result_t eLastError;
+    uint32_t wFaults;
+    bool bHasSample;
+} foc_encoder_status_t;
 
 /**
  * @brief Initialize the encoder and its bound raw sensor.
@@ -57,7 +79,30 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
  * @param ptEncoder Encoder object.
  * @return FOC_RESULT_OK or the sensor read error.
  */
-foc_result_t foc_encoder_Update(foc_encoder_t *ptEncoder);
+foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder);
+
+/**
+ * @brief Stop foreground Encoder service and retain the latest cache.
+ * @param ptEncoder Encoder object.
+ * @return None.
+ */
+void foc_encoder_Stop(foc_encoder_t *ptEncoder);
+
+/**
+ * @brief Reset one Encoder Driver to its uninitialized state.
+ * @param ptEncoder Encoder object.
+ * @return FOC_RESULT_OK or FOC_RESULT_NULL.
+ */
+foc_result_t foc_encoder_Reset(foc_encoder_t *ptEncoder);
+
+/**
+ * @brief Copy the Encoder Driver status.
+ * @param ptEncoder Encoder object.
+ * @param ptStatus Output status snapshot.
+ * @return FOC_RESULT_OK or FOC_RESULT_NULL.
+ */
+foc_result_t foc_encoder_GetStatus(const foc_encoder_t *ptEncoder,
+                                   foc_encoder_status_t *ptStatus);
 
 /**
  * @brief Read a consistent, age-checked mechanical position snapshot.
@@ -66,7 +111,7 @@ foc_result_t foc_encoder_Update(foc_encoder_t *ptEncoder);
  * @param ptPosition Output position snapshot.
  * @return FOC_RESULT_OK or a safety/argument error.
  */
-foc_result_t foc_encoder_GetPosition(const foc_encoder_t *ptEncoder,
+foc_result_t foc_encoder_GetPosition(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition);
 
@@ -77,8 +122,14 @@ foc_result_t foc_encoder_GetPosition(const foc_encoder_t *ptEncoder,
  * @param ptPosition Output position snapshot.
  * @return FOC_RESULT_OK or a safety/argument error.
  */
-foc_result_t foc_encoder_CaptureZero(const foc_encoder_t *ptEncoder,
+foc_result_t foc_encoder_CaptureZero(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition);
+
+/**
+ * @brief Typed Motor position interface implemented by Encoder.
+ * @note The table is immutable and contains no Encoder instance state.
+ */
+extern const motor_position_ops_t g_tFocEncoderPositionOps;
 
 #endif /* FOC_ENCODER_H */

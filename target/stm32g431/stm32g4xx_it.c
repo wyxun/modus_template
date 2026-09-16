@@ -14,6 +14,7 @@
 #include "mdebug_cm.h"
 #include "foc_app.h"
 #include "foc_port.h"
+#include "foc_port_config.h"
 #include "haltim1.h"
 #include <math.h>
 
@@ -62,7 +63,7 @@ void FDCAN1_IT1_IRQHandler(void)    { HAL_FDCAN_IRQHandler(&hfdcan1); }
 void TIM1_BRK_TIM15_IRQHandler(void)
 {
     /* 先锁存软件故障，再清硬件标志，避免前台读到被清空的 BIF */
-    foc_pwm_NotifyBreak();
+    foc_port_NotifyBreak(foc_port_GetPwmContext());
     (void)haltim1_ClearBreakFault();
 }
 

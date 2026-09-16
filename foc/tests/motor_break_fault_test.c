@@ -12,7 +12,7 @@
 static bool s_bBreakFault = false;
 static bool s_bClearOk = true;
 
-static foc_result_t test_GetPosition(void *pContext,
+static foc_result_t test_GetPosition(const void *pContext,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition)
 {
@@ -51,53 +51,100 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
     return FOC_RESULT_OK;
 }
 
-void foc_adc_CalibBegin(foc_adc_calib_t *ptCalibration)
+static foc_result_t test_AdcCalibrationBegin(
+    void *pContext,
+    foc_adc_calib_t *ptCalibration)
 {
+    (void)pContext;
     ptCalibration->bIsCalibrated = true;
+    return FOC_RESULT_OK;
 }
 
-foc_calibration_state_e foc_adc_CalibStep(foc_adc_calib_t *ptCalibration)
+static foc_calibration_state_e test_AdcCalibrationStep(
+    void *pContext,
+    foc_adc_calib_t *ptCalibration)
 {
+    (void)pContext;
     (void)ptCalibration;
     return FOC_CALIBRATION_COMPLETE;
 }
 
-foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
-                            foc_current_abc_t *ptCurrent)
+static foc_result_t test_AdcSample(
+    void *pContext,
+    const foc_adc_calib_t *ptCalibration,
+    foc_current_abc_t *ptCurrent)
 {
+    (void)pContext;
     (void)ptCalibration;
     *ptCurrent = (foc_current_abc_t){FOC_ZERO, FOC_ZERO, FOC_ZERO};
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_pwm_SetDuty(const foc_duty_abc_t *ptDuty)
+static foc_result_t test_PwmSetDuty(void *pContext,
+                                    const foc_duty_abc_t *ptDuty)
 {
+    (void)pContext;
     (void)ptDuty;
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_pwm_Enable(void)
+static foc_result_t test_PwmEnable(void *pContext)
 {
+    (void)pContext;
     return FOC_RESULT_OK;
 }
 
-void foc_pwm_Stop(void)
+static foc_result_t test_PwmStop(void *pContext)
 {
+    (void)pContext;
+    return FOC_RESULT_OK;
 }
 
-bool foc_pwm_GetFaultStatus(void)
+static bool test_PwmGetFault(void *pContext)
 {
+    (void)pContext;
     return s_bBreakFault;
 }
 
-foc_result_t foc_pwm_ClearFaultStatus(void)
+static foc_result_t test_PwmClearFault(void *pContext)
 {
+    (void)pContext;
     if (!s_bClearOk) {
         return FOC_RESULT_SAFETY;
     }
     s_bBreakFault = false;
     return FOC_RESULT_OK;
 }
+
+static foc_result_t test_AdcSetCurrentBase(void *pContext,
+                                           uint32_t wCurrentBaseMilliamp)
+{
+    (void)pContext;
+    (void)wCurrentBaseMilliamp;
+    return FOC_RESULT_OK;
+}
+
+static const foc_adc_ops_t s_tAdcOps = {
+    .fnSetCurrentBase = test_AdcSetCurrentBase,
+    .fnCalibrationBegin = test_AdcCalibrationBegin,
+    .fnCalibrationStep = test_AdcCalibrationStep,
+    .fnSample = test_AdcSample,
+};
+
+static const foc_pwm_ops_t s_tPwmOps = {
+    .fnSetDuty = test_PwmSetDuty,
+    .fnEnable = test_PwmEnable,
+    .fnStop = test_PwmStop,
+    .fnGetFaultStatus = test_PwmGetFault,
+    .fnClearFaultStatus = test_PwmClearFault,
+};
+
+static const motor_position_ops_t s_tPositionOps = {
+    .fnGetPosition = test_GetPosition,
+    .fnCaptureZero = test_GetPosition,
+};
+
+static uint8_t s_chPositionContext = 0U;
 
 /**
  * @brief Verify break fault latches, blocks start, and clears.
@@ -118,29 +165,34 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.fnGetPosition = test_GetPosition;
-    tConfig.tControl.chSpeedLoopDiv = 1U;
-    tConfig.tControl.wAdcCalibrationTimeoutSteps = 2U;
-    tConfig.tControl.wAlignSteps = 1U;
-    tConfig.tControl.qAlignCurrent = FOC_SCALAR(0.1f);
+    tConfig.tAdc.ptOps = &s_tAdcOps;
+    tConfig.tAdc.pContext = &s_chPositionContext;
+    tConfig.tPwm.ptOps = &s_tPwmOps;
+    tConfig.tPwm.pContext = &s_chPositionContext;
+    tConfig.tPosition.ptOps = &s_tPositionOps;
+    tConfig.tPosition.pContext = &s_chPositionContext;
+    tConfig.chSpeedLoopDiv = 1U;
+    tConfig.wAdcCalibrationTimeoutSteps = 2U;
+    tConfig.wAlignSteps = 1U;
+    tConfig.qAlignCurrent = FOC_SCALAR(0.1f);
     eResult = foc_gain_from_float(1.0f,
-                                  &tConfig.tControl.tSpeedPiParams.tKp);
+                                  &tConfig.tSpeedPiParams.tKp);
     assert(eResult == FOC_RESULT_OK);
     eResult = foc_gain_from_float(0.0f,
-                                  &tConfig.tControl.tSpeedPiParams.tKiTs);
+                                  &tConfig.tSpeedPiParams.tKiTs);
     assert(eResult == FOC_RESULT_OK);
     eResult = foc_gain_from_float(0.0f,
-                                  &tConfig.tControl.tSpeedPiParams.tKdOverTs);
+                                  &tConfig.tSpeedPiParams.tKdOverTs);
     assert(eResult == FOC_RESULT_OK);
-    tConfig.tControl.tSpeedPiParams.qOutputMinimum = FOC_NEG_ONE;
-    tConfig.tControl.tSpeedPiParams.qOutputMaximum = FOC_ONE;
-    tConfig.tControl.tSpeedPiParams.qIntegratorMinimum = FOC_NEG_ONE;
-    tConfig.tControl.tSpeedPiParams.qIntegratorMaximum = FOC_ONE;
-    tConfig.tControl.tCurrentPiParams = tConfig.tControl.tSpeedPiParams;
+    tConfig.tSpeedPiParams.qOutputMinimum = FOC_NEG_ONE;
+    tConfig.tSpeedPiParams.qOutputMaximum = FOC_ONE;
+    tConfig.tSpeedPiParams.qIntegratorMinimum = FOC_NEG_ONE;
+    tConfig.tSpeedPiParams.qIntegratorMaximum = FOC_ONE;
+    tConfig.tCurrentPiParams = tConfig.tSpeedPiParams;
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
-    motor_HighFrequencyStep(&tMotor, 0U);
+    motor_IsrStep(&tMotor, 0U);
 
     /* 1. Latched break blocks motor_Start. */
     s_bBreakFault = true;

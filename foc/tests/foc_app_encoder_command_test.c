@@ -10,6 +10,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../hal/foc_port.h"
+#include "../observer/foc_encoder.h"
+
+const foc_adc_if_t g_tFocAdcInterface = {0};
+const foc_pwm_if_t g_tFocPwmInterface = {0};
+const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface = {0};
+
 #include "../app/foc_app.c"
 
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
@@ -152,7 +159,6 @@ static int64_t s_lTickStep = 0;
 static uint32_t s_wShortTimeoutBudget = 0U;
 static bool s_bReportTimeout = false;
 static uint32_t s_wMotorStepCount = 0U;
-static uint32_t s_wCurrentBaseMilliamp = 0U;
 static motor_cfg_t s_tCapturedMotorConfig = {0};
 
 uint8_t g_chGLogMask = MLOG_MASK_ALL;
@@ -169,40 +175,6 @@ int64_t get_system_ticks(void)
 
     s_lSystemTick += s_lTickStep;
     return lTick;
-}
-
-/**
- * @brief Return no sensor context for unused initialization paths.
- * @param None.
- * @return NULL.
- */
-void *foc_port_PositionContext(void)
-{
-    return NULL;
-}
-
-/**
- * @brief Stub sensor initialization for unused App initialization paths.
- * @param pContext Sensor context.
- * @return Success.
- */
-int32_t foc_port_PositionInit(void *pContext)
-{
-    (void)pContext;
-    return 0;
-}
-
-/**
- * @brief Stub sensor reads for unused App initialization paths.
- * @param pContext Sensor context.
- * @param phwRawAngle Output raw angle.
- * @return Success.
- */
-int32_t foc_port_PositionRead(void *pContext, uint16_t *phwRawAngle)
-{
-    (void)pContext;
-    *phwRawAngle = 0U;
-    return 0;
 }
 
 /**
@@ -224,20 +196,13 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
  * @param ptEncoder Encoder object.
  * @return FOC_RESULT_OK.
  */
-foc_result_t foc_encoder_Update(foc_encoder_t *ptEncoder)
+foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
 {
     (void)ptEncoder;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Stub PWM stop for the unused App initialization path.
- * @param None.
- * @return None.
- */
-void foc_pwm_Stop(void)
-{
-}
+const motor_position_ops_t g_tFocEncoderPositionOps = {0};
 
 /**
  * @brief Stub Motor initialization for the unused App initialization path.
@@ -253,24 +218,12 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
 }
 
 /**
- * @brief Capture the ADC physical current base.
- * @param wCurrentBaseMilliamp Requested base in milliamps.
- * @return FOC_RESULT_OK for a nonzero base.
- */
-foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp)
-{
-    s_wCurrentBaseMilliamp = wCurrentBaseMilliamp;
-    return (wCurrentBaseMilliamp != 0U) ? FOC_RESULT_OK :
-                                          FOC_RESULT_INVALID_ARGUMENT;
-}
-
-/**
  * @brief Stub the Motor high-frequency path.
  * @param ptMotor Motor object.
  * @param wNowTick Current tick.
  * @return None.
  */
-void motor_HighFrequencyStep(motor_t *ptMotor, uint32_t wNowTick)
+void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick)
 {
     (void)ptMotor;
     (void)wNowTick;
@@ -380,12 +333,12 @@ void util_debug_Printf(const char *pchFormat, ...)
  * @param ptPosition Output position.
  * @return FOC_RESULT_OK.
  */
-foc_result_t foc_encoder_GetPosition(const foc_encoder_t *ptEncoder,
+foc_result_t foc_encoder_GetPosition(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition)
 {
     s_wPositionCallCount++;
-    s_ptReadEncoder = ptEncoder;
+    s_ptReadEncoder = (const foc_encoder_t *)pEncoder;
     s_wReadTick = wNowTick;
     if (s_ePositionResult != FOC_RESULT_OK) {
         return s_ePositionResult;
@@ -565,20 +518,21 @@ int main(void)
         tConfig.wCurrentBaseMilliamp = 7000U;
         tConfig.wHighFrequencyPeriodNanoseconds = 50000U;
         tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+        tConfig.ptAdc = &g_tFocAdcInterface;
+        tConfig.ptPwm = &g_tFocPwmInterface;
         assert(foc_gain_from_float(0.2f,
-            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKp) ==
+            &tConfig.tMotorCfg.tSpeedPiParams.tKp) ==
                FOC_RESULT_OK);
         assert(foc_gain_from_float(0.005f,
-            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKiTs) ==
+            &tConfig.tMotorCfg.tSpeedPiParams.tKiTs) ==
                FOC_RESULT_OK);
         assert(foc_gain_from_float(0.0f,
-            &tConfig.tMotorCfg.tControl.tSpeedPiParams.tKdOverTs) ==
+            &tConfig.tMotorCfg.tSpeedPiParams.tKdOverTs) ==
                FOC_RESULT_OK);
         int nInitResult = foc_app_Init((uintptr_t)&tFocApp,
                                        (uintptr_t)&tConfig);
 
         assert(nInitResult == MODUS_SUCCESS);
-        assert(s_wCurrentBaseMilliamp == 7000U);
         assert(s_tCapturedMotorConfig.tParams.wVoltageBaseMillivolt ==
                12000U);
         assert(s_tCapturedMotorConfig.tParams.wCurrentBaseMilliamp ==
@@ -587,10 +541,10 @@ int main(void)
                FOC_SCALAR(100.0f));
         assert(s_tCapturedMotorConfig.tLimits.qMaxSpeedReference == FOC_ONE);
         assert(fabsf(foc_to_float(foc_gain_apply(
-                   &s_tCapturedMotorConfig.tControl.tSpeedPiParams.tKp,
+                   &s_tCapturedMotorConfig.tSpeedPiParams.tKp,
                    FOC_SCALAR(0.1f))) - 2.0f) < 0.001f);
         assert(fabsf(foc_to_float(foc_gain_apply(
-                   &s_tCapturedMotorConfig.tControl.tSpeedPiParams.tKiTs,
+                   &s_tCapturedMotorConfig.tSpeedPiParams.tKiTs,
                    FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
         assert(s_chWaveCount == 6U);

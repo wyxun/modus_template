@@ -142,7 +142,7 @@ void haltim1_Init(void)
     HAL_GPIO_Init(GPIOA, &gpio);
 
     /* Break 事件中断：硬件 MOE 已由 break 输入直接关断，此中断仅用于
-       软件锁存通知（经 foc_pwm_NotifyBreak）。 */
+       软件锁存通知。 */
     LL_TIM_EnableIT_BRK(TIM1);
     HAL_NVIC_SetPriority(TIM1_BRK_TIM15_IRQn, 2, 0);
 

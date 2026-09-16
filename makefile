@@ -18,7 +18,7 @@ ifdef target
 endif
 
 TARGET_CHIP ?= stm32g431
-CLASS_SOURCES = class/template_class.c
+CLASS_SOURCES = class/template_class.c template_driver.c
 
 include target/$(TARGET_CHIP)/target.mk
 

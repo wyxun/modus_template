@@ -15,13 +15,14 @@
 #define FOC_ENCODER_RESOLUTION       4096U
 #define FOC_ENCODER_HALF_RESOLUTION  2048
 #define FOC_ENCODER_TIMEOUT_MIN_TICK 1U
+#define FOC_ENCODER_FAULT_SENSOR     (1UL << 0)
 
 /**
  * @brief Convert one 12-bit raw angle to BAM32.
  * @param hwRawAngle Raw 12-bit angle.
  * @return Mechanical BAM32 angle.
  */
-static foc_angle_t encoder_raw_to_angle(uint16_t hwRawAngle)
+static foc_angle_t _foc_encoder_raw_to_angle(uint16_t hwRawAngle)
 {
     return (foc_angle_t){(uint32_t)hwRawAngle << 20};
 }
@@ -32,8 +33,8 @@ static foc_angle_t encoder_raw_to_angle(uint16_t hwRawAngle)
  * @param hwLastRawAngle Previous raw angle.
  * @return Signed raw-angle delta.
  */
-static int16_t encoder_raw_delta(uint16_t hwRawAngle,
-                                 uint16_t hwLastRawAngle)
+static int16_t _foc_encoder_raw_delta(uint16_t hwRawAngle,
+                                      uint16_t hwLastRawAngle)
 {
     int32_t nDelta = (int32_t)hwRawAngle - (int32_t)hwLastRawAngle;
 
@@ -54,9 +55,9 @@ static int16_t encoder_raw_delta(uint16_t hwRawAngle,
  * @param wTickFrequency System tick frequency.
  * @return Mechanical speed in the selected scalar backend.
  */
-static foc_scalar_t encoder_sample_speed(int16_t nDelta,
-                                         uint32_t wElapsedTicks,
-                                         uint32_t wTickFrequency)
+static foc_scalar_t _foc_encoder_sample_speed(int16_t nDelta,
+                                              uint32_t wElapsedTicks,
+                                              uint32_t wTickFrequency)
 {
     if (wElapsedTicks == 0U || wTickFrequency == 0U) {
         return FOC_ZERO;
@@ -89,9 +90,9 @@ static foc_scalar_t encoder_sample_speed(int16_t nDelta,
  * @param wTickFrequency System tick frequency.
  * @return Mechanical turn displacement.
  */
-static foc_scalar_t encoder_age_turns(foc_scalar_t qSpeed,
-                                      uint32_t wAgeTicks,
-                                      uint32_t wTickFrequency)
+static foc_scalar_t _foc_encoder_age_turns(foc_scalar_t qSpeed,
+                                           uint32_t wAgeTicks,
+                                           uint32_t wTickFrequency)
 {
 #if defined(FOC_NUMERIC_FIXED)
     int64_t llTurns = (int64_t)qSpeed * (int64_t)wAgeTicks;
@@ -123,10 +124,10 @@ static foc_scalar_t encoder_age_turns(foc_scalar_t qSpeed,
  * @param ptPosition Mechanical sample to transform.
  * @return None.
  */
-static void encoder_apply_direction(const foc_encoder_t *ptEncoder,
-                                    foc_position_t *ptPosition)
+static void _foc_encoder_apply_direction(const foc_encoder_t *ptEncoder,
+                                         foc_position_t *ptPosition)
 {
-    if (ptEncoder->tCfg.bDirectionInvert) {
+    if (ptEncoder->bDirectionInvert) {
         ptPosition->tMechanicalAngle.wBam32 =
             0U - ptPosition->tMechanicalAngle.wBam32;
         ptPosition->qMechanicalSpeed = foc_sub_sat(
@@ -142,9 +143,9 @@ static void encoder_apply_direction(const foc_encoder_t *ptEncoder,
  * @return None.
  * @note The inactive slot is complete before the volatile index is published.
  */
-static void encoder_publish(foc_encoder_t *ptEncoder,
-                            const foc_position_t *ptPosition,
-                            uint32_t wSampleTick)
+static void _foc_encoder_publish(foc_encoder_t *ptEncoder,
+                                 const foc_position_t *ptPosition,
+                                 uint32_t wSampleTick)
 {
     uint8_t chNext = (uint8_t)(ptEncoder->chPublishedIndex ^ 1U);
 
@@ -153,30 +154,56 @@ static void encoder_publish(foc_encoder_t *ptEncoder,
     ptEncoder->chPublishedIndex = chNext;
 }
 
+/**
+ * @brief Record an Encoder initialization failure.
+ * @param ptEncoder Encoder object.
+ * @param eResult Failure result.
+ * @return The supplied failure result.
+ */
+static foc_result_t _foc_encoder_InitFailure(foc_encoder_t *ptEncoder,
+                                             foc_result_t eResult)
+{
+    ptEncoder->eLastError = eResult;
+    ptEncoder->wFaults |= FOC_ENCODER_FAULT_SENSOR;
+    ptEncoder->eState = FOC_ENCODER_STATE_ERROR;
+    return eResult;
+}
+
+const motor_position_ops_t g_tFocEncoderPositionOps = {
+    .fnGetPosition = foc_encoder_GetPosition,
+    .fnCaptureZero = foc_encoder_CaptureZero,
+};
+
 foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
                               const foc_encoder_cfg_t *ptConfig)
 {
     uint32_t wFrequency = 0U;
     uint64_t llTimeoutTicks = 0U;
-    int32_t nResult = 0;
+    foc_result_t eResult = FOC_RESULT_OK;
 
     if (ptEncoder == NULL || ptConfig == NULL) {
         return FOC_RESULT_NULL;
     }
     *ptEncoder = (foc_encoder_t){0};
-    if (ptConfig->fnSensorInit == NULL ||
-        ptConfig->fnSensorRead == NULL) {
-        return FOC_RESULT_DISABLED;
+    ptEncoder->eState = FOC_ENCODER_STATE_UNINITIALIZED;
+    ptEncoder->eLastError = FOC_RESULT_OK;
+    if (ptConfig->ptSensor == NULL ||
+        ptConfig->ptSensor->ptOps == NULL ||
+        ptConfig->ptSensor->ptOps->fnInit == NULL ||
+        ptConfig->ptSensor->ptOps->fnRead == NULL) {
+        return _foc_encoder_InitFailure(ptEncoder, FOC_RESULT_DISABLED);
     }
     if (ptConfig->qSpeedFilterAlpha < FOC_ZERO ||
         ptConfig->qSpeedFilterAlpha > FOC_ONE ||
         ptConfig->wInvalidTimeoutUs == 0U ||
-        ptConfig->pSensorContext == NULL) {
-        return FOC_RESULT_INVALID_ARGUMENT;
+        ptConfig->ptSensor->pContext == NULL) {
+        return _foc_encoder_InitFailure(ptEncoder,
+                                        FOC_RESULT_INVALID_ARGUMENT);
     }
     wFrequency = perfc_get_systimer_frequency();
     if (wFrequency == 0U) {
-        return FOC_RESULT_INVALID_ARGUMENT;
+        return _foc_encoder_InitFailure(ptEncoder,
+                                        FOC_RESULT_INVALID_ARGUMENT);
     }
     llTimeoutTicks = ((uint64_t)wFrequency *
                       (uint64_t)ptConfig->wInvalidTimeoutUs) /
@@ -187,19 +214,21 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
     if (llTimeoutTicks > UINT32_MAX) {
         llTimeoutTicks = UINT32_MAX;
     }
-    ptEncoder->tCfg = *ptConfig;
+    ptEncoder->tSensor = *ptConfig->ptSensor;
+    ptEncoder->qSpeedFilterAlpha = ptConfig->qSpeedFilterAlpha;
+    ptEncoder->bDirectionInvert = ptConfig->bDirectionInvert;
     ptEncoder->wTickFrequency = wFrequency;
     ptEncoder->wInvalidTimeoutTicks = (uint32_t)llTimeoutTicks;
-    nResult = ptEncoder->tCfg.fnSensorInit(
-        ptEncoder->tCfg.pSensorContext);
-    if (nResult != 0) {
-        *ptEncoder = (foc_encoder_t){0};
-        return FOC_RESULT_INVALID_ARGUMENT;
+    eResult = ptEncoder->tSensor.ptOps->fnInit(
+        ptEncoder->tSensor.pContext);
+    if (eResult != FOC_RESULT_OK) {
+        return _foc_encoder_InitFailure(ptEncoder, eResult);
     }
+    ptEncoder->eState = FOC_ENCODER_STATE_IDLE;
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_encoder_Update(foc_encoder_t *ptEncoder)
+foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
 {
     uint16_t hwRawAngle = 0U;
     uint32_t wSampleTick = 0U;
@@ -208,52 +237,98 @@ foc_result_t foc_encoder_Update(foc_encoder_t *ptEncoder)
     foc_scalar_t qRawSpeed = FOC_ZERO;
     foc_scalar_t qPreviousSpeed = FOC_ZERO;
     foc_scalar_t qSpeedDelta = FOC_ZERO;
-    int32_t nResult = 0;
+    foc_result_t eResult = FOC_RESULT_OK;
 
     if (ptEncoder == NULL) {
         return FOC_RESULT_NULL;
     }
-    if (ptEncoder->tCfg.fnSensorRead == NULL) {
+    if (ptEncoder->eState == FOC_ENCODER_STATE_UNINITIALIZED) {
         return FOC_RESULT_DISABLED;
     }
-    nResult = ptEncoder->tCfg.fnSensorRead(
-        ptEncoder->tCfg.pSensorContext, &hwRawAngle);
-    if (nResult != 0) {
-        return FOC_RESULT_INVALID_ARGUMENT;
+    if (ptEncoder->eState == FOC_ENCODER_STATE_ERROR) {
+        return ptEncoder->eLastError;
+    }
+    if (ptEncoder->tSensor.ptOps == NULL ||
+        ptEncoder->tSensor.ptOps->fnRead == NULL) {
+        return FOC_RESULT_DISABLED;
+    }
+    eResult = ptEncoder->tSensor.ptOps->fnRead(
+        ptEncoder->tSensor.pContext, &hwRawAngle);
+    if (eResult != FOC_RESULT_OK) {
+        ptEncoder->eLastError = eResult;
+        ptEncoder->wFaults |= FOC_ENCODER_FAULT_SENSOR;
+        return eResult;
     }
     wSampleTick = (uint32_t)get_system_ticks();
     hwRawAngle = (uint16_t)(hwRawAngle & 0x0FFFU);
-    tPosition.tMechanicalAngle = encoder_raw_to_angle(hwRawAngle);
+    tPosition.tMechanicalAngle = _foc_encoder_raw_to_angle(hwRawAngle);
     tPosition.qMechanicalSpeed = FOC_ZERO;
     tPosition.bValid = true;
     if (ptEncoder->bHasSample) {
         wElapsedTicks = wSampleTick - ptEncoder->wLastSampleTick;
-        qRawSpeed = encoder_sample_speed(
-            encoder_raw_delta(hwRawAngle, ptEncoder->hwLastRawAngle),
+        qRawSpeed = _foc_encoder_sample_speed(
+            _foc_encoder_raw_delta(hwRawAngle, ptEncoder->hwLastRawAngle),
             wElapsedTicks, ptEncoder->wTickFrequency);
         qPreviousSpeed = ptEncoder->atPosition[
             ptEncoder->chPublishedIndex].tPosition.qMechanicalSpeed;
-        if (ptEncoder->tCfg.bDirectionInvert) {
+        if (ptEncoder->bDirectionInvert) {
             qPreviousSpeed = foc_sub_sat(FOC_ZERO, qPreviousSpeed);
         }
         qSpeedDelta = foc_sub_sat(
             qRawSpeed, qPreviousSpeed);
         tPosition.qMechanicalSpeed = foc_add_sat(
             qPreviousSpeed,
-            foc_mul_wide(qSpeedDelta, ptEncoder->tCfg.qSpeedFilterAlpha));
+            foc_mul_wide(qSpeedDelta, ptEncoder->qSpeedFilterAlpha));
     }
-    encoder_apply_direction(ptEncoder, &tPosition);
-    encoder_publish(ptEncoder, &tPosition, wSampleTick);
+    _foc_encoder_apply_direction(ptEncoder, &tPosition);
+    _foc_encoder_publish(ptEncoder, &tPosition, wSampleTick);
     ptEncoder->hwLastRawAngle = hwRawAngle;
     ptEncoder->wLastSampleTick = wSampleTick;
     ptEncoder->bHasSample = true;
+    ptEncoder->eLastError = FOC_RESULT_OK;
+    ptEncoder->wFaults = 0U;
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_encoder_GetPosition(const foc_encoder_t *ptEncoder,
+void foc_encoder_Stop(foc_encoder_t *ptEncoder)
+{
+    if (ptEncoder == NULL) {
+        return;
+    }
+    if (ptEncoder->eState != FOC_ENCODER_STATE_UNINITIALIZED) {
+        ptEncoder->eState = FOC_ENCODER_STATE_IDLE;
+    }
+}
+
+foc_result_t foc_encoder_Reset(foc_encoder_t *ptEncoder)
+{
+    if (ptEncoder == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    *ptEncoder = (foc_encoder_t){0};
+    ptEncoder->eState = FOC_ENCODER_STATE_UNINITIALIZED;
+    ptEncoder->eLastError = FOC_RESULT_OK;
+    return FOC_RESULT_OK;
+}
+
+foc_result_t foc_encoder_GetStatus(const foc_encoder_t *ptEncoder,
+                                   foc_encoder_status_t *ptStatus)
+{
+    if (ptEncoder == NULL || ptStatus == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    ptStatus->eState = ptEncoder->eState;
+    ptStatus->eLastError = ptEncoder->eLastError;
+    ptStatus->wFaults = ptEncoder->wFaults;
+    ptStatus->bHasSample = ptEncoder->bHasSample;
+    return FOC_RESULT_OK;
+}
+
+foc_result_t foc_encoder_GetPosition(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition)
 {
+    const foc_encoder_t *ptEncoder = (const foc_encoder_t *)pEncoder;
     uint8_t chPublished = 0U;
     uint32_t wAgeTicks = 0U;
 
@@ -273,14 +348,14 @@ foc_result_t foc_encoder_GetPosition(const foc_encoder_t *ptEncoder,
     }
     ptPosition->tMechanicalAngle = foc_angle_add_scalar(
         ptPosition->tMechanicalAngle,
-        encoder_age_turns(ptPosition->qMechanicalSpeed,
-                          wAgeTicks, ptEncoder->wTickFrequency));
+        _foc_encoder_age_turns(ptPosition->qMechanicalSpeed,
+                                wAgeTicks, ptEncoder->wTickFrequency));
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_encoder_CaptureZero(const foc_encoder_t *ptEncoder,
+foc_result_t foc_encoder_CaptureZero(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition)
 {
-    return foc_encoder_GetPosition(ptEncoder, wNowTick, ptPosition);
+    return foc_encoder_GetPosition(pEncoder, wNowTick, ptPosition);
 }

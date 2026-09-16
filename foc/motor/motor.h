@@ -16,6 +16,7 @@
 #include "foc_observer.h"
 #include "foc_position.h"
 #include "foc_port.h"
+#include "motor_position.h"
 
 /**
  * @brief Physical motor metadata owned by Motor.
@@ -38,27 +39,21 @@ typedef struct {
 } motor_limits_t;
 
 typedef struct {
+    motor_params_t tParams;
+    motor_limits_t tLimits;
     foc_pid_params_t tCurrentPiParams;
     foc_pid_params_t tSpeedPiParams;
     uint32_t wAdcCalibrationTimeoutSteps;
     uint32_t wAlignSteps;
     uint8_t chSpeedLoopDiv;
     foc_scalar_t qAlignCurrent;
-} motor_control_cfg_t;
-
-typedef foc_result_t (*motor_get_position_fn)(
-    void *pContext, uint32_t wNowTick, foc_position_t *ptPosition);
-
-typedef struct {
-    motor_params_t tParams;
-    motor_limits_t tLimits;
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
-    motor_get_position_fn fnGetPosition;
-    void *pPositionContext;
+    foc_adc_if_t tAdc;
+    foc_pwm_if_t tPwm;
+    motor_position_if_t tPosition;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_cfg_t tObserverCfg;
 #endif
-    motor_control_cfg_t tControl;
 } motor_cfg_t;
 
 typedef enum {
@@ -81,7 +76,15 @@ typedef enum {
 } motor_fault_e;
 
 typedef struct {
-    motor_cfg_t tCfg;
+    motor_params_t tParams;
+    motor_limits_t tLimits;
+    foc_adc_if_t tAdc;
+    foc_pwm_if_t tPwm;
+    motor_position_if_t tPosition;
+    foc_scalar_t qAlignCurrent;
+    uint32_t wAdcCalibrationTimeoutSteps;
+    uint32_t wAlignTargetSteps;
+    uint8_t chSpeedLoopDiv;
     foc_core_state_t tCore;
     foc_pid_t tSpeedPi;
     foc_scalar_t qMechanicalToElectricalSpeedPuGain;
@@ -93,7 +96,7 @@ typedef struct {
 #endif
     foc_angle_t tElectricalZero;
     uint32_t wCalibrationSteps;
-    uint32_t wAlignSteps;
+    uint32_t wAlignStepCount;
     uint8_t chSpeedLoopCount;
     motor_state_e eState;
     uint32_t wFaults;
@@ -188,12 +191,12 @@ foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
 foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor);
 
 /**
- * @brief Execute one deterministic high-frequency Motor step.
+ * @brief Execute one deterministic Motor Driver ISR step.
  * @param ptMotor Motor object.
  * @param wNowTick Low 32 bits of the current system tick.
  * @return None.
  */
-void motor_HighFrequencyStep(motor_t *ptMotor, uint32_t wNowTick);
+void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick);
 
 /**
  * @brief Copy a safe status snapshot.

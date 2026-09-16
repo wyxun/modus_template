@@ -140,7 +140,7 @@ build/template.hex
 
 ```powershell
 & 'D:\software\msys64\mingw64\bin\mingw32-make.exe' `
-    SW_ROOT=D:/0_software `
+    SW_ROOT=D:/software `
     TARGET_CHIP=stm32g431 `
     BUILD=debug-rel `
     FOC_NUMERIC=float `
@@ -155,7 +155,7 @@ build/template.hex
 
 ```powershell
 & 'D:\software\msys64\mingw64\bin\mingw32-make.exe' `
-    SW_ROOT=D:/0_software `
+    SW_ROOT=D:/software `
     TARGET_CHIP=stm32g431 `
     BUILD=debug-rel `
     FOC_NUMERIC=float `
@@ -320,6 +320,27 @@ motor identify status
 - `identify SI: Rs=... ohm, Ld=... uH, Lq=... uH`；
 - 识别期间是否有移动、过流、PWM 故障或 Encoder 失效；
 - 重复识别结果是否稳定。
+
+识别完成或失败后再次执行 `motor identify status`，还会输出 RS、Ld、Lq
+三个阶段的诊断快照，包括 `Istart`、`Ilast`、`deltaI`、`sumV`、使用的
+`R`、阶段结果和采样周期数。`valid=0` 表示该阶段没有得到有效完成结果；
+失败状态还会输出失败阶段编号。
+
+Rs、Ld、Lq 各自执行 3 次独立试验，使用三次结果的中位数，并要求最大最小
+差不超过中位数的 20%。Ld/Lq 每次使用 64 个采样点、每 4 点一组，对离散
+RL 响应做线性拟合；`sumV` 记录实际施加的脉冲电压，仅用于正值和有限值
+检查，不直接代替斜率计算电感。这样可降低恒定电流采样偏置和单次采样噪声
+对结果的影响；FOC 周期内只做定长标量累加，拟合和中位数判断在阶段边界
+执行，不包含日志、排序循环或阻塞等待。
+
+电机动作 API 与识别采样是异步交接的：当前 ADC 电流样本必须配对“上一拍
+已经提交给 Motor 的电压命令”，不能配对刚计算出的下一拍参考值。应用层用
+内部缓存保存该上一拍命令，保持现有 Motor API 和识别接口不变。Lq 完成后
+会施加一个等时反向 Q 轴脉冲抵消平均转矩；这只能减小偏移，不能替代机械
+固定，识别 Lq 时仍应固定转子。
+
+若 `sumV<=0`、拟合斜率方向错误、响应不足或三次结果离散过大，识别会安全
+失败而不会输出假参数。
 
 当前识别结果不会自动写回 Motor 配置。SMO 使用的 Motor 参数字段是物理单位：
 

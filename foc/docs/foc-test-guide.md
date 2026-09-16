@@ -12,7 +12,7 @@ CURRENT 和 SPEED 模式；位置闭环与无感观测/接管尚未接入。
 
 开始调试前先牢记几个边界：
 
-- `motor_limits_t` 目前只声明，运行代码不读取其中的限值；不能把它当作有效的电流、速度或调制度保护。
+- `motor_limits_t` 由 Motor 在运行期用于参考值范围校验；硬件过流和调制度保护仍需由板级硬件保证。
 - `motor_params_t` 的极对数参与机械量到电气量的换算。电阻和 D/Q 轴电感当前还用于 SMO 标幺模型，不用于自动计算 PI 参数。电压、电流基准决定 SMO 的 pu 换算；产品示例 12 V / 7 A 是理论初值，应按实机校准。
 - 电流与电压接口使用 FOC 归一化值，不是固定的安培或伏特。实际电流基值取决于采样电阻、模拟增益和板级归一化实现；换板时必须重新核对。
 - VOLTAGE 模式直接使用电压参考，不提供由 `motor_limits_t` 实现的软件电流限幅。首次上电必须使用硬件过流保护、限流电源和保守参考值。
@@ -29,7 +29,7 @@ peripheral_Init() → perfc_init() → modus_Init()
                                        └─ Motor 进入 ADC_CAL
 
 ADC 电流采样完成中断 → foc_app_HighFrequencyISR()
-                    → motor_HighFrequencyStep()
+                    → motor_IsrStep()
 
 modus_Run() 前台调度 → 约每 1 ms 更新一次编码器位置样本
 ~~~
@@ -48,7 +48,7 @@ Motor 控制 API 位于 `foc/motor/motor.h`：
 | `motor_RequestPositionCalibration(ptMotor)` | 请求非阻塞 ALIGN；这不是位置闭环 |
 | `motor_Stop(ptMotor)` | 先关闭 PWM，再收敛运行状态 |
 | `motor_ClearFault(ptMotor)` | PWM 关闭后清除锁存故障；校准故障会重新校准 |
-| `motor_HighFrequencyStep(ptMotor, nowTick)` | 每个目标高频控制中断调用一次；由 App/目标调度负责 |
+| `motor_IsrStep(ptMotor, nowTick)` | 每个目标高频控制中断调用一次；由 App/目标调度负责 |
 | `motor_GetStatus(ptMotor, &status)` | 读取状态、故障、模式和 PWM 使能状态 |
 
 调用顺序是先启动指定模式，再设置同一模式的参考；设置函数本身不会切换模式：
@@ -110,20 +110,20 @@ mechanical RPM     = electrical turns/s × 60 / pole_pairs
 | `tParams.chPolePairs` | 必须准确；参与机械角度和速度到电气量的换算 |
 | `tParams.wResistanceMilliohm` | 当前必须非零，但不是当前 PI 的自动整定输入 |
 | `tParams.wInductanceDMicroHenry` / `wInductanceQMicroHenry` | 当前必须非零；保留为电机元数据，暂不自动整定 PI |
-| `tControl.tCurrentPiParams` | D/Q 共用的电流 PI 配置；换电机后需要重新验证 |
-| `tControl.tSpeedPiParams` | 速度 PI 配置；输出为 Q 轴电流参考 |
-| `tControl.qAlignCurrent` | ALIGN 的 D 轴归一化电流参考，须符合电机与硬件能力 |
-| `tControl.wAlignSteps` | ALIGN 高频步数；当前按 20 kHz 调度时 30000 步约为 1.5 秒 |
-| `tControl.chSpeedLoopDiv` | 速度 PI 分频；当前为 20，20 kHz 高频步进下速度环为 1 kHz |
+| `tCurrentPiParams` | D/Q 共用的电流 PI 配置；换电机后需要重新验证 |
+| `tSpeedPiParams` | 速度 PI 配置；输出为 Q 轴电流参考 |
+| `qAlignCurrent` | ALIGN 的 D 轴归一化电流参考，须符合电机与硬件能力 |
+| `wAlignSteps` | ALIGN 高频步数；当前按 20 kHz 调度时 30000 步约为 1.5 秒 |
+| `chSpeedLoopDiv` | 速度 PI 分频；当前为 20，20 kHz 高频步进下速度环为 1 kHz |
 | `tEncoderCfg.bDirectionInvert` | 只有实测编码器方向与控制定义相反时才调整 |
 | `tEncoderCfg.qSpeedFilterAlpha` | 机械速度滤波系数；调整后检查噪声和延迟 |
 | `tEncoderCfg.wInvalidTimeoutUs` | 位置样本有效超时，需大于正常采样间隔并满足安全要求 |
 
-现有数值仅是当前电机的起点，不代表新电机可以直接安全运行。调试前确认电流采样基值、硬件过流阈值、驱动桥能力和电机允许电流，再从低电流、低速度逐步验证。PI 输出与积分器上下限会参与 PI 运算，但 `motor_limits_t` 不会自动覆盖或限制参考值。
+现有数值仅是当前电机的起点，不代表新电机可以直接安全运行。调试前确认电流采样基值、硬件过流阈值、驱动桥能力和电机允许电流，再从低电流、低速度逐步验证。PI 输出与积分器上下限会参与 PI 运算，`motor_limits_t` 负责参考输入范围校验，但不会替代硬件过流保护。
 
 ### 4.2 换控制板或重新适配功率级
 
-FOC 数学层要求三相输入和输出始终按相同的 U、V、W 顺序解释。适配新板时，在目标硬件层实现 `foc/hal/foc_port.h` 的直接接口，并逐项确认：
+FOC 数学层要求三相输入和输出始终按相同的 U、V、W 顺序解释。适配新板时，在目标硬件层实现 `foc/hal/foc_port.h` 的 ops/context 接口，并逐项确认：
 
 1. `foc_adc_Sample()` 返回的 U/V/W 电流与实际驱动桥相位对应，且电流正方向一致。
 2. `foc_pwm_SetDuty()` 按同一 U/V/W 顺序更新对应桥臂。

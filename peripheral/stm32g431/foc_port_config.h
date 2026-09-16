@@ -10,10 +10,14 @@
 
 #define FOC_PORT_HAS_POSITION 1
 
-#include <stdint.h>
+#include "foc_encoder.h"
+#include "foc_port.h"
 
-void *foc_port_PositionContext(void);
-int32_t foc_port_PositionInit(void *pContext);
-int32_t foc_port_PositionRead(void *pContext, uint16_t *phwRawAngle);
+extern const foc_adc_if_t g_tFocAdcInterface;
+extern const foc_pwm_if_t g_tFocPwmInterface;
+extern const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface;
+
+void *foc_port_GetPwmContext(void);
+void foc_port_NotifyBreak(void *pContext);
 
 #endif /* FOC_PORT_CONFIG_H */

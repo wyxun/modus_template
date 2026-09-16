@@ -25,8 +25,8 @@
 #define MOTOR_PWM_FREQ_HZ                    20000U
 
 /* ==================== 2. Derived PU Identification Constants ============== */
-#define IDENTIFY_V_LOW_PU                    FOC_SCALAR(0.0125f)
-#define IDENTIFY_V_HIGH_PU                   FOC_SCALAR(0.0333f)
+#define IDENTIFY_V_LOW_PU                    FOC_SCALAR(0.0100f)
+#define IDENTIFY_V_HIGH_PU                   FOC_SCALAR(0.0500f)
 #define IDENTIFY_V_LD_PU                     FOC_SCALAR(0.0667f)
 #define IDENTIFY_V_LQ_PU                     FOC_SCALAR(0.0667f)
 #define IDENTIFY_CURRENT_LIMIT_PU            FOC_SCALAR(0.20f)

@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    foc_port.h
- * @brief   Direct ADC and PWM boundary for the FOC power stage.
+ * @brief   Semantic ADC and PWM interfaces for the FOC power stage.
  * @author  Codex
  * @date    2026-09-11
  ****************************************************************************/
@@ -16,72 +16,36 @@ typedef enum {
     FOC_CALIBRATION_FAILED,
 } foc_calibration_state_e;
 
-/**
- * @brief Set the physical current represented by 1.0 PU at the ADC boundary.
- * @param wCurrentBaseMilliamp Current base in milliamps.
- * @return FOC_RESULT_OK or an invalid-range result.
- */
-foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp);
+typedef struct {
+    foc_result_t (*fnSetCurrentBase)(void *pContext,
+                                     uint32_t wCurrentBaseMilliamp);
+    foc_result_t (*fnCalibrationBegin)(void *pContext,
+                                       foc_adc_calib_t *ptCalibration);
+    foc_calibration_state_e (*fnCalibrationStep)(
+        void *pContext,
+        foc_adc_calib_t *ptCalibration);
+    foc_result_t (*fnSample)(void *pContext,
+                             const foc_adc_calib_t *ptCalibration,
+                             foc_current_abc_t *ptCurrent);
+} foc_adc_ops_t;
 
-/**
- * @brief Begin ADC offset calibration.
- * @param ptCalibration Calibration state owned by Motor.
- * @return None.
- */
-void foc_adc_CalibBegin(foc_adc_calib_t *ptCalibration);
+typedef struct {
+    foc_result_t (*fnSetDuty)(void *pContext,
+                              const foc_duty_abc_t *ptDuty);
+    foc_result_t (*fnEnable)(void *pContext);
+    foc_result_t (*fnStop)(void *pContext);
+    bool (*fnGetFaultStatus)(void *pContext);
+    foc_result_t (*fnClearFaultStatus)(void *pContext);
+} foc_pwm_ops_t;
 
-/**
- * @brief Accumulate one ADC offset sample.
- * @param ptCalibration Calibration state owned by Motor.
- * @return Calibration progress or failure.
- */
-foc_calibration_state_e foc_adc_CalibStep(
-    foc_adc_calib_t *ptCalibration);
+typedef struct {
+    const foc_adc_ops_t *ptOps;
+    void *pContext;
+} foc_adc_if_t;
 
-/**
- * @brief Sample and normalize all three phase currents.
- * @param ptCalibration Completed ADC calibration state.
- * @param ptCurrent Output three-phase current sample.
- * @return FOC_RESULT_OK or a safety/error result.
- */
-foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
-                            foc_current_abc_t *ptCurrent);
-
-/**
- * @brief Commit all three normalized PWM duties.
- * @param ptDuty Normalized U/V/W duties.
- * @return FOC_RESULT_OK or a hardware error.
- */
-foc_result_t foc_pwm_SetDuty(const foc_duty_abc_t *ptDuty);
-
-/**
- * @brief Enable the power stage after a valid duty has been committed.
- * @return FOC_RESULT_OK or a hardware error.
- */
-foc_result_t foc_pwm_Enable(void);
-
-/**
- * @brief Immediately disable the power stage.
- * @return None.
- */
-void foc_pwm_Stop(void);
-
-/**
- * @brief Read the power-stage fault latch owned by the port adapter.
- * @return true when a hardware break/OCP event is latched.
- */
-bool foc_pwm_GetFaultStatus(void);
-
-/**
- * @brief Clear a released power-stage fault latch.
- * @return FOC_RESULT_OK only when the source and latch are clear.
- */
-foc_result_t foc_pwm_ClearFaultStatus(void);
-
-/**
- * @brief Notify the port adapter that its break IRQ has fired.
- * @note Called only by the target interrupt adapter.
- */
-void foc_pwm_NotifyBreak(void);
+typedef struct {
+    const foc_pwm_ops_t *ptOps;
+    void *pContext;
+} foc_pwm_if_t;
 
 #endif /* FOC_PORT_H */

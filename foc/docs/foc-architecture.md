@@ -18,13 +18,13 @@ foc_app_t ─── 调度、命令适配、持有 Motor 与 Encoder
                  │
                  ├── foc_core：Clarke / Park / 电流 PI / 反 Park / SVPWM
                  ├── foc_pid：速度 PI
-                 └── foc_port.h：直接 ADC/PWM 函数边界
+                 └── foc_port.h：ADC/PWM ops/context 语义边界
                                       │
                                       ▼
                               目标硬件适配层
 ~~~
 
-`foc_port.h` 是直接函数契约，不是 ops 表或运行时插件注册表。Motor 通过该边界访问 ADC 与 PWM，不包含目标 HAL、MDI 或具体传感器类型。App 持有 Encoder，并将统一的位置读取函数和上下文绑定给 Motor；
+`foc_port.h` 是语义化 ops/context 契约，不是运行时插件注册表。Motor 通过对象内已绑定的接口访问 ADC 与 PWM，不包含目标 HAL、MDI 或具体传感器类型。App 持有 Encoder，并将统一的位置读取函数和上下文绑定给 Motor；
 Motor 不拥有传感器驱动对象。
 
 ## 2. 模块职责
@@ -70,7 +70,7 @@ INITIALIZING → ADC_CAL → IDLE ── Start ──→ RUNNING
 ~~~text
 目标采样完成中断
   → `foc_app_HighFrequencyISR()`
-  → `motor_HighFrequencyStep(motor, now_tick)`
+  → `motor_IsrStep(motor, now_tick)`
       ├─ ADC_CAL：累计偏置样本
       ├─ ALIGN：采样三相电流 → 固定角度 Core → PWM
       └─ RUNNING：采样三相电流 + 读取位置缓存
@@ -84,7 +84,7 @@ INITIALIZING → ADC_CAL → IDLE ── Start ──→ RUNNING
 
 ### 前台位置更新
 
-`foc_app_Run()` 在前台以约 1 ms 周期调用 `foc_encoder_Update()`。
+`foc_app_Run()` 在前台以约 1 ms 周期调用 `foc_encoder_Run()`。
 读取失败后当前实现等待 100 ms 再重试；传感器 I/O 不在 MODUS Clock
 中断或高频控制中断内执行。Encoder 发布机械角、机械速度和采样 tick。
 高频读取时检查样本年龄，并使用滤波速度将角度外推至当前 tick；
@@ -104,7 +104,7 @@ ADC 单元/通道、定时器、引脚、采样拓扑和驱动器连接属于板
 - `motor_params_t` 另保存观测器使用的电压、电流 pu 基准。当前示例为 12 V / 7 A；7 A 由 `0.1 pu ≈ 0.7 A` 推估，属于待台架确认的初值，不是电流采样标定结果。
 - Motor 持有单实例 `foc_observer_t`，并在编码器控制时每拍运行 SMO 验证路径。Observer 使用本拍 `Iαβ` 和 Core 上一采样区间的 `Vmodel`；当前 SMO 尚未接管 Core 反馈，启动仍由现有编码器路径完成。
 - SMO 使用标幺化模型：电压、电流分别除以 Motor 的基准；时间基准取固定 `Ts`，因此模型的电阻、电感和 PLL 系数在 Init 时换算。运行态不携带 SI 量；FIXED 后端的 Init 使用整数比例生成 Q15 系数，不依赖浮点计算。SMO 不把物理大增益作为 Q15 普通 pu 乘数使用。
-- 电流 PI、速度 PI、ADC 校准超时、ALIGN 步数、电流参考和速度环分频由 Motor 控制配置提供。`motor_limits_t` 当前只声明，运行路径不读取。
+- 电流 PI、速度 PI、ADC 校准超时、ALIGN 步数、电流参考和速度环分频由 Motor 配置提供；运行对象只保留运行期需要的字段和接口绑定。`motor_limits_t` 用于参考值范围校验。
 - `FOC_NUMERIC_FLOAT` 与 `FOC_NUMERIC_FIXED` 编译期二选一；Core、Motor 和 Encoder 共用相同的控制逻辑。
 - `foc/foc.mk` 编译数值/角度数学、Core、PID、调制、Encoder、SMO Observer、Motor 和 App。NLFO、HFI 等其它算法仍不进入当前构建。
 
