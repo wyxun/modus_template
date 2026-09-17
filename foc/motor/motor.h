@@ -204,28 +204,4 @@ void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick);
 foc_result_t motor_GetStatus(const motor_t *ptMotor,
                              motor_status_t *ptStatus);
 
-#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
-/**
- * @brief Ephemeral on-demand view of the latest ISR control metrics.
- * @note Exists only on the caller's stack; not a persistent member of motor_t.
- */
-typedef struct {
-    foc_dq_t     tCurrentDqPu;
-    foc_dq_t     tSubmittedVoltageDqPu;
-    foc_angle_t  tElectricalAngle;
-    foc_scalar_t qElectricalSpeedPu;
-    bool         bSampleValid;
-    bool         bDutySubmitted;
-} motor_step_metrics_t;
-
-/**
- * @brief Capture a transient view of the latest ISR step metrics.
- * @param ptMotor Motor object.
- * @param ptMetrics Output metrics pointer.
- * @return FOC_RESULT_OK or FOC_RESULT_DISABLED if inactive or faulted.
- */
-foc_result_t motor_CaptureStepMetrics(const motor_t *ptMotor,
-                                      motor_step_metrics_t *ptMetrics);
-#endif
-
 #endif /* MOTOR_H */

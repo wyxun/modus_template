@@ -28,9 +28,3 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/observer/foc_smo.c \
               foc/motor/motor.c \
               foc/app/foc_app.c
-
-FOC_EXPERIMENTAL_IDENTIFY ?= 0
-ifeq ($(FOC_EXPERIMENTAL_IDENTIFY),1)
-    FOC_INCLUDES += -Ifoc/identify
-    FOC_SOURCES += foc/identify/foc_identify.c
-endif

@@ -52,10 +52,6 @@
 #define FOC_ENABLE_EXPERIMENTAL_NSD       0   /**< 使能 N/S 极性检测实验模块 */
 #endif
 
-#ifndef FOC_ENABLE_EXPERIMENTAL_IDENTIFY
-#define FOC_ENABLE_EXPERIMENTAL_IDENTIFY  0   /**< 使能参数辨识实验模块 */
-#endif
-
 #ifndef FOC_ENABLE_SMO
 #define FOC_ENABLE_SMO                   0   /**< 使能 SMO 运行路径 */
 #endif

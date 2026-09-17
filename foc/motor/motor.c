@@ -811,26 +811,3 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;
 }
-
-#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
-foc_result_t motor_CaptureStepMetrics(const motor_t *ptMotor,
-                                      motor_step_metrics_t *ptMetrics)
-{
-    if ((ptMotor == NULL) || (ptMetrics == NULL)) {
-        return FOC_RESULT_NULL;
-    }
-    if ((ptMotor->eState != MOTOR_STATE_RUNNING) ||
-        (ptMotor->wFaults != MOTOR_FAULT_NONE) ||
-        (!ptMotor->bPwmEnabled)) {
-        *ptMetrics = (motor_step_metrics_t){0};
-        return FOC_RESULT_DISABLED;
-    }
-    ptMetrics->tCurrentDqPu = ptMotor->tCore.tCurrent;
-    ptMetrics->tSubmittedVoltageDqPu = ptMotor->tCore.tVoltage;
-    ptMetrics->tElectricalAngle = ptMotor->tInput.tElectricalAngle;
-    ptMetrics->qElectricalSpeedPu = ptMotor->tInput.qElectricalSpeedPu;
-    ptMetrics->bSampleValid = ptMotor->tInput.bAngleValid;
-    ptMetrics->bDutySubmitted = true;
-    return FOC_RESULT_OK;
-}
-#endif
