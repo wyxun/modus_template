@@ -34,8 +34,6 @@ static bool foc_app_GetHfAverage(foc_app_t *ptThis,
 static void foc_app_ReportHfAverage(foc_app_t *ptThis);
 #if MSHELL_ENABLE && FOC_ENABLE_EXPERIMENTAL_IDENTIFY
 static void foc_app_PrintIdentify(foc_identify_t *ptIdentify);
-static void foc_app_PrintIdentifyDiag(const char *pszName,
-                                      const foc_identify_diag_t *ptDiag);
 #endif
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 static void foc_app_WaveformInit(foc_app_t *ptThis,
@@ -132,15 +130,8 @@ static foc_result_t foc_app_BindMotorConfig(
     *ptMotorConfig = ptConfig->tMotorCfg;
     ptMotorConfig->tParams.wVoltageBaseMillivolt =
         ptConfig->wVoltageBaseMillivolt;
-    ptMotorConfig->tParams.wCurrentBaseMilliamp =
-        ptConfig->wCurrentBaseMilliamp;
     ptMotorConfig->qElectricalSpeedBaseTurnsPerSecond =
         ptConfig->qElectricalSpeedBaseTurnsPerSecond;
-    if (ptConfig->ptAdc == NULL || ptConfig->ptPwm == NULL) {
-        return FOC_RESULT_INVALID_ARGUMENT;
-    }
-    ptMotorConfig->tAdc = *ptConfig->ptAdc;
-    ptMotorConfig->tPwm = *ptConfig->ptPwm;
     eResult = foc_div_checked(
         ptMotorConfig->tLimits.qMaxSpeedReference,
         ptConfig->qElectricalSpeedBaseTurnsPerSecond,
@@ -281,23 +272,69 @@ static void foc_app_WaveformStep(void)
 /**
  * @brief Initialize the embedded parameter identify controller.
  * @param ptThis FOC App instance.
+ * @param ptConfig App configuration containing base and timing values.
  * @return FOC_RESULT_OK on success or an identify initialization error.
  */
-static foc_result_t foc_app_InitIdentify(foc_app_t *ptThis)
+static foc_result_t foc_app_InitIdentify(foc_app_t *ptThis,
+                                         const foc_app_cfg_t *ptConfig)
 {
+    float fVbase = (float)ptConfig->wVoltageBaseMillivolt / 1000.0f;
+    float fIbase = (float)ptThis->tMotor.wCurrentBaseMilliamp / 1000.0f;
+    float fZbase = fVbase / fIbase;
+    float fTs = (float)ptConfig->wHighFrequencyPeriodNanoseconds * 1e-9f;
+    float fFbase =
+        foc_to_float(ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+    float fOmegaBase = 2.0f * 3.141592653589793f * fFbase;
+    float fLbase = fZbase / fOmegaBase;
+    uint32_t wSettleMinTicks = (uint32_t)ceilf(0.025f / fTs);
     foc_identify_cfg_t tIdCfg = {
-        .qV_low = IDENTIFY_V_LOW_PU,
-        .qV_high = IDENTIFY_V_HIGH_PU,
-        .qV_Ld = IDENTIFY_V_LD_PU,
-        .qV_Lq = IDENTIFY_V_LQ_PU,
-        .qCurrentLimit = IDENTIFY_CURRENT_LIMIT_PU,
-        .qMinDeltaI = IDENTIFY_MIN_DELTA_I_PU,
-        .qRadiansPerSample = IDENTIFY_RADIANS_PER_SAMPLE,
-        .qMaxDisplacement = IDENTIFY_MAX_DISPLACEMENT_PU,
+        .tExcitation = {
+            .qCurrentLow = IDENTIFY_CURRENT_LOW_PU,
+            .qCurrentHigh = IDENTIFY_CURRENT_HIGH_PU,
+            .qInjectionVoltage = IDENTIFY_INJECTION_VOLTAGE_PU,
+            .qVoltageLimit = IDENTIFY_VOLTAGE_LIMIT_PU,
+            .qCurrentLimit = IDENTIFY_CURRENT_LIMIT_PU,
+        },
+        .tTiming = {
+            .qRadiansPerSample = foc_from_float(fOmegaBase * fTs),
+            .wSettleMinTicks = (wSettleMinTicks < 500U) ?
+                               500U : wSettleMinTicks,
+            .wStableTicks = 64U,
+            .wAverageTicks = 256U,
+            .wHalfPeriodTicks = 16U,
+            .wDiscardPairs = 8U,
+            .wMeasurePairs = 64U,
+            .wStageTimeoutTicks = (uint32_t)ceilf(1.0f / fTs),
+            .wTotalTimeoutTicks = (uint32_t)ceilf(5.0f / fTs),
+        },
+        .tAcceptance = {
+            .qCurrentTolerance = IDENTIFY_CURRENT_TOLERANCE_PU,
+            .qSlopeTolerance = IDENTIFY_SLOPE_TOLERANCE_PU,
+            .qZeroCurrent = IDENTIFY_ZERO_CURRENT_PU,
+            .qMinDeltaCurrent = IDENTIFY_MIN_DELTA_I_PU,
+            .qMaxElectricalDisplacement = IDENTIFY_MAX_DISPLACEMENT_PU,
+            .qMaxElectricalSpeedPu = IDENTIFY_MAX_SPEED_PU,
+            .qResistanceMinPu = foc_from_float(0.1f / fZbase),
+            .qResistanceMaxPu = foc_from_float(2.0f / fZbase),
+            .qInductanceMinPu = foc_from_float(0.0002f / fLbase),
+            .qInductanceMaxPu = foc_from_float(0.0050f / fLbase),
+            .qMaxPairSpread = IDENTIFY_MAX_PAIR_SPREAD,
+        },
     };
 
+    (void)foc_gain_from_float(0.0500f, &tIdCfg.tCurrentPi.tKp);
+    (void)foc_gain_from_float(0.0100f, &tIdCfg.tCurrentPi.tKiTs);
+    (void)foc_gain_from_float(0.0000f, &tIdCfg.tCurrentPi.tKdOverTs);
+    tIdCfg.tCurrentPi.qOutputMinimum = foc_from_float(-0.1000f);
+    tIdCfg.tCurrentPi.qOutputMaximum = foc_from_float(0.1000f);
+    tIdCfg.tCurrentPi.qIntegratorMinimum = foc_from_float(-0.1000f);
+    tIdCfg.tCurrentPi.qIntegratorMaximum = foc_from_float(0.1000f);
+
     ptThis->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
-    ptThis->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    ptThis->tAppliedVoltageDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    ptThis->wConstantVoltageCount = 0U;
+    ptThis->wLastIsrProgressTick = 0U;
+    ptThis->bIdentifyActive = false;
     return foc_identify_Init(&ptThis->tIdentify, &tIdCfg);
 }
 #endif
@@ -332,7 +369,6 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         return (int)eEncoder;
     }
     if (ptConfig->wVoltageBaseMillivolt == 0U ||
-        ptConfig->wCurrentBaseMilliamp == 0U ||
         ptConfig->wHighFrequencyPeriodNanoseconds == 0U ||
         ptConfig->qElectricalSpeedBaseTurnsPerSecond <= FOC_ZERO) {
         return MODUS_EFAIL;
@@ -347,7 +383,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         return (int)eMotor;
     }
 #if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
-    eResult = foc_app_InitIdentify(ptThis);
+    eResult = foc_app_InitIdentify(ptThis, ptConfig);
     if (eResult != FOC_RESULT_OK) {
         motor_Stop(&ptThis->tMotor);
         return (int)eResult;
@@ -374,6 +410,60 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+/**
+ * @brief Foreground identify supervisory step (stop confirmation & timeout).
+ * @param ptThis FOC App instance.
+ * @return None.
+ */
+static void foc_app_IdentifyForegroundStep(foc_app_t *ptThis)
+{
+    foc_identify_t *ptId = &ptThis->tIdentify;
+    foc_identify_status_t tIdStatus = {0};
+    foc_result_t eRes = foc_identify_GetStatus(ptId, &tIdStatus);
+
+    if (eRes != FOC_RESULT_OK) {
+        return;
+    }
+    if (tIdStatus.eState == FOC_IDENTIFY_STATE_STOPPING) {
+        motor_status_t tMotorStatus = {0};
+
+        motor_Stop(&ptThis->tMotor);
+        (void)motor_GetStatus(&ptThis->tMotor, &tMotorStatus);
+        if ((tMotorStatus.eState == MOTOR_STATE_IDLE) &&
+            (!tMotorStatus.bPwmEnabled)) {
+            (void)foc_identify_ConfirmStopped(ptId);
+            ptThis->bIdentifyActive = false;
+        } else {
+            foc_identify_Abort(ptId);
+            ptThis->bIdentifyActive = false;
+        }
+        return;
+    }
+    if (ptThis->bIdentifyActive) {
+        perfc_global_interrupt_status_t tIrqState = 0U;
+        uint32_t wLastTick = 0U;
+        uint32_t wNow = (uint32_t)get_system_ticks();
+        uint32_t wTimeoutTicks = perfc_convert_ms_to_ticks(10U);
+
+        tIrqState = perfc_port_disable_global_interrupt();
+        wLastTick = ptThis->wLastIsrProgressTick;
+        perfc_port_resume_global_interrupt(tIrqState);
+
+        if ((uint32_t)(wNow - wLastTick) > wTimeoutTicks) {
+            tIrqState = perfc_port_disable_global_interrupt();
+            foc_identify_Abort(ptId);
+            motor_Stop(&ptThis->tMotor);
+            ptThis->tAppliedVoltageDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+            ptThis->wConstantVoltageCount = 0U;
+            ptThis->bIdentifyActive = false;
+            perfc_port_resume_global_interrupt(tIrqState);
+            MLOGF(E, "identify aborted: ISR progress timeout (>10ms)\r\n");
+        }
+    }
+}
+#endif
+
 static int foc_app_Run(uintptr_t wObjectAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
@@ -388,6 +478,9 @@ static int foc_app_Run(uintptr_t wObjectAddr)
             1000U, &ptThis->lForegroundTimestamp, true))
         foc_app_ReportHfAverage(ptThis);
         motor_PollBreakFault(&ptThis->tMotor);
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+        foc_app_IdentifyForegroundStep(ptThis);
+#endif
         if (!ptThis->bReady) {
             continue;
         }
@@ -417,39 +510,46 @@ static int foc_app_Run(uintptr_t wObjectAddr)
 static void foc_app_IdentifyCommandISR(foc_app_t *ptApp)
 {
     foc_identify_t *ptId = &ptApp->tIdentify;
+    uint8_t chCmd = ptApp->chIdentifyCommand;
 
-    if (ptApp->chIdentifyCommand == FOC_IDENTIFY_CMD_START) {
+    if (chCmd == FOC_IDENTIFY_CMD_START) {
         ptApp->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
+        if (!ptApp->bReady || (ptApp->tMotor.eState != MOTOR_STATE_IDLE) ||
+            (ptApp->tMotor.wFaults != MOTOR_FAULT_NONE) ||
+            (!ptApp->tMotor.bElectricalZeroValid)) {
+            ptApp->bIdentifyActive = false;
+            return;
+        }
         (void)foc_identify_ConsumeTerminal(ptId);
         if (foc_identify_Start(ptId) == FOC_RESULT_OK) {
-            if (ptApp->tMotor.eState == MOTOR_STATE_RUNNING) {
-                motor_Stop(&ptApp->tMotor);
-            }
             if (motor_Start(&ptApp->tMotor, FOC_MODE_VOLTAGE) ==
                 FOC_RESULT_OK) {
                 foc_result_t eSet = motor_SetVoltageReference(
-                    &ptApp->tMotor,
-                    ptId->tOutput.tVoltageRefPu.qD,
-                    ptId->tOutput.tVoltageRefPu.qQ);
-
+                    &ptApp->tMotor, FOC_ZERO, FOC_ZERO);
                 if (eSet == FOC_RESULT_OK) {
-                    ptApp->tLastVoltageCommandDqPu =
-                        ptId->tOutput.tVoltageRefPu;
+                    ptApp->tAppliedVoltageDqPu =
+                        (foc_dq_t){FOC_ZERO, FOC_ZERO};
+                    ptApp->wConstantVoltageCount = 0U;
+                    ptApp->bIdentifyActive = true;
                 } else {
                     foc_identify_Abort(ptId);
                     motor_Stop(&ptApp->tMotor);
-                    ptApp->tLastVoltageCommandDqPu =
-                        (foc_dq_t){FOC_ZERO, FOC_ZERO};
+                    ptApp->bIdentifyActive = false;
                 }
+            } else {
+                foc_identify_Abort(ptId);
+                ptApp->bIdentifyActive = false;
             }
+        } else {
+            ptApp->bIdentifyActive = false;
         }
-    } else if (ptApp->chIdentifyCommand == FOC_IDENTIFY_CMD_CANCEL) {
+    } else if (chCmd == FOC_IDENTIFY_CMD_CANCEL) {
         ptApp->chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
         foc_identify_Abort(ptId);
         motor_Stop(&ptApp->tMotor);
-        ptApp->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
-    } else {
-        /* No pending command. */
+        ptApp->tAppliedVoltageDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+        ptApp->wConstantVoltageCount = 0U;
+        ptApp->bIdentifyActive = false;
     }
 }
 
@@ -462,47 +562,55 @@ static void foc_app_IdentifyCommandISR(foc_app_t *ptApp)
 static void foc_app_IdentifyStepISR(foc_app_t *ptApp, uint32_t wNowTick)
 {
     foc_identify_t *ptId = &ptApp->tIdentify;
-    foc_identify_status_e eStatus = ptId->tOutput.eStatus;
+    motor_step_metrics_t tMetrics = {0};
+    foc_identify_input_t tInput = {0};
+    foc_identify_output_t tOutput = {0};
+    foc_result_t eCap = FOC_RESULT_OK;
 
-    if ((eStatus != FOC_IDENTIFY_STATUS_IDLE) &&
-        (eStatus != FOC_IDENTIFY_STATUS_COMPLETE) &&
-        (eStatus != FOC_IDENTIFY_STATUS_ERROR)) {
-        foc_identify_input_t tInput = {0};
-        foc_identify_output_t tOutput = {0};
-        foc_position_t tPos = {0};
-        foc_result_t ePos = foc_encoder_GetPosition(
-            &ptApp->tEncoder, wNowTick, &tPos);
+    ptApp->wLastIsrProgressTick = wNowTick;
+    if (!ptApp->bIdentifyActive) {
+        return;
+    }
+    eCap = motor_CaptureStepMetrics(&ptApp->tMotor, &tMetrics);
+    if (eCap == FOC_RESULT_OK) {
+        tInput.tCurrentDqPu = tMetrics.tCurrentDqPu;
+        tInput.tIntervalVoltageDqPu = ptApp->tAppliedVoltageDqPu;
+        tInput.tElectricalAngle = tMetrics.tElectricalAngle;
+        tInput.qElectricalSpeedPu = tMetrics.qElectricalSpeedPu;
+        tInput.bCurrentValid = tMetrics.bSampleValid;
+        tInput.bIntervalValid = (ptApp->wConstantVoltageCount >= 3U);
+        tInput.bFault = (ptApp->tMotor.wFaults != MOTOR_FAULT_NONE);
+    } else {
+        tInput.bCurrentValid = false;
+        tInput.bIntervalValid = false;
+        tInput.bFault = (ptApp->tMotor.wFaults != MOTOR_FAULT_NONE);
+    }
 
-        tInput.tCurrentDqPu = ptApp->tMotor.tCore.tCurrent;
-        /* Pair this sample with the command submitted for the prior PWM step. */
-        tInput.tLastVoltageCommandDqPu = ptApp->tLastVoltageCommandDqPu;
-        tInput.tMechanicalAngle = tPos.tMechanicalAngle;
-        tInput.bValid = (ePos == FOC_RESULT_OK) &&
-                        tPos.bValid &&
-                        (ptApp->tMotor.eState == MOTOR_STATE_RUNNING) &&
-                        ptApp->tMotor.bElectricalZeroValid;
-        tInput.bFault = ptApp->tMotor.wFaults != MOTOR_FAULT_NONE;
-
-        (void)foc_identify_IsrStep(ptId, &tInput, &tOutput);
-        if (tOutput.bStopPwm) {
-            motor_Stop(&ptApp->tMotor);
-            ptApp->tLastVoltageCommandDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
-        } else if (tOutput.bRefChanged) {
-            foc_result_t eSet = motor_SetVoltageReference(
-                &ptApp->tMotor,
-                tOutput.tVoltageRefPu.qD,
-                tOutput.tVoltageRefPu.qQ);
-            if (eSet == FOC_RESULT_OK) {
-                ptApp->tLastVoltageCommandDqPu = tOutput.tVoltageRefPu;
-            } else {
-                foc_identify_Abort(ptId);
-                motor_Stop(&ptApp->tMotor);
-                ptApp->tLastVoltageCommandDqPu =
-                    (foc_dq_t){FOC_ZERO, FOC_ZERO};
-            }
-        } else {
-            /* Keep voltage reference unchanged. */
+    (void)foc_identify_IsrStep(ptId, &tInput, &tOutput);
+    if (tOutput.bStopPwm) {
+        motor_Stop(&ptApp->tMotor);
+        ptApp->tAppliedVoltageDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+        ptApp->wConstantVoltageCount = 0U;
+        if (tOutput.eStatus == FOC_IDENTIFY_STATUS_ERROR) {
+            ptApp->bIdentifyActive = false;
         }
+    } else if (tOutput.bRefChanged) {
+        foc_result_t eSet = motor_SetVoltageReference(
+            &ptApp->tMotor,
+            tOutput.tVoltageRefPu.qD,
+            tOutput.tVoltageRefPu.qQ);
+        if (eSet == FOC_RESULT_OK) {
+            ptApp->tAppliedVoltageDqPu = tOutput.tVoltageRefPu;
+            ptApp->wConstantVoltageCount = 0U;
+        } else {
+            foc_identify_Abort(ptId);
+            motor_Stop(&ptApp->tMotor);
+            ptApp->tAppliedVoltageDqPu = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+            ptApp->wConstantVoltageCount = 0U;
+            ptApp->bIdentifyActive = false;
+        }
+    } else {
+        ptApp->wConstantVoltageCount++;
     }
 }
 #endif
@@ -638,28 +746,6 @@ static void foc_app_PrintEncoder(const foc_encoder_t *ptEncoder)
 
 #if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
 /**
- * @brief Print one identification stage diagnostic snapshot.
- * @param pszName Stage name.
- * @param ptDiag Stage diagnostic snapshot.
- * @return None.
- */
-static void foc_app_PrintIdentifyDiag(const char *pszName,
-                                      const foc_identify_diag_t *ptDiag)
-{
-    MLOGF(I, "identify diag %s valid=%u ticks=%u\r\n",
-          pszName, (unsigned)ptDiag->bValid, (unsigned)ptDiag->hwTicks);
-    MLOGF(I, "  I: start=%.5f last=%.5f delta=%.5f\r\n",
-          foc_to_float(ptDiag->qIStart),
-          foc_to_float(ptDiag->qILast),
-          foc_to_float(ptDiag->qDeltaI));
-    MLOGF(I, "  V: delta=%.5f sum=%.5f R=%.5f result=%.5f\r\n",
-          foc_to_float(ptDiag->qDeltaV),
-          foc_to_float(ptDiag->qSumV),
-          foc_to_float(ptDiag->qResistancePu),
-          foc_to_float(ptDiag->qResult));
-}
-
-/**
  * @brief Print identification controller state, results, and physical units.
  * @param ptIdentify Pointer to identify controller instance.
  * @return None.
@@ -667,21 +753,28 @@ static void foc_app_PrintIdentifyDiag(const char *pszName,
 static void foc_app_PrintIdentify(foc_identify_t *ptIdentify)
 {
     static const char *const s_apcStatusNames[] = {
-        "IDLE", "RS_LOW", "RS_HIGH", "ZERO", "LD", "LQ", "COMPLETE", "ERROR"
+        "IDLE", "PRIME", "RS_LOW", "RS_HIGH", "ZERO", "BIAS",
+        "LD", "LQ", "STOPPING", "COMPLETE", "ERROR"
     };
+    static const char *const s_apcReasonNames[] = {
+        "NONE", "CONFIG", "CANCEL", "SAMPLE_ANGLE", "TIMING",
+        "SUBMIT", "OVERCURRENT", "MOTION", "SATURATION",
+        "STAGE_TIMEOUT", "TOTAL_TIMEOUT", "LOW_RESPONSE",
+        "NUMERIC_RANGE", "PAIR_SPREAD", "FAULT"
+    };
+    foc_identify_status_t tIdStatus = {0};
     foc_identify_result_t tResult = {0};
-    foc_identify_diagnostics_t tDiagnostics = {0};
-    foc_identify_status_e eStatus = ptIdentify->tOutput.eStatus;
+    foc_identify_diagnostics_t tDiag = {0};
     const char *pszStatus = "UNKNOWN";
 
-    if ((uint32_t)eStatus <
+    (void)foc_identify_GetStatus(ptIdentify, &tIdStatus);
+    if ((uint32_t)tIdStatus.eStage <
         (uint32_t)(sizeof(s_apcStatusNames) / sizeof(s_apcStatusNames[0]))) {
-        pszStatus = s_apcStatusNames[(uint32_t)eStatus];
+        pszStatus = s_apcStatusNames[(uint32_t)tIdStatus.eStage];
     }
-    MLOGF(I, "identify status: %s (tick=%u)\r\n",
-          pszStatus, (unsigned)ptIdentify->hwTicks);
+    MLOGF(I, "identify status: %s\r\n", pszStatus);
 
-    if (eStatus == FOC_IDENTIFY_STATUS_COMPLETE) {
+    if (tIdStatus.eState == FOC_IDENTIFY_STATE_COMPLETE) {
         if (foc_identify_GetResult(ptIdentify, &tResult) == FOC_RESULT_OK) {
             float fRsPu = foc_to_float(tResult.qResistancePu);
             float fLdPu = foc_to_float(tResult.qInductanceDPu);
@@ -696,30 +789,35 @@ static void foc_app_PrintIdentify(foc_identify_t *ptIdentify)
 
             MLOGF(I, "identify PU: Rs=%.4f, Ld=%.4f, Lq=%.4f\r\n",
                   fRsPu, fLdPu, fLqPu);
-            MLOGF(I, "identify SI: Rs=%.3f ohm, Ld=%.1f uH, Lq=%.1f uH\r\n",
+            MLOGF(I, "identify SI: Rs=%.4f ohm, Ld=%.2f uH, Lq=%.2f uH\r\n",
                   fRsOhm, fLdMicroH, fLqMicroH);
         }
-        if (foc_identify_GetDiagnostics(ptIdentify, &tDiagnostics) ==
-            FOC_RESULT_OK) {
-            foc_app_PrintIdentifyDiag("RS", &tDiagnostics.tRs);
-            foc_app_PrintIdentifyDiag("Ld", &tDiagnostics.tLd);
-            foc_app_PrintIdentifyDiag("Lq", &tDiagnostics.tLq);
+        if (foc_identify_GetDiagnostics(ptIdentify, &tDiag) == FOC_RESULT_OK) {
+            MLOGF(I, "identify diag: dI=%.5f dV=%.5f Vbias=(%.4f, %.4f)\r\n",
+                  foc_to_float(tDiag.qDeltaI), foc_to_float(tDiag.qDeltaV),
+                  foc_to_float(tDiag.tBiasVoltageDqPu.qD),
+                  foc_to_float(tDiag.tBiasVoltageDqPu.qQ));
+            MLOGF(I, "  valid pairs: D=%u, Q=%u, sat_count=%u\r\n",
+                  (unsigned)tDiag.wValidPairsD, (unsigned)tDiag.wValidPairsQ,
+                  (unsigned)tDiag.wSaturationCount);
         }
-        (void)foc_identify_ConsumeTerminal(ptIdentify);
-    } else if (eStatus == FOC_IDENTIFY_STATUS_ERROR) {
-        MLOGF(W, "identify failed with error code: %d\r\n",
-              (int)ptIdentify->eFailure);
-        if (foc_identify_GetDiagnostics(ptIdentify, &tDiagnostics) ==
-            FOC_RESULT_OK) {
-            MLOGF(W, "identify failure stage=%u\r\n",
-                  (unsigned)tDiagnostics.eFailureStage);
-            foc_app_PrintIdentifyDiag("RS", &tDiagnostics.tRs);
-            foc_app_PrintIdentifyDiag("Ld", &tDiagnostics.tLd);
-            foc_app_PrintIdentifyDiag("Lq", &tDiagnostics.tLq);
+    } else if (tIdStatus.eState == FOC_IDENTIFY_STATE_ERROR) {
+        if (foc_identify_GetDiagnostics(ptIdentify, &tDiag) == FOC_RESULT_OK) {
+            const char *pszReason = "UNKNOWN";
+            if ((uint32_t)tDiag.eFailureReason <
+                (uint32_t)(sizeof(s_apcReasonNames) /
+                           sizeof(s_apcReasonNames[0]))) {
+                pszReason = s_apcReasonNames[(uint32_t)tDiag.eFailureReason];
+            }
+            MLOGF(W, "identify failed at stage %u: reason=%s (res=%d)\r\n",
+                  (unsigned)tDiag.eFailureStage, pszReason,
+                  (int)tDiag.eFailureResult);
+            MLOGF(W, "  dI=%.5f dV=%.5f sat=%u\r\n",
+                  foc_to_float(tDiag.qDeltaI), foc_to_float(tDiag.qDeltaV),
+                  (unsigned)tDiag.wSaturationCount);
         }
-        (void)foc_identify_ConsumeTerminal(ptIdentify);
     } else {
-        /* Identification is active or idle. */
+        /* Identification is active, stopping, or idle. */
     }
 }
 
@@ -734,13 +832,24 @@ static void foc_app_CmdIdentify(const char *pszSub)
         pszSub++;
     }
     if (strncmp(pszSub, "start", 5U) == 0) {
-        foc_identify_status_e eStatus = tFocApp.tIdentify.tOutput.eStatus;
+        foc_identify_status_t tIdStatus = {0};
         motor_status_t tMotorStatus = {0};
+        perfc_global_interrupt_status_t tIrqState = 0U;
 
-        if ((eStatus != FOC_IDENTIFY_STATUS_IDLE) &&
-            (eStatus != FOC_IDENTIFY_STATUS_COMPLETE) &&
-            (eStatus != FOC_IDENTIFY_STATUS_ERROR)) {
-            MLOGF(W, "identify busy (status=%u)\r\n", (unsigned)eStatus);
+        if (!tFocApp.bReady) {
+            MLOGF(W, "encoder not ready\r\n");
+            return;
+        }
+        if (tFocApp.bIdentifyActive) {
+            MLOGF(W, "identify already active\r\n");
+            return;
+        }
+        (void)foc_identify_GetStatus(&tFocApp.tIdentify, &tIdStatus);
+        if ((tIdStatus.eState != FOC_IDENTIFY_STATE_IDLE) &&
+            (tIdStatus.eState != FOC_IDENTIFY_STATE_COMPLETE) &&
+            (tIdStatus.eState != FOC_IDENTIFY_STATE_ERROR)) {
+            MLOGF(W, "identify busy (state=%u)\r\n",
+                  (unsigned)tIdStatus.eState);
             return;
         }
         if (motor_GetStatus(&tFocApp.tMotor, &tMotorStatus) != FOC_RESULT_OK) {
@@ -757,24 +866,35 @@ static void foc_app_CmdIdentify(const char *pszSub)
                   "electrical zero not calibrated, run 'motor align' first\r\n");
             return;
         }
-        if (!tFocApp.bReady) {
-            MLOGF(W, "encoder not ready\r\n");
-            return;
-        }
         if (tMotorStatus.wFaults != MOTOR_FAULT_NONE) {
             MLOGF(W, "motor has fault 0x%08X, run 'motor clear'\r\n",
                   (unsigned)tMotorStatus.wFaults);
             return;
         }
+        tIrqState = perfc_port_disable_global_interrupt();
         tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_START;
+        tFocApp.bIdentifyActive = true;
+        tFocApp.wLastIsrProgressTick = (uint32_t)get_system_ticks();
+        perfc_port_resume_global_interrupt(tIrqState);
         MLOGF(I, "identify started\r\n");
     } else if (strncmp(pszSub, "cancel", 6U) == 0) {
+        perfc_global_interrupt_status_t tIrqState =
+            perfc_port_disable_global_interrupt();
         tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_CANCEL;
+        perfc_port_resume_global_interrupt(tIrqState);
         MLOGF(I, "identify cancelled\r\n");
+    } else if (strncmp(pszSub, "reset", 5U) == 0) {
+        perfc_global_interrupt_status_t tIrqState =
+            perfc_port_disable_global_interrupt();
+        foc_result_t eReset = foc_identify_Reset(&tFocApp.tIdentify);
+        tFocApp.bIdentifyActive = false;
+        tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_NONE;
+        perfc_port_resume_global_interrupt(tIrqState);
+        MLOGF(I, "identify reset: %d\r\n", (int)eReset);
     } else if (strncmp(pszSub, "status", 6U) == 0 || *pszSub == '\0') {
         foc_app_PrintIdentify(&tFocApp.tIdentify);
     } else {
-        MLOGF(I, "usage: motor identify [start|cancel|status]\r\n");
+        MLOGF(I, "usage: motor identify [start|cancel|reset|status]\r\n");
     }
 }
 #endif
@@ -795,6 +915,30 @@ static void foc_app_CmdMotor(const char *args)
     if (args == NULL) {
         return;
     }
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+    if (tFocApp.bIdentifyActive) {
+        if (strncmp(args, "stop", 4U) == 0) {
+            perfc_global_interrupt_status_t tIrqState =
+                perfc_port_disable_global_interrupt();
+            tFocApp.chIdentifyCommand = FOC_IDENTIFY_CMD_CANCEL;
+            perfc_port_resume_global_interrupt(tIrqState);
+            motor_Stop(&tFocApp.tMotor);
+            return;
+        } else if (strncmp(args, "status", 6U) == 0) {
+            foc_app_PrintStatus(&tFocApp.tMotor);
+            return;
+        } else if (strncmp(args, "encoder", 7U) == 0) {
+            foc_app_PrintEncoder(&tFocApp.tEncoder);
+            return;
+        } else if (strncmp(args, "identify", 8U) == 0) {
+            foc_app_CmdIdentify(args + 8);
+            return;
+        } else {
+            MLOGF(W, "command rejected: identify is active\r\n");
+            return;
+        }
+    }
+#endif
     if (strncmp(args, "stop", 4U) == 0) {
         motor_Stop(&tFocApp.tMotor);
         return;
@@ -855,7 +999,7 @@ static void foc_app_CmdMotor(const char *args)
         MLOGF(I, "usage: motor speed <pu> | current <d> <q> | "
               "voltage <d> <q> | align | stop | clear\r\n"
               "       motor status | encoder | "
-              "identify [start|cancel|status]\r\n");
+              "identify [start|cancel|reset|status]\r\n");
         return;
     }
     if (bStarted && eResult != FOC_RESULT_OK) {
@@ -923,10 +1067,7 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         .bDirectionInvert = false,
         .ptSensor = &g_tFocEncoderSensorInterface,
     },
-    .ptAdc = &g_tFocAdcInterface,
-    .ptPwm = &g_tFocPwmInterface,
     .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
-    .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
     .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,
     .qElectricalSpeedBaseTurnsPerSecond =
         FOC_SCALAR(MOTOR_BASE_ELECTRICAL_HZ),
@@ -979,10 +1120,7 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         .qAlignCurrent = FOC_SCALAR(0.1f),
     },
     .tEncoderCfg = {0},
-    .ptAdc = &g_tFocAdcInterface,
-    .ptPwm = &g_tFocPwmInterface,
     .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
-    .wCurrentBaseMilliamp = MOTOR_BASE_CURRENT_MA,
     .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,
     .qElectricalSpeedBaseTurnsPerSecond =
         FOC_SCALAR(MOTOR_BASE_ELECTRICAL_HZ),

@@ -18,6 +18,7 @@ if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/foc_identify_test.c"),
     (Join-Path $repoRoot "foc/identify/foc_identify.c"),
+    (Join-Path $repoRoot "foc/control/foc_pid.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
     (Join-Path $repoRoot "foc/math/foc_trig_lut.c")
@@ -25,6 +26,7 @@ $sourceFiles = @(
 
 $includeArgs = @(
     "-I$(Join-Path $repoRoot 'foc')",
+    "-I$(Join-Path $repoRoot 'foc/control')",
     "-I$(Join-Path $repoRoot 'foc/math')",
     "-I$(Join-Path $repoRoot 'foc/identify')"
 )

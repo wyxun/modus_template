@@ -10,6 +10,16 @@
 #define __MDI_HW_H__
 
 #include "mdi/mdi.h"
+#include "mdi/mdi_static.h"
+
+#define MDI_STREAM_WRITE_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_Write
+
+#define MDI_STREAM_READ_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_Read
+
+#define MDI_STREAM_IS_BUSY_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_IsBusy
 
 /*============================================================================
  * Project hardware resource pool

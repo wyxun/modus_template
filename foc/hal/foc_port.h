@@ -10,42 +10,50 @@
 
 #include "foc_types.h"
 
-typedef enum {
-    FOC_CALIBRATION_BUSY = 0,
-    FOC_CALIBRATION_COMPLETE,
-    FOC_CALIBRATION_FAILED,
-} foc_calibration_state_e;
+/**
+ * @brief Sample raw three-phase ADC current values.
+ * @param ptSample Raw ADC sample output.
+ * @return FOC_RESULT_OK or a hardware error.
+ */
+foc_result_t foc_SampleCurrent(
+    foc_current_sample_t *ptSample);
 
-typedef struct {
-    foc_result_t (*fnSetCurrentBase)(void *pContext,
-                                     uint32_t wCurrentBaseMilliamp);
-    foc_result_t (*fnCalibrationBegin)(void *pContext,
-                                       foc_adc_calib_t *ptCalibration);
-    foc_calibration_state_e (*fnCalibrationStep)(
-        void *pContext,
-        foc_adc_calib_t *ptCalibration);
-    foc_result_t (*fnSample)(void *pContext,
-                             const foc_adc_calib_t *ptCalibration,
-                             foc_current_abc_t *ptCurrent);
-} foc_adc_ops_t;
+/**
+ * @brief Submit one normalized three-phase duty command.
+ * @param ptDuty Normalized duty command.
+ * @return FOC_RESULT_OK or a hardware argument error.
+ */
+foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty);
 
-typedef struct {
-    foc_result_t (*fnSetDuty)(void *pContext,
-                              const foc_duty_abc_t *ptDuty);
-    foc_result_t (*fnEnable)(void *pContext);
-    foc_result_t (*fnStop)(void *pContext);
-    bool (*fnGetFaultStatus)(void *pContext);
-    foc_result_t (*fnClearFaultStatus)(void *pContext);
-} foc_pwm_ops_t;
+/**
+ * @brief Start the target ADC trigger used by the FOC sampling schedule.
+ * @return None.
+ * @note Initialization-only; never call this from the current loop.
+ */
+void foc_port_StartAdcTrigger(void);
 
-typedef struct {
-    const foc_adc_ops_t *ptOps;
-    void *pContext;
-} foc_adc_if_t;
+/**
+ * @brief Enable the FOC PWM power stage.
+ * @return FOC_RESULT_OK or a hardware error.
+ */
+foc_result_t foc_PwmEnable(void);
 
-typedef struct {
-    const foc_pwm_ops_t *ptOps;
-    void *pContext;
-} foc_pwm_if_t;
+/**
+ * @brief Force the FOC PWM power stage into its safe state.
+ * @return FOC_RESULT_OK or a hardware error.
+ */
+foc_result_t foc_PwmSafeStop(void);
+
+/**
+ * @brief Read the latched PWM or over-current fault state.
+ * @return true when a fault is active.
+ */
+bool foc_PwmGetFault(void);
+
+/**
+ * @brief Clear a safe-to-clear PWM fault latch.
+ * @return FOC_RESULT_OK or a safety error.
+ */
+foc_result_t foc_PwmClearFault(void);
 
 #endif /* FOC_PORT_H */

@@ -15,168 +15,243 @@
 #include "mdi/mdi.h"
 
 /* --------------------------------------------------------------------------
- *  MDI GPIO wrappers
+ *  Static MDI GPIO capability
  * -------------------------------------------------------------------------- */
 
-static int32_t gpiog_set(void *pPriv, mdi_gpio_level_t eLevel)
-{
-    void **ap = (void **)pPriv;
-    /* Active-low logic: HIGH -> ON -> RESET(LOW) */
-    HAL_GPIO_WritePin((GPIO_TypeDef *)ap[0],
-                      (uint16_t)(uintptr_t)ap[1],
-                      (eLevel == MDI_GPIO_HIGH) ? GPIO_PIN_RESET : GPIO_PIN_SET);
-    return 0;
-}
-
-static int32_t gpiog_get(void *pPriv)
-{
-    void **ap = (void **)pPriv;
-    GPIO_PinState state = HAL_GPIO_ReadPin((GPIO_TypeDef *)ap[0], (uint16_t)(uintptr_t)ap[1]);
-    /* Active-low logic: RESET(LOW) -> HIGH(ON) */
-    return (state == GPIO_PIN_RESET) ? MDI_GPIO_HIGH : MDI_GPIO_LOW;
-}
-
-static int32_t gpiog_toggle(void *pPriv)
-{
-    void **ap = (void **)pPriv;
-    HAL_GPIO_TogglePin((GPIO_TypeDef *)ap[0], (uint16_t)(uintptr_t)ap[1]);
-    return 0;
-}
-
-/* LED — PC6 */
-static void *s_apvLedPriv[] = { GPIOC, (void *)(uintptr_t)GPIO_PIN_6 };
-static mdi_gpio_t s_tGpioLed = {
-    .pPriv   = s_apvLedPriv,
-    .fnSet   = gpiog_set,
-    .fnGet   = gpiog_get,
-    .fnToggle = gpiog_toggle,
+struct mdi_gpio_pin_t {
+    GPIO_TypeDef *pPort;
+    uint16_t hwPin;
+    bool bActiveLow;
 };
 
-/* COMP1 — PA1 (input only) */
-static void *s_apvComp1Priv[] = { GPIOA, (void *)(uintptr_t)GPIO_PIN_1 };
-static mdi_gpio_t s_tGpioComp1 = {
-    .pPriv   = s_apvComp1Priv,
-    .fnSet   = NULL,
-    .fnGet   = gpiog_get,
+mdi_status_t mdi_gpio_pin_Set(
+    const mdi_gpio_pin_t *ptPin,
+    mdi_gpio_level_t eLevel)
+{
+    GPIO_PinState eState = GPIO_PIN_SET;
+
+    if (ptPin == NULL || ptPin->pPort == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    eState = (eLevel == MDI_GPIO_HIGH) ? GPIO_PIN_RESET : GPIO_PIN_SET;
+    if (!ptPin->bActiveLow) {
+        eState = (eLevel == MDI_GPIO_HIGH) ? GPIO_PIN_SET : GPIO_PIN_RESET;
+    }
+    HAL_GPIO_WritePin((GPIO_TypeDef *)ptPin->pPort, ptPin->hwPin, eState);
+    return MDI_STATUS_OK;
+}
+
+mdi_status_t mdi_gpio_pin_Get(
+    const mdi_gpio_pin_t *ptPin,
+    mdi_gpio_level_t *peLevel)
+{
+    GPIO_PinState eState = GPIO_PIN_RESET;
+
+    if (ptPin == NULL || ptPin->pPort == NULL || peLevel == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    eState = HAL_GPIO_ReadPin(
+        (GPIO_TypeDef *)ptPin->pPort,
+        ptPin->hwPin);
+    if (ptPin->bActiveLow) {
+        *peLevel = (eState == GPIO_PIN_RESET)
+            ? MDI_GPIO_HIGH : MDI_GPIO_LOW;
+    } else {
+        *peLevel = (eState == GPIO_PIN_SET)
+            ? MDI_GPIO_HIGH : MDI_GPIO_LOW;
+    }
+    return MDI_STATUS_OK;
+}
+
+mdi_status_t mdi_gpio_pin_Toggle(const mdi_gpio_pin_t *ptPin)
+{
+    if (ptPin == NULL || ptPin->pPort == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    HAL_GPIO_TogglePin((GPIO_TypeDef *)ptPin->pPort, ptPin->hwPin);
+    return MDI_STATUS_OK;
+}
+
+static const mdi_gpio_pin_t s_tGpioLed = {
+    .pPort = GPIOC,
+    .hwPin = GPIO_PIN_6,
+    .bActiveLow = true,
 };
 
-/* COMP2 — PA7 (input only) */
-static void *s_apvComp2Priv[] = { GPIOA, (void *)(uintptr_t)GPIO_PIN_7 };
-static mdi_gpio_t s_tGpioComp2 = {
-    .pPriv   = s_apvComp2Priv,
-    .fnSet   = NULL,
-    .fnGet   = gpiog_get,
+static const mdi_gpio_pin_t s_tGpioComp1 = {
+    .pPort = GPIOA,
+    .hwPin = GPIO_PIN_1,
+    .bActiveLow = true,
 };
 
-/* COMP4 — PB0 (input only) */
-static void *s_apvComp4Priv[] = { GPIOB, (void *)(uintptr_t)GPIO_PIN_0 };
-static mdi_gpio_t s_tGpioComp4 = {
-    .pPriv   = s_apvComp4Priv,
-    .fnSet   = NULL,
-    .fnGet   = gpiog_get,
+static const mdi_gpio_pin_t s_tGpioComp2 = {
+    .pPort = GPIOA,
+    .hwPin = GPIO_PIN_7,
+    .bActiveLow = true,
+};
+
+static const mdi_gpio_pin_t s_tGpioComp4 = {
+    .pPort = GPIOB,
+    .hwPin = GPIO_PIN_0,
+    .bActiveLow = true,
 };
 
 /* --------------------------------------------------------------------------
- *  MDI ADC wrappers
+ *  Static MDI ADC capability
  * -------------------------------------------------------------------------- */
 
-static int32_t adc_read(void *pPriv)
+mdi_status_t mdi_adc_channel_Sample(
+    const mdi_adc_channel_t *ptAdc,
+    uint32_t *pwSample)
 {
-    uint32_t wChannel = (uint32_t)(uintptr_t)pPriv;
-
-    switch (wChannel) {
+    if (ptAdc == NULL || pwSample == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    switch (ptAdc->wChannel) {
     case HALADC_REG_BUS_VOLTAGE:
     case HALADC_REG_TEMPERATURE:
     case HALADC_REG_POTENTIOMETER:
         haladc_StartRegular();
-        return (int32_t)haladc_GetRegular(wChannel);
+        *pwSample = haladc_GetRegular(ptAdc->wChannel);
+        return MDI_STATUS_OK;
     default:
-        return 0;
+        return MDI_STATUS_EINVAL;
     }
 }
 
-static mdi_adc_t s_tAdcBusV = { .pPriv = (void *)HALADC_REG_BUS_VOLTAGE, .fnRead = adc_read };
-static mdi_adc_t s_tAdcTemp = { .pPriv = (void *)HALADC_REG_TEMPERATURE, .fnRead = adc_read };
-static mdi_adc_t s_tAdcPot  = { .pPriv = (void *)HALADC_REG_POTENTIOMETER, .fnRead = adc_read };
-
-/* --------------------------------------------------------------------------
- *  MDI PWM wrappers — TIM1 motor phases via haltim1_SetDuty
- * -------------------------------------------------------------------------- */
-
-static int32_t pwm_setduty(void *pPriv, uint32_t wDuty)
+mdi_status_t mdi_phase_current_adc_Sample(
+    const mdi_phase_current_adc_t *ptAdc,
+    uint32_t *pwSampleU,
+    uint32_t *pwSampleV,
+    uint32_t *pwSampleW)
 {
-    uint32_t wChannel = (uint32_t)(uintptr_t)pPriv;
-    if (wChannel == 1U)      LL_TIM_OC_SetCompareCH1(TIM1, wDuty);
-    else if (wChannel == 2U) LL_TIM_OC_SetCompareCH2(TIM1, wDuty);
-    else if (wChannel == 3U) LL_TIM_OC_SetCompareCH3(TIM1, wDuty);
-    return 0;
+    if (ptAdc == NULL || pwSampleU == NULL || pwSampleV == NULL ||
+        pwSampleW == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    *pwSampleU = haladc_GetInjected(
+        ptAdc->achAdc[0], ptAdc->achRank[0]);
+    *pwSampleV = haladc_GetInjected(
+        ptAdc->achAdc[1], ptAdc->achRank[1]);
+    *pwSampleW = haladc_GetInjected(
+        ptAdc->achAdc[2], ptAdc->achRank[2]);
+    return MDI_STATUS_OK;
 }
 
-int32_t port_mdi_MotorPwmSetDuty3(uint32_t wDutyU, uint32_t wDutyV, uint32_t wDutyW)
+static const mdi_adc_channel_t s_tAdcBusV = {
+    .wChannel = HALADC_REG_BUS_VOLTAGE,
+};
+static const mdi_adc_channel_t s_tAdcTemp = {
+    .wChannel = HALADC_REG_TEMPERATURE,
+};
+static const mdi_adc_channel_t s_tAdcPot = {
+    .wChannel = HALADC_REG_POTENTIOMETER,
+};
+
+static const mdi_phase_current_adc_t s_tAdcPhaseCurrent = {
+    .achAdc = {HALADC_ADC1, HALADC_ADC2, HALADC_ADC2},
+    .achRank = {0U, 1U, 0U},
+};
+
+/* --------------------------------------------------------------------------
+ *  Static MDI PWM capability — TIM1 motor phase group
+ * -------------------------------------------------------------------------- */
+
+mdi_status_t mdi_motor_pwm_SetDuty3(
+    const mdi_motor_pwm_t *ptPwm,
+    uint32_t wDutyU,
+    uint32_t wDutyV,
+    uint32_t wDutyW)
 {
+    if (ptPwm == NULL ||
+        wDutyU > ptPwm->wPeriod ||
+        wDutyV > ptPwm->wPeriod ||
+        wDutyW > ptPwm->wPeriod) {
+        return MDI_STATUS_EINVAL;
+    }
     LL_TIM_OC_SetCompareCH1(TIM1, wDutyU);
     LL_TIM_OC_SetCompareCH2(TIM1, wDutyV);
     LL_TIM_OC_SetCompareCH3(TIM1, wDutyW);
-    return 0;
+    return MDI_STATUS_OK;
 }
 
-static int32_t pwm_enable(void *pPriv, bool bEn)
+mdi_status_t mdi_motor_pwm_Enable(
+    const mdi_motor_pwm_t *ptPwm,
+    bool bEnable)
 {
-    (void)pPriv;
-    if (bEn) haltim1_Start();
-    else     haltim1_Stop();
-    return 0;
+    if (ptPwm == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    if (bEnable) {
+        haltim1_Start();
+    } else {
+        haltim1_Stop();
+    }
+    return MDI_STATUS_OK;
 }
 
-static mdi_pwm_t s_tPwmU = { .pPriv = (void *)1U, .fnSetDuty = pwm_setduty, .fnEnable = pwm_enable };
-static mdi_pwm_t s_tPwmV = { .pPriv = (void *)2U, .fnSetDuty = pwm_setduty, .fnEnable = pwm_enable };
-static mdi_pwm_t s_tPwmW = { .pPriv = (void *)3U, .fnSetDuty = pwm_setduty, .fnEnable = pwm_enable };
+mdi_status_t mdi_motor_pwm_SafeStop(const mdi_motor_pwm_t *ptPwm)
+{
+    if (ptPwm == NULL) {
+        return MDI_STATUS_EINVAL;
+    }
+    haltim1_Stop();
+    return MDI_STATUS_OK;
+}
+
+static const mdi_motor_pwm_t s_tMotorPwm = {
+    .wPeriod = 4250U,
+};
 
 /* --------------------------------------------------------------------------
- *  MDI Stream — USART2 debug serial
+ *  Static MDI Stream — USART2 debug serial
  * -------------------------------------------------------------------------- */
 
-static int32_t uart_write(void *pPriv, const uint8_t *pchData, uint32_t wLen)
+int32_t mdi_uart_stream_Write(
+    mdi_uart_stream_t *ptStream,
+    const uint8_t *pchData,
+    uint32_t wLen)
 {
-    (void)pPriv;
-    return (int32_t)halusart_SendData(1, (uint8_t *)pchData, (uint16_t)wLen);
+    if (ptStream == NULL || (pchData == NULL && wLen != 0U) ||
+        wLen > UINT16_MAX) {
+        return (int32_t)MDI_STATUS_EINVAL;
+    }
+    return (int32_t)halusart_SendData(
+        ptStream->chUsartNum, (uint8_t *)pchData, (uint16_t)wLen);
 }
 
-static int32_t uart_read(void *pPriv, uint8_t *pchBuf, uint32_t wLen)
+int32_t mdi_uart_stream_Read(
+    mdi_uart_stream_t *ptStream,
+    uint8_t *pchBuf,
+    uint32_t wLen)
 {
-    (void)pPriv;
-    static uint8_t s_chTempBuf[128];
-    static uint16_t s_hwTempLen = 0;
-    static uint16_t s_hwTempOffset = 0;
+    uint32_t wRead = 0U;
 
-    if (s_hwTempOffset >= s_hwTempLen) {
-        s_hwTempLen = halusart_receiveData(1, s_chTempBuf);
-        s_hwTempOffset = 0;
+    if (ptStream == NULL || (pchBuf == NULL && wLen != 0U)) {
+        return (int32_t)MDI_STATUS_EINVAL;
     }
-
-    if (s_hwTempLen == 0) {
-        return -1;
+    while (wRead < wLen) {
+        if (ptStream->hwPendingOffset >= ptStream->hwPendingLength) {
+            ptStream->hwPendingLength = halusart_receiveData(
+                ptStream->chUsartNum, ptStream->achPending);
+            ptStream->hwPendingOffset = 0U;
+        }
+        if (ptStream->hwPendingLength == 0U) {
+            break;
+        }
+        pchBuf[wRead++] = ptStream->achPending[
+            ptStream->hwPendingOffset++];
     }
-
-    uint32_t i = 0;
-    while (i < wLen && s_hwTempOffset < s_hwTempLen) {
-        pchBuf[i++] = s_chTempBuf[s_hwTempOffset++];
-    }
-
-    return (i > 0) ? (int32_t)i : -1;
+    return (wRead > 0U) ? (int32_t)wRead : (int32_t)MDI_STATUS_EAGAIN;
 }
 
-static int32_t uart_isbusy(void *pPriv)
+int32_t mdi_uart_stream_IsBusy(mdi_uart_stream_t *ptStream)
 {
-    (void)pPriv;
-    return 0;
+    return (ptStream == NULL) ? (int32_t)MDI_STATUS_EINVAL : 0;
 }
 
-static mdi_stream_t s_tStreamSerial = {
-    .pPriv    = NULL,
-    .fnWrite  = uart_write,
-    .fnRead   = uart_read,
-    .fnIsBusy = uart_isbusy,
+static mdi_uart_stream_t s_tStreamSerial = {
+    .chUsartNum = 1U,
 };
 
 /* --------------------------------------------------------------------------
@@ -223,9 +298,8 @@ const mdi_hardware_t HW = {
     .ptAdcBusV   = &s_tAdcBusV,
     .ptAdcTemp   = &s_tAdcTemp,
     .ptAdcPot    = &s_tAdcPot,
-    .ptMotorU    = &s_tPwmU,
-    .ptMotorV    = &s_tPwmV,
-    .ptMotorW    = &s_tPwmW,
+    .ptAdcPhaseCurrent = &s_tAdcPhaseCurrent,
+    .ptMotorPwm  = &s_tMotorPwm,
     .ptSerial    = &s_tStreamSerial,
     .ptI2c1      = &s_tI2c1As5600,
 };

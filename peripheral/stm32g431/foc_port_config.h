@@ -13,11 +13,8 @@
 #include "foc_encoder.h"
 #include "foc_port.h"
 
-extern const foc_adc_if_t g_tFocAdcInterface;
-extern const foc_pwm_if_t g_tFocPwmInterface;
 extern const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface;
 
-void *foc_port_GetPwmContext(void);
-void foc_port_NotifyBreak(void *pContext);
+void foc_port_NotifyBreak(void);
 
 #endif /* FOC_PORT_CONFIG_H */

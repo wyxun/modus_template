@@ -48,8 +48,6 @@ typedef struct {
     uint8_t chSpeedLoopDiv;
     foc_scalar_t qAlignCurrent;
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
-    foc_adc_if_t tAdc;
-    foc_pwm_if_t tPwm;
     motor_position_if_t tPosition;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_cfg_t tObserverCfg;
@@ -78,8 +76,6 @@ typedef enum {
 typedef struct {
     motor_params_t tParams;
     motor_limits_t tLimits;
-    foc_adc_if_t tAdc;
-    foc_pwm_if_t tPwm;
     motor_position_if_t tPosition;
     foc_scalar_t qAlignCurrent;
     uint32_t wAdcCalibrationTimeoutSteps;
@@ -89,6 +85,7 @@ typedef struct {
     foc_pid_t tSpeedPi;
     foc_scalar_t qMechanicalToElectricalSpeedPuGain;
     foc_adc_calib_t tCalib;
+    uint32_t wCurrentBaseMilliamp;
     foc_core_command_t tCommand;
     foc_core_input_t tInput;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
@@ -206,5 +203,29 @@ void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick);
  */
 foc_result_t motor_GetStatus(const motor_t *ptMotor,
                              motor_status_t *ptStatus);
+
+#if FOC_ENABLE_EXPERIMENTAL_IDENTIFY
+/**
+ * @brief Ephemeral on-demand view of the latest ISR control metrics.
+ * @note Exists only on the caller's stack; not a persistent member of motor_t.
+ */
+typedef struct {
+    foc_dq_t     tCurrentDqPu;
+    foc_dq_t     tSubmittedVoltageDqPu;
+    foc_angle_t  tElectricalAngle;
+    foc_scalar_t qElectricalSpeedPu;
+    bool         bSampleValid;
+    bool         bDutySubmitted;
+} motor_step_metrics_t;
+
+/**
+ * @brief Capture a transient view of the latest ISR step metrics.
+ * @param ptMotor Motor object.
+ * @param ptMetrics Output metrics pointer.
+ * @return FOC_RESULT_OK or FOC_RESULT_DISABLED if inactive or faulted.
+ */
+foc_result_t motor_CaptureStepMetrics(const motor_t *ptMotor,
+                                      motor_step_metrics_t *ptMetrics);
+#endif
 
 #endif /* MOTOR_H */

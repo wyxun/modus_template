@@ -39,6 +39,12 @@ typedef struct {
 } foc_current_abc_t;
 
 typedef struct {
+    uint32_t wU;
+    uint32_t wV;
+    uint32_t wW;
+} foc_current_sample_t;
+
+typedef struct {
     uint32_t wOffsetU;
     uint32_t wOffsetV;
     uint32_t wOffsetW;

@@ -1,6 +1,6 @@
 /**
  * @file mdi_hw.h
- * @brief Global peripheral resource definition (MDI hardware pool) — AT32F413 Motor EVB V1
+ * @brief Global MDI hardware pool definition — AT32F413 Motor EVB V1
  *
  * Provides a unified hardware structure for the application layer,
  * avoiding exposure of chip-specific headers.
@@ -10,6 +10,16 @@
 #define __MDI_HW_H__
 
 #include "mdi/mdi.h"
+#include "mdi/mdi_static.h"
+
+#define MDI_STREAM_WRITE_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_Write
+
+#define MDI_STREAM_READ_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_Read
+
+#define MDI_STREAM_IS_BUSY_ASSOCIATIONS \
+    mdi_stream_t *: mdi_stream_IsBusy
 
 /* This chip's MDI hardware pool provides a start/stop button input
  * (ptButtonStart); FOC app button handling is enabled by this macro. */

@@ -20,7 +20,21 @@
 #define FOC_USE_FPU_HARDWARE        0       /**< 不使用硬件 FPU */
 #endif
 
+#ifndef FOC_OFFSET_CALIB_TIMES
 #define FOC_OFFSET_CALIB_TIMES      200U    /**< ADC 偏移校准采样次数 */
+#endif
+
+#ifndef FOC_CURRENT_BASE_MILLIAMP
+#define FOC_CURRENT_BASE_MILLIAMP   7000U
+#endif
+
+#ifndef FOC_CURRENT_COUNTS_PER_BASE
+#define FOC_CURRENT_COUNTS_PER_BASE 1390U
+#endif
+
+#ifndef FOC_CURRENT_SAMPLE_INVERTED
+#define FOC_CURRENT_SAMPLE_INVERTED 1
+#endif
 
 #define FOC_DEFAULT_SENSING_TOPOLOGY    SENSING_TOPOLOGY_3P  /**< 默认采样拓扑 */
 

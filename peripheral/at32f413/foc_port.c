@@ -13,12 +13,8 @@
 
 #include "haladc.h"
 #include "halpwm.h"
-
-#define FOC_PORT_ADC_SAMPLES   512U
-#define FOC_PORT_CURRENT_BASE  2048U
-#define FOC_PORT_CURRENT_BASE_MA 7000U
-
-static uint32_t s_wCurrentBaseMilliamp = 0U;
+#include "mdi/mdi.h"
+#include "mdi_hw.h"
 
 /**
  * @brief Read the three preempt ADC channels.
@@ -42,63 +38,6 @@ static void port_read_raw(uint32_t *pwRawU,
 }
 
 /**
- * @brief Check the AT32 ADC offset range.
- * @param ptCalibration Calibration state.
- * @return true when all offsets are inside the ADC range.
- */
-static bool port_offsets_are_valid(const foc_adc_calib_t *ptCalibration)
-{
-    return ptCalibration->wOffsetU > 0U &&
-           ptCalibration->wOffsetU < 4096U &&
-           ptCalibration->wOffsetV > 0U &&
-           ptCalibration->wOffsetV < 4096U &&
-           ptCalibration->wOffsetW > 0U &&
-           ptCalibration->wOffsetW < 4096U;
-}
-
-/**
- * @brief Convert one ADC delta to a normalized current.
- * @param nDelta Raw ADC delta.
- * @return Normalized phase current.
- */
-static foc_scalar_t port_normalize_current(int32_t nDelta)
-{
-    const int32_t nBase = (int32_t)FOC_PORT_CURRENT_BASE;
-    int64_t llMaximumCounts = ((int64_t)nBase *
-                               (int64_t)s_wCurrentBaseMilliamp) /
-                              FOC_PORT_CURRENT_BASE_MA;
-
-    nDelta = (int64_t)nDelta > llMaximumCounts
-        ? (int32_t)llMaximumCounts : nDelta;
-    nDelta = (int64_t)nDelta < -llMaximumCounts
-        ? (int32_t)-llMaximumCounts : nDelta;
-#if defined(FOC_NUMERIC_FIXED)
-    return (foc_scalar_t)(((int64_t)nDelta *
-                           FOC_PORT_CURRENT_BASE_MA * FOC_Q_SCALE) /
-                          ((int64_t)nBase * s_wCurrentBaseMilliamp));
-#else
-    return ((foc_scalar_t)nDelta *
-            (foc_scalar_t)FOC_PORT_CURRENT_BASE_MA) /
-           ((foc_scalar_t)nBase *
-            (foc_scalar_t)s_wCurrentBaseMilliamp);
-#endif
-}
-
-/**
- * @brief Configure the current scale used by subsequent ADC samples.
- * @param wCurrentBaseMilliamp Current base in milliamps.
- * @return FOC_RESULT_OK or an invalid argument result.
- */
-foc_result_t foc_adc_SetCurrentBaseMilliamp(uint32_t wCurrentBaseMilliamp)
-{
-    if (wCurrentBaseMilliamp == 0U) {
-        return FOC_RESULT_INVALID_ARGUMENT;
-    }
-    s_wCurrentBaseMilliamp = wCurrentBaseMilliamp;
-    return FOC_RESULT_OK;
-}
-
-/**
  * @brief Convert a normalized duty to a timer compare value.
  * @param qDuty Normalized duty.
  * @return Timer compare value.
@@ -113,80 +52,26 @@ static uint32_t port_duty_to_counts(foc_scalar_t qDuty)
 #endif
 }
 
-void foc_adc_CalibBegin(foc_adc_calib_t *ptCalibration)
+/**
+ * @brief Sample raw three-phase current values from the ADC.
+ * @param ptSample Raw ADC sample output.
+ * @return FOC_RESULT_OK or a null argument error.
+ */
+foc_result_t foc_SampleCurrent(foc_current_sample_t *ptSample)
 {
-    if (ptCalibration == NULL) {
-        return;
-    }
-    ptCalibration->wOffsetU = 0U;
-    ptCalibration->wOffsetV = 0U;
-    ptCalibration->wOffsetW = 0U;
-    ptCalibration->ullSumU = 0U;
-    ptCalibration->ullSumV = 0U;
-    ptCalibration->ullSumW = 0U;
-    ptCalibration->hwSampleCount = 0U;
-    ptCalibration->bIsCalibrated = false;
-}
-
-foc_calibration_state_e foc_adc_CalibStep(
-    foc_adc_calib_t *ptCalibration)
-{
-    uint32_t wRawU = 0U;
-    uint32_t wRawV = 0U;
-    uint32_t wRawW = 0U;
-
-    if (ptCalibration == NULL) {
-        return FOC_CALIBRATION_FAILED;
-    }
-    if (ptCalibration->bIsCalibrated) {
-        return FOC_CALIBRATION_COMPLETE;
-    }
-    port_read_raw(&wRawU, &wRawV, &wRawW);
-    ptCalibration->ullSumU += (uint64_t)wRawU;
-    ptCalibration->ullSumV += (uint64_t)wRawV;
-    ptCalibration->ullSumW += (uint64_t)wRawW;
-    ptCalibration->hwSampleCount++;
-    if (ptCalibration->hwSampleCount < FOC_PORT_ADC_SAMPLES) {
-        return FOC_CALIBRATION_BUSY;
-    }
-    ptCalibration->wOffsetU = (uint32_t)(ptCalibration->ullSumU /
-                                         FOC_PORT_ADC_SAMPLES);
-    ptCalibration->wOffsetV = (uint32_t)(ptCalibration->ullSumV /
-                                         FOC_PORT_ADC_SAMPLES);
-    ptCalibration->wOffsetW = (uint32_t)(ptCalibration->ullSumW /
-                                         FOC_PORT_ADC_SAMPLES);
-    ptCalibration->bIsCalibrated = port_offsets_are_valid(ptCalibration);
-    return ptCalibration->bIsCalibrated
-        ? FOC_CALIBRATION_COMPLETE : FOC_CALIBRATION_FAILED;
-}
-
-foc_result_t foc_adc_Sample(const foc_adc_calib_t *ptCalibration,
-                            foc_current_abc_t *ptCurrent)
-{
-    uint32_t wRawU = 0U;
-    uint32_t wRawV = 0U;
-    uint32_t wRawW = 0U;
-
-    if (ptCalibration == NULL || ptCurrent == NULL) {
+    if (ptSample == NULL) {
         return FOC_RESULT_NULL;
     }
-    if (s_wCurrentBaseMilliamp == 0U) {
-        return FOC_RESULT_INVALID_ARGUMENT;
-    }
-    if (!ptCalibration->bIsCalibrated) {
-        return FOC_RESULT_SAFETY;
-    }
-    port_read_raw(&wRawU, &wRawV, &wRawW);
-    ptCurrent->qU = port_normalize_current(
-        (int32_t)wRawU - (int32_t)ptCalibration->wOffsetU);
-    ptCurrent->qV = port_normalize_current(
-        (int32_t)wRawV - (int32_t)ptCalibration->wOffsetV);
-    ptCurrent->qW = port_normalize_current(
-        (int32_t)wRawW - (int32_t)ptCalibration->wOffsetW);
+    port_read_raw(&ptSample->wU, &ptSample->wV, &ptSample->wW);
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_pwm_SetDuty(const foc_duty_abc_t *ptDuty)
+/**
+ * @brief Submit one normalized three-phase duty command.
+ * @param ptDuty Normalized duty command.
+ * @return FOC_RESULT_OK or a null argument error.
+ */
+foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty)
 {
     if (ptDuty == NULL) {
         return FOC_RESULT_NULL;
@@ -197,13 +82,29 @@ foc_result_t foc_pwm_SetDuty(const foc_duty_abc_t *ptDuty)
     return FOC_RESULT_OK;
 }
 
-foc_result_t foc_pwm_Enable(void)
+void foc_port_StartAdcTrigger(void)
+{
+}
+
+foc_result_t foc_PwmEnable(void)
 {
     halpwm_Start();
     return FOC_RESULT_OK;
 }
 
-void foc_pwm_Stop(void)
+foc_result_t foc_PwmSafeStop(void)
 {
     halpwm_Stop();
+    return FOC_RESULT_OK;
+}
+
+bool foc_PwmGetFault(void)
+{
+    return HW.ptCompBrk != NULL &&
+           mdi_gpio_Get(HW.ptCompBrk) == MDI_GPIO_HIGH;
+}
+
+foc_result_t foc_PwmClearFault(void)
+{
+    return FOC_RESULT_DISABLED;
 }

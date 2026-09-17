@@ -45,11 +45,34 @@ Business code accesses hardware through MDI. Do not include vendor headers or
 call vendor HAL functions directly from business modules. Keep target-specific
 implementations in `peripheral/<chip>/` or `target/<chip>/`.
 
+MDI uses compile-time capability interfaces as the default architecture. Prefer
+typed operations such as `MDI_PWM_SetDuty`, `MDI_PWM_SetFrequency`,
+`MDI_ADC_Sample`, and `MDI_I2C_Transfer` over a universal `read/write/control`
+ABI. `_Generic` is allowed only as compile-time dispatch to a typed direct or
+`static inline` implementation. Do not put command switches, `void *` physical
+values, or runtime device dispatch in FOC hot paths. Stream and Flash may retain
+Read/Write because their semantics are data-oriented. FOC depends on a narrow
+real-time hardware capability interface; it does not depend on board `HW`, HAL,
+or MDI command identifiers.
+Naming such as `ptXxx` is a readable convention, not a mandatory interface
+rule; use the name that best describes ownership and semantics.
+
+FOC hardware integration follows one direct target-bound contract. The Motor
+hot path calls `foc_SampleCurrent()` and `foc_SetDuty()` directly; it does not
+store ADC/PWM `ops/context` objects and does not add forwarding wrappers.
+Target `foc_port.c` maps those calls directly to typed MDI capabilities. ADC
+offset calibration, current normalization, and the built-in current base are
+Motor-owned behavior; `motor_t.wCurrentBaseMilliamp` is initialized from
+`FOC_CURRENT_BASE_MILLIAMP` and is not supplied by application configuration.
+PWM safe-stop and break recovery are non-hot safety lifecycle paths and must
+remain explicit until a separate safety capability is designed.
+
 ## Coding and Change Boundaries
 
 Before writing or reviewing embedded C, read
 [the embedded-coding skill](skills/embedded-coding/SKILL.md). Keep its coding
-rules in that skill rather than duplicating them here.
+rules and workflow in that skill rather than duplicating them here. The skill
+file is the single authority for embedded coding and MODUS usage.
 
 - Preserve unrelated worktree and submodule changes.
 - Do not stage, commit, switch branches, or push unless explicitly requested.

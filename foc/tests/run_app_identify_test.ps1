@@ -16,7 +16,12 @@ if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
 }
 
 $sourceFiles = @(
-    (Join-Path $repoRoot "foc/tests/foc_app_encoder_command_test.c"),
+    (Join-Path $repoRoot "foc/tests/foc_app_identify_test.c"),
+    (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/middleware/foc_core.c"),
+    (Join-Path $repoRoot "foc/control/foc_pid.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
+    (Join-Path $repoRoot "foc/identify/foc_identify.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
     (Join-Path $repoRoot "foc/math/foc_trig_lut.c"),
@@ -31,7 +36,7 @@ $includePaths = @(
     "modus/lib/perf_counter", "peripheral", "peripheral/stm32g431",
     "peripheral/driver", "class", "foc", "foc/math", "foc/hal",
     "foc/motor", "foc/middleware", "foc/control", "foc/modulation",
-    "foc/observer", "foc/app"
+    "foc/identify", "foc/observer", "foc/app"
 )
 $includeArgs = @($includePaths | ForEach-Object { "-I$(Join-Path $repoRoot $_)" })
 $commonArgs = @(
@@ -39,33 +44,37 @@ $commonArgs = @(
     "-Wno-implicit-fallthrough", "-ffunction-sections",
     "-fdata-sections", "-DMODUS_ENABLE=1", "-DMSHELL_ENABLE=1",
     "-DMODUS_USE_LOG=1",
+    "-DFOC_ENABLE_EXPERIMENTAL_IDENTIFY=1",
     "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
     "-D__C_LANGUAGE_EXTENSIONS_PERFC_PT__=1",
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
     "-D__COMPILER_HAS_GNU_EXTENSIONS__=1", "-DTRACE_USE_LIBC_PRINTF=0",
     "-DMODUS_CFG_USER_CONFIG_INCLUSION=<userconfig.h>",
-    "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0"
+    "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0",
+    "-Wno-unused-function"
 )
 
-foreach ($backend in @("FLOAT", "FIXED")) {
-    $testExe = Join-Path $env:TEMP "foc_app_encoder_check_$backend.exe"
-    $numericDefine = "-DFOC_NUMERIC_$backend=1"
-    $waveformDefine = if ($backend -eq "FLOAT") {
-        "-DMWAVEFORM_ENABLE=1"
-    } else {
-        "-DMWAVEFORM_ENABLE=0"
-    }
-    $linkArgs = @(
-        $commonArgs + $includeArgs + $numericDefine + $waveformDefine +
-        $sourceFiles + @("-Wl,--gc-sections", "-lm", "-o", $testExe)
-    )
-    & gcc @linkArgs
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    & $testExe
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    Write-Output "$backend FOC App tests passed"
+$outDir = Join-Path $repoRoot "build/test_bin"
+if (-not (Test-Path $outDir)) {
+    New-Item -ItemType Directory -Path $outDir -Force | Out-Null
 }
+
+$floatExe = Join-Path $outDir "foc_app_identify_test_float.exe"
+$fixedExe = Join-Path $outDir "foc_app_identify_test_fixed.exe"
+
+$linkArgsFloat = @("-DFOC_NUMERIC_FLOAT=1", "-DMWAVEFORM_ENABLE=1") + $commonArgs + $includeArgs + $sourceFiles + @("-Wl,--gc-sections", "-lm", "-o", $floatExe)
+$linkArgsFixed = @("-DFOC_NUMERIC_FIXED=1", "-DMWAVEFORM_ENABLE=0") + $commonArgs + $includeArgs + $sourceFiles + @("-Wl,--gc-sections", "-lm", "-o", $fixedExe)
+
+Write-Host "Building FLOAT identify integration test..."
+& $gccCmd @linkArgsFloat
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $floatExe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host "FLOAT Identify integration tests passed"
+
+Write-Host "Building FIXED identify integration test..."
+& $gccCmd @linkArgsFixed
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& $fixedExe
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host "FIXED Identify integration tests passed"

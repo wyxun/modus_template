@@ -104,117 +104,68 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
  * @param ptCalibration Calibration object.
  * @return None.
  */
-static foc_result_t test_AdcCalibrationBegin(
-    void *pContext,
-    foc_adc_calib_t *ptCalibration)
+static bool s_bCalibrationSample = true;
+
+foc_result_t foc_SampleCurrent(foc_current_sample_t *ptSample)
 {
-    (void)pContext;
-    ptCalibration->bIsCalibrated = true;
+    int32_t nRawU = 2048;
+    int32_t nRawV = 2048;
+    int32_t nRawW = 2048;
+
+    if (ptSample == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    if (s_bCalibrationSample) {
+        *ptSample = (foc_current_sample_t){2048U, 2048U, 2048U};
+        s_bCalibrationSample = false;
+        return FOC_RESULT_OK;
+    }
+    nRawU -= (int32_t)(foc_to_float(s_tSample.qU) *
+                       (float)FOC_CURRENT_COUNTS_PER_BASE);
+    nRawV -= (int32_t)(foc_to_float(s_tSample.qV) *
+                       (float)FOC_CURRENT_COUNTS_PER_BASE);
+    nRawW -= (int32_t)(foc_to_float(s_tSample.qW) *
+                       (float)FOC_CURRENT_COUNTS_PER_BASE);
+    ptSample->wU = (uint32_t)nRawU;
+    ptSample->wV = (uint32_t)nRawV;
+    ptSample->wW = (uint32_t)nRawW;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Complete the test calibration step immediately.
- * @param ptCalibration Calibration object.
- * @return FOC_CALIBRATION_COMPLETE.
- */
-static foc_calibration_state_e test_AdcCalibrationStep(
-    void *pContext,
-    foc_adc_calib_t *ptCalibration)
+foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty)
 {
-    (void)pContext;
-    (void)ptCalibration;
-    return FOC_CALIBRATION_COMPLETE;
+    return (ptDuty == NULL) ? FOC_RESULT_NULL : FOC_RESULT_OK;
 }
 
 /**
- * @brief Return one balanced three-phase current sample.
- * @param ptCalibration Calibration object.
- * @param ptCurrent Output current sample.
- * @return FOC_RESULT_OK.
+ * @brief Accept the test ADC trigger start request.
+ * @return None.
  */
-static foc_result_t test_AdcSample(
-    void *pContext,
-    const foc_adc_calib_t *ptCalibration,
-    foc_current_abc_t *ptCurrent)
+void foc_port_StartAdcTrigger(void)
 {
-    (void)pContext;
-    (void)ptCalibration;
-    *ptCurrent = s_tSample;
-    return FOC_RESULT_OK;
 }
 
-/**
- * @brief Accept a safe test duty.
- * @param ptDuty PWM duty.
- * @return FOC_RESULT_OK.
- */
-static foc_result_t test_PwmSetDuty(void *pContext,
-                                    const foc_duty_abc_t *ptDuty)
+foc_result_t foc_PwmEnable(void)
 {
-    (void)pContext;
-    (void)ptDuty;
-    return FOC_RESULT_OK;
-}
-
-/**
- * @brief Enable test PWM state.
- * @param None.
- * @return FOC_RESULT_OK.
- */
-static foc_result_t test_PwmEnable(void *pContext)
-{
-    (void)pContext;
     s_bPwmEnabled = true;
     return FOC_RESULT_OK;
 }
 
-/**
- * @brief Disable test PWM state.
- * @param None.
- * @return None.
- */
-static foc_result_t test_PwmStop(void *pContext)
+foc_result_t foc_PwmSafeStop(void)
 {
-    (void)pContext;
     s_bPwmEnabled = false;
     return FOC_RESULT_OK;
 }
 
-static bool test_PwmGetFault(void *pContext)
+bool foc_PwmGetFault(void)
 {
-    (void)pContext;
     return false;
 }
 
-static foc_result_t test_PwmClearFault(void *pContext)
+foc_result_t foc_PwmClearFault(void)
 {
-    (void)pContext;
     return FOC_RESULT_OK;
 }
-
-static foc_result_t test_AdcSetCurrentBase(void *pContext,
-                                           uint32_t wCurrentBaseMilliamp)
-{
-    (void)pContext;
-    (void)wCurrentBaseMilliamp;
-    return FOC_RESULT_OK;
-}
-
-static const foc_adc_ops_t s_tAdcOps = {
-    .fnSetCurrentBase = test_AdcSetCurrentBase,
-    .fnCalibrationBegin = test_AdcCalibrationBegin,
-    .fnCalibrationStep = test_AdcCalibrationStep,
-    .fnSample = test_AdcSample,
-};
-
-static const foc_pwm_ops_t s_tPwmOps = {
-    .fnSetDuty = test_PwmSetDuty,
-    .fnEnable = test_PwmEnable,
-    .fnStop = test_PwmStop,
-    .fnGetFaultStatus = test_PwmGetFault,
-    .fnClearFaultStatus = test_PwmClearFault,
-};
 
 static const motor_position_ops_t s_tPositionOps = {
     .fnGetPosition = test_GetPosition,
@@ -253,10 +204,6 @@ int main(void)
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
     tConfig.tObserverCfg = tObserverConfig;
-    tConfig.tAdc.ptOps = &s_tAdcOps;
-    tConfig.tAdc.pContext = &s_chPositionContext;
-    tConfig.tPwm.ptOps = &s_tPwmOps;
-    tConfig.tPwm.pContext = &s_chPositionContext;
     tConfig.tPosition.ptOps = &s_tPositionOps;
     tConfig.tPosition.pContext = &s_chPositionContext;
     tConfig.tCurrentPiParams.qOutputMinimum = FOC_NEG_ONE;
@@ -273,6 +220,7 @@ int main(void)
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
+    tMotor.wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP / 2U;
     motor_IsrStep(&tMotor, 0U);
     eResult = motor_Start(&tMotor, FOC_MODE_VOLTAGE);
     assert(eResult == FOC_RESULT_OK);

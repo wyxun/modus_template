@@ -1,8 +1,8 @@
 /****************************************************************************
  * @file    foc_identify.h
- * @brief   Minimal closed-loop motor parameter identification controller.
+ * @brief   MESC-aligned motor parameter identification controller.
  * @author  Antigravity
- * @date    2026-09-15
+ * @date    2026-09-17
  ****************************************************************************/
 
 #ifndef FOC_IDENTIFY_H
@@ -13,139 +13,197 @@
 
 #include "foc_types.h"
 #include "foc_numeric.h"
+#include "foc_pid.h"
 
 typedef enum {
     FOC_IDENTIFY_STATUS_IDLE = 0,
-    FOC_IDENTIFY_STATUS_RS_LOW,     /**< Low voltage: settle & average */
-    FOC_IDENTIFY_STATUS_RS_HIGH,    /**< High voltage: settle & average */
-    FOC_IDENTIFY_STATUS_ZERO,       /**< Zero-voltage dwell between stages */
-    FOC_IDENTIFY_STATUS_LD,         /**< D-axis pulse: fit RL response */
-    FOC_IDENTIFY_STATUS_LQ,         /**< Q-axis pulse: fit RL response */
-    FOC_IDENTIFY_STATUS_COMPLETE,   /**< Successfully completed */
-    FOC_IDENTIFY_STATUS_ERROR,      /**< Safety or measurement error */
+    FOC_IDENTIFY_STATUS_PRIME,
+    FOC_IDENTIFY_STATUS_RS_LOW,
+    FOC_IDENTIFY_STATUS_RS_HIGH,
+    FOC_IDENTIFY_STATUS_ZERO,
+    FOC_IDENTIFY_STATUS_BIAS,
+    FOC_IDENTIFY_STATUS_LD,
+    FOC_IDENTIFY_STATUS_LQ,
+    FOC_IDENTIFY_STATUS_STOPPING,
+    FOC_IDENTIFY_STATUS_COMPLETE,
+    FOC_IDENTIFY_STATUS_ERROR,
 } foc_identify_status_e;
 
 typedef enum {
     FOC_IDENTIFY_STATE_UNINITIALIZED = 0,
     FOC_IDENTIFY_STATE_IDLE,
     FOC_IDENTIFY_STATE_RUNNING,
+    FOC_IDENTIFY_STATE_STOPPING,
     FOC_IDENTIFY_STATE_COMPLETE,
     FOC_IDENTIFY_STATE_ERROR,
 } foc_identify_state_e;
 
+typedef enum {
+    FOC_IDENTIFY_FAIL_NONE = 0,
+    FOC_IDENTIFY_FAIL_CONFIG,
+    FOC_IDENTIFY_FAIL_CANCEL,
+    FOC_IDENTIFY_FAIL_SAMPLE_ANGLE,
+    FOC_IDENTIFY_FAIL_TIMING,
+    FOC_IDENTIFY_FAIL_SUBMIT,
+    FOC_IDENTIFY_FAIL_OVERCURRENT,
+    FOC_IDENTIFY_FAIL_MOTION,
+    FOC_IDENTIFY_FAIL_SATURATION,
+    FOC_IDENTIFY_FAIL_STAGE_TIMEOUT,
+    FOC_IDENTIFY_FAIL_TOTAL_TIMEOUT,
+    FOC_IDENTIFY_FAIL_LOW_RESPONSE,
+    FOC_IDENTIFY_FAIL_NUMERIC_RANGE,
+    FOC_IDENTIFY_FAIL_PAIR_SPREAD,
+    FOC_IDENTIFY_FAIL_FAULT,
+} foc_identify_fail_reason_e;
+
 typedef struct {
-    foc_scalar_t qV_low;          /**< Low voltage reference (PU) */
-    foc_scalar_t qV_high;         /**< High voltage reference (PU) */
-    foc_scalar_t qV_Ld;           /**< D-axis pulse voltage reference (PU) */
-    foc_scalar_t qV_Lq;           /**< Q-axis pulse voltage reference (PU) */
-    foc_scalar_t qCurrentLimit;   /**< Over-current threshold (PU) */
-    foc_scalar_t qMinDeltaI;      /**< Minimum delta current for div (PU) */
-    foc_scalar_t qRadiansPerSample; /**< Angular step: 2*pi*f_base*Ts (rad) */
-    foc_scalar_t qMaxDisplacement;/**< Maximum mechanical move (PU of turn) */
+    foc_scalar_t qCurrentLow;         /**< Low Id target (PU) */
+    foc_scalar_t qCurrentHigh;        /**< High Id target (PU) */
+    foc_scalar_t qInjectionVoltage;   /**< Single-side injection amplitude (PU) */
+    foc_scalar_t qVoltageLimit;       /**< Per-axis voltage absolute limit (PU) */
+    foc_scalar_t qCurrentLimit;       /**< Current vector limit (PU) */
+} foc_identify_excitation_cfg_t;
+
+typedef struct {
+    foc_scalar_t qRadiansPerSample;   /**< 2*pi*f_base*Ts */
+    uint32_t     wSettleMinTicks;     /**< Minimum dwell ticks before stable check */
+    uint32_t     wStableTicks;        /**< Required consecutive stable ticks */
+    uint32_t     wAverageTicks;       /**< Number of intervals to average */
+    uint32_t     wHalfPeriodTicks;    /**< H: ticks per half period */
+    uint32_t     wDiscardPairs;       /**< Pairs discarded at start */
+    uint32_t     wMeasurePairs;       /**< Pairs measured for L estimate */
+    uint32_t     wStageTimeoutTicks;  /**< Timeout ticks per stage */
+    uint32_t     wTotalTimeoutTicks;  /**< Total timeout ticks for entire run */
+} foc_identify_timing_cfg_t;
+
+typedef struct {
+    foc_scalar_t qCurrentTolerance;          /**< Id/Iq tracking tolerance (PU) */
+    foc_scalar_t qSlopeTolerance;            /**< Max current delta per sample (PU) */
+    foc_scalar_t qZeroCurrent;               /**< Max current threshold for ZERO (PU) */
+    foc_scalar_t qMinDeltaCurrent;           /**< Min delta current for denominator (PU) */
+    foc_scalar_t qMaxElectricalDisplacement; /**< Max electrical turn displacement (PU) */
+    foc_scalar_t qMaxElectricalSpeedPu;      /**< Max electrical speed (PU) */
+    foc_scalar_t qResistanceMinPu;           /**< Resistance min acceptance bound (PU) */
+    foc_scalar_t qResistanceMaxPu;           /**< Resistance max acceptance bound (PU) */
+    foc_scalar_t qInductanceMinPu;           /**< Inductance min acceptance bound (PU) */
+    foc_scalar_t qInductanceMaxPu;           /**< Inductance max acceptance bound (PU) */
+    foc_scalar_t qMaxPairSpread;             /**< Max (max-min)/mean spread across pairs */
+} foc_identify_acceptance_cfg_t;
+
+typedef struct {
+    foc_identify_excitation_cfg_t tExcitation;
+    foc_identify_timing_cfg_t     tTiming;
+    foc_identify_acceptance_cfg_t tAcceptance;
+    foc_pid_params_t              tCurrentPi;
 } foc_identify_cfg_t;
 
 typedef struct {
-    foc_dq_t tCurrentDqPu;        /**< Measured D/Q current (PU) */
-    foc_dq_t tLastVoltageCommandDqPu; /**< Prior linear voltage command (PU) */
-    foc_angle_t tMechanicalAngle; /**< Measured mechanical angle (BAM32) */
-    bool bValid;                  /**< ADC/PWM pipeline valid */
-    bool bFault;                  /**< System or hardware fault */
+    foc_dq_t     tCurrentDqPu;
+    foc_dq_t     tIntervalVoltageDqPu;
+    foc_angle_t  tElectricalAngle;
+    foc_scalar_t qElectricalSpeedPu;
+    bool         bCurrentValid;
+    bool         bIntervalValid;
+    bool         bFault;
 } foc_identify_input_t;
 
 typedef struct {
-    foc_dq_t tVoltageRefPu;       /**< Commanded voltage reference (PU) */
-    bool bRefChanged;             /**< Reference update notification */
-    bool bStopPwm;                /**< PWM shutdown request flag */
-    foc_identify_status_e eStatus;/**< Active identification phase */
+    foc_dq_t              tVoltageRefPu;
+    bool                  bRefChanged;
+    bool                  bStopPwm;
+    foc_identify_status_e eStatus;
 } foc_identify_output_t;
 
 typedef struct {
     foc_scalar_t qResistancePu;
     foc_scalar_t qInductanceDPu;
     foc_scalar_t qInductanceQPu;
+    bool         bValid;
 } foc_identify_result_t;
 
 typedef struct {
-    foc_scalar_t qIStart;       /**< First current sample (PU) */
-    foc_scalar_t qILast;        /**< Last current sample (PU) */
-    foc_scalar_t qDeltaI;       /**< Current change (PU) */
-    foc_scalar_t qDeltaV;       /**< Resistance voltage change (PU) */
-    foc_scalar_t qSumV;         /**< Summed applied pulse voltage (PU) */
-    foc_scalar_t qResistancePu; /**< Resistance used by L calculation */
-    foc_scalar_t qResult;       /**< Stage result (PU) */
-    uint16_t hwTicks;           /**< Samples collected in the stage */
-    bool bValid;                /**< Snapshot contains a completed stage */
-} foc_identify_diag_t;
-
-typedef struct {
-    foc_identify_diag_t tRs;    /**< Resistance-stage snapshot */
-    foc_identify_diag_t tLd;    /**< D-axis inductance snapshot */
-    foc_identify_diag_t tLq;    /**< Q-axis inductance snapshot */
-    foc_identify_status_e eFailureStage; /**< Stage that reported failure */
-    foc_result_t eFailure;      /**< Last failure result code */
+    foc_dq_t                   tBiasVoltageDqPu;
+    foc_scalar_t               qDeltaI;
+    foc_scalar_t               qDeltaV;
+    foc_scalar_t               qRsEstimatePu;
+    foc_scalar_t               qLdEstimatePu;
+    foc_scalar_t               qLqEstimatePu;
+    uint32_t                   wValidPairsD;
+    uint32_t                   wValidPairsQ;
+    uint32_t                   wSaturationCount;
+    foc_identify_status_e      eFailureStage;
+    foc_identify_fail_reason_e eFailureReason;
+    foc_result_t               eFailureResult;
+    bool                       bValid;
 } foc_identify_diagnostics_t;
 
-#if defined(FOC_NUMERIC_FLOAT)
-typedef foc_scalar_t foc_identify_accum_t;
-#else
-typedef int64_t foc_identify_accum_t;
-#endif
-
 typedef struct {
-    foc_scalar_t qVoltageLow;
-    foc_scalar_t qVoltageHigh;
-    foc_scalar_t qVoltageLd;
-    foc_scalar_t qVoltageLq;
-    foc_scalar_t qCurrentLimit;
-    foc_scalar_t qMinDeltaI;
-    foc_scalar_t qRadiansPerSample;
-    foc_scalar_t qMaxDisplacement;
-    foc_identify_result_t tResult;
-    foc_identify_diagnostics_t tDiagnostics;
-    foc_identify_output_t tOutput;
-    foc_identify_status_e eNextStage; /**< Target stage after zero dwell */
-    foc_angle_t tZeroAngle;
-    bool bZeroPrimed;
-    foc_scalar_t qSumV;
-    foc_scalar_t qSumI;
-    foc_scalar_t qI_start;
-    foc_scalar_t qI_last;
-    foc_scalar_t qI_low;
-    foc_scalar_t qV_low;
-    foc_identify_accum_t qFitSumX;
-    foc_identify_accum_t qFitSumY;
-    /* Fixed-point XX/XY values use the product (Q30) accumulator scale. */
-    foc_identify_accum_t qFitSumXX;
-    foc_identify_accum_t qFitSumXY;
-    foc_scalar_t qFitBlockSumI;
-    foc_scalar_t qFitBlockSumV;
-    foc_scalar_t qFitLastI;
-    foc_scalar_t aqRsTrial[3];
-    foc_scalar_t aqLdTrial[3];
-    foc_scalar_t aqLqTrial[3];
-    bool bFitBlockPrimed;
-    bool bReturnPulse;
-    uint8_t chRsTrial;
-    uint8_t chLdTrial;
-    uint8_t chLqTrial;
-    uint8_t chFitBlockTicks;
-    uint16_t hwFitSamples;
-    uint16_t hwTicks;
-    foc_result_t eFailure;
-    foc_identify_state_e eState;
-    foc_result_t eLastError;
-    uint32_t wFaults;
-} foc_identify_t;
-
-typedef struct {
-    foc_identify_state_e eState;
-    foc_identify_status_e eStage;
-    foc_result_t eLastError;
-    uint32_t wFaults;
+    foc_identify_state_e       eState;
+    foc_identify_status_e      eStage;
+    foc_identify_fail_reason_e eFailureReason;
+    foc_result_t               eLastError;
+    bool                       bStoppedConfirmed;
 } foc_identify_status_t;
 
+typedef struct {
+    foc_identify_cfg_t         tConfig;
+    foc_pid_t                  tIdPi;
+    foc_pid_t                  tIqPi;
+    foc_identify_result_t      tResult;
+    foc_identify_diagnostics_t tDiagnostics;
+    foc_identify_output_t      tOutput;
+    foc_identify_state_e       eState;
+    foc_identify_status_e      eStage;
+    foc_identify_fail_reason_e eFailureReason;
+    foc_result_t               eLastError;
+    bool                       bStoppedConfirmed;
+
+    foc_angle_t                tStartAngle;
+    uint32_t                   wStageTicks;
+    uint32_t                   wTotalTicks;
+    uint32_t                   wStableCount;
+    uint32_t                   wAverageCount;
+    uint32_t                   wHalfPeriodCount;
+    uint32_t                   wPairCount;
+    uint32_t                   wSatCount;
+    bool                       bPiFrozen;
+    bool                       bPositiveHalf;
+    bool                       bLdCompleted;
+    foc_identify_status_e      eNextStageAfterZero;
+
+    /* RS accumulators */
+    double                     dSumI_low;
+    double                     dSumV_low;
+    double                     dSumI_high;
+    double                     dSumV_high;
+    foc_dq_t                   tBiasVoltageDqPu;
+
+    /* Ld / Lq window accumulators */
+    double                     dSumA_plus;
+    double                     dSumB_plus;
+    double                     dSumA_minus;
+    double                     dSumB_minus;
+    int64_t                    llSumA_plus;
+    int64_t                    llSumB_plus;
+    int64_t                    llSumA_minus;
+    int64_t                    llSumB_minus;
+    uint32_t                   wWindowIntervalsPlus;
+    uint32_t                   wWindowIntervalsMinus;
+    foc_scalar_t               qCurrentStart_plus;
+    foc_scalar_t               qCurrentEnd_plus;
+    foc_scalar_t               qCurrentStart_minus;
+    foc_scalar_t               qCurrentEnd_minus;
+    foc_scalar_t               qL_min;
+    foc_scalar_t               qL_max;
+    double                     dL_sum;
+    uint32_t                   wValidPairs;
+
+    foc_scalar_t               qPriorCurrent;
+    bool                       bPriorCurrentValid;
+} foc_identify_t;
+
 /**
- * @brief Initialize an identify controller instance with configuration.
+ * @brief Initialize an identify controller instance with validated configuration.
  * @param ptIdentify Pointer to identify controller instance.
  * @param ptConfig Pointer to static configuration.
  * @return FOC_RESULT_OK on success, error code otherwise.
@@ -154,14 +212,14 @@ foc_result_t foc_identify_Init(foc_identify_t *ptIdentify,
                                const foc_identify_cfg_t *ptConfig);
 
 /**
- * @brief Start a parameter identification run.
+ * @brief Start a parameter identification run from IDLE state.
  * @param ptIdentify Pointer to identify controller instance.
  * @return FOC_RESULT_OK on success, error code otherwise.
  */
 foc_result_t foc_identify_Start(foc_identify_t *ptIdentify);
 
 /**
- * @brief Execute one high-frequency Identify Driver ISR step.
+ * @brief Execute one high-frequency Identify ISR step.
  * @param ptIdentify Pointer to identify controller instance.
  * @param ptInput Pointer to current cycle snapshot.
  * @param ptOutput Pointer to command output structure.
@@ -179,9 +237,23 @@ foc_result_t foc_identify_IsrStep(
 void foc_identify_Abort(foc_identify_t *ptIdentify);
 
 /**
- * @brief Reset one Identify Driver to its uninitialized state.
+ * @brief Gracefully cancel current run, discard unfinished result and request stop.
+ * @param ptIdentify Pointer to identify controller instance.
+ * @return FOC_RESULT_OK or error.
+ */
+foc_result_t foc_identify_Stop(foc_identify_t *ptIdentify);
+
+/**
+ * @brief Confirm PWM has stopped (called after motor PWM disabled).
+ * @param ptIdentify Pointer to identify controller instance.
+ * @return FOC_RESULT_OK or error.
+ */
+foc_result_t foc_identify_ConfirmStopped(foc_identify_t *ptIdentify);
+
+/**
+ * @brief Reset one Identify Driver to uninitialized state.
  * @param ptIdentify Identify object.
- * @return FOC_RESULT_OK or FOC_RESULT_NULL.
+ * @return FOC_RESULT_OK or FOC_RESULT_BUSY if running or unconfirmed.
  */
 foc_result_t foc_identify_Reset(foc_identify_t *ptIdentify);
 
@@ -201,7 +273,7 @@ foc_result_t foc_identify_GetStatus(const foc_identify_t *ptIdentify,
  * @return FOC_RESULT_OK if completed, FOC_RESULT_BUSY or error otherwise.
  */
 foc_result_t foc_identify_GetResult(const foc_identify_t *ptIdentify,
-                                     foc_identify_result_t *ptResult);
+                                    foc_identify_result_t *ptResult);
 
 /**
  * @brief Retrieve the latest per-stage identification diagnostics.
@@ -216,7 +288,7 @@ foc_result_t foc_identify_GetDiagnostics(
 /**
  * @brief Consume terminal state and return controller to IDLE.
  * @param ptIdentify Pointer to identify controller instance.
- * @return FOC_RESULT_OK or FOC_RESULT_BUSY if still active.
+ * @return FOC_RESULT_OK or FOC_RESULT_BUSY if still active or unconfirmed.
  */
 foc_result_t foc_identify_ConsumeTerminal(foc_identify_t *ptIdentify);
 

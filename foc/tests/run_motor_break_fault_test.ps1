@@ -17,6 +17,7 @@ if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
 
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_break_fault_test.c"),
+    (Join-Path $repoRoot "foc/tests/motor_realtime_test_port.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
@@ -52,6 +53,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
         "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
+        "-DFOC_OFFSET_CALIB_TIMES=1U",
         "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0", $backendDefine
     ) + $includeArgs + $sourceFiles + @("-lm", "-o", $testExe)
 

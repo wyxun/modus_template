@@ -32,3 +32,9 @@
 	path = vendor/cortex-m/AT32F403A_407_Firmware_Library
 	url = https://ghfast.top/https://github.com/ArteryTek/AT32F403A_407_Firmware_Library.git
 	ignore = untracked
+
+[submodule "vendor/cortex-m/AT32F415_Firmware_Library"]
+	path = vendor/cortex-m/AT32F415_Firmware_Library
+	url = https://github.com/ArteryTek/AT32F415_Firmware_Library.git
+	ignore = untracked
+

@@ -24,7 +24,8 @@ $commonArgs = @(
     "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
     "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
-    "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
+        "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
+        "-DFOC_OFFSET_CALIB_TIMES=1U",
     "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0",
     "-DFOC_ENABLE_SMO=1"
 )

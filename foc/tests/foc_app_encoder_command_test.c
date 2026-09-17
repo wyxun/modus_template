@@ -13,8 +13,6 @@
 #include "../hal/foc_port.h"
 #include "../observer/foc_encoder.h"
 
-const foc_adc_if_t g_tFocAdcInterface = {0};
-const foc_pwm_if_t g_tFocPwmInterface = {0};
 const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface = {0};
 
 #include "../app/foc_app.c"
@@ -515,11 +513,8 @@ int main(void)
         tConfig.tMotorCfg.tLimits.qMaxModulation =
             FOC_SCALAR(0.5773502692f);
         tConfig.wVoltageBaseMillivolt = 12000U;
-        tConfig.wCurrentBaseMilliamp = 7000U;
         tConfig.wHighFrequencyPeriodNanoseconds = 50000U;
         tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
-        tConfig.ptAdc = &g_tFocAdcInterface;
-        tConfig.ptPwm = &g_tFocPwmInterface;
         assert(foc_gain_from_float(0.2f,
             &tConfig.tMotorCfg.tSpeedPiParams.tKp) ==
                FOC_RESULT_OK);
@@ -535,8 +530,7 @@ int main(void)
         assert(nInitResult == MODUS_SUCCESS);
         assert(s_tCapturedMotorConfig.tParams.wVoltageBaseMillivolt ==
                12000U);
-        assert(s_tCapturedMotorConfig.tParams.wCurrentBaseMilliamp ==
-               7000U);
+        assert(s_tCapturedMotorConfig.tParams.wCurrentBaseMilliamp == 0U);
         assert(s_tCapturedMotorConfig.qElectricalSpeedBaseTurnsPerSecond ==
                FOC_SCALAR(100.0f));
         assert(s_tCapturedMotorConfig.tLimits.qMaxSpeedReference == FOC_ONE);

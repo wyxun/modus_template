@@ -51,93 +51,19 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
     return FOC_RESULT_OK;
 }
 
-static foc_result_t test_AdcCalibrationBegin(
-    void *pContext,
-    foc_adc_calib_t *ptCalibration)
+bool foc_PwmGetFault(void)
 {
-    (void)pContext;
-    ptCalibration->bIsCalibrated = true;
-    return FOC_RESULT_OK;
-}
-
-static foc_calibration_state_e test_AdcCalibrationStep(
-    void *pContext,
-    foc_adc_calib_t *ptCalibration)
-{
-    (void)pContext;
-    (void)ptCalibration;
-    return FOC_CALIBRATION_COMPLETE;
-}
-
-static foc_result_t test_AdcSample(
-    void *pContext,
-    const foc_adc_calib_t *ptCalibration,
-    foc_current_abc_t *ptCurrent)
-{
-    (void)pContext;
-    (void)ptCalibration;
-    *ptCurrent = (foc_current_abc_t){FOC_ZERO, FOC_ZERO, FOC_ZERO};
-    return FOC_RESULT_OK;
-}
-
-static foc_result_t test_PwmSetDuty(void *pContext,
-                                    const foc_duty_abc_t *ptDuty)
-{
-    (void)pContext;
-    (void)ptDuty;
-    return FOC_RESULT_OK;
-}
-
-static foc_result_t test_PwmEnable(void *pContext)
-{
-    (void)pContext;
-    return FOC_RESULT_OK;
-}
-
-static foc_result_t test_PwmStop(void *pContext)
-{
-    (void)pContext;
-    return FOC_RESULT_OK;
-}
-
-static bool test_PwmGetFault(void *pContext)
-{
-    (void)pContext;
     return s_bBreakFault;
 }
 
-static foc_result_t test_PwmClearFault(void *pContext)
+foc_result_t foc_PwmClearFault(void)
 {
-    (void)pContext;
     if (!s_bClearOk) {
         return FOC_RESULT_SAFETY;
     }
     s_bBreakFault = false;
     return FOC_RESULT_OK;
 }
-
-static foc_result_t test_AdcSetCurrentBase(void *pContext,
-                                           uint32_t wCurrentBaseMilliamp)
-{
-    (void)pContext;
-    (void)wCurrentBaseMilliamp;
-    return FOC_RESULT_OK;
-}
-
-static const foc_adc_ops_t s_tAdcOps = {
-    .fnSetCurrentBase = test_AdcSetCurrentBase,
-    .fnCalibrationBegin = test_AdcCalibrationBegin,
-    .fnCalibrationStep = test_AdcCalibrationStep,
-    .fnSample = test_AdcSample,
-};
-
-static const foc_pwm_ops_t s_tPwmOps = {
-    .fnSetDuty = test_PwmSetDuty,
-    .fnEnable = test_PwmEnable,
-    .fnStop = test_PwmStop,
-    .fnGetFaultStatus = test_PwmGetFault,
-    .fnClearFaultStatus = test_PwmClearFault,
-};
 
 static const motor_position_ops_t s_tPositionOps = {
     .fnGetPosition = test_GetPosition,
@@ -165,10 +91,6 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.tAdc.ptOps = &s_tAdcOps;
-    tConfig.tAdc.pContext = &s_chPositionContext;
-    tConfig.tPwm.ptOps = &s_tPwmOps;
-    tConfig.tPwm.pContext = &s_chPositionContext;
     tConfig.tPosition.ptOps = &s_tPositionOps;
     tConfig.tPosition.pContext = &s_chPositionContext;
     tConfig.chSpeedLoopDiv = 1U;

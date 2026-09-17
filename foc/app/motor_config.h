@@ -25,18 +25,17 @@
 #define MOTOR_PWM_FREQ_HZ                    20000U
 
 /* ==================== 2. Derived PU Identification Constants ============== */
-#define IDENTIFY_V_LOW_PU                    FOC_SCALAR(0.0100f)
-#define IDENTIFY_V_HIGH_PU                   FOC_SCALAR(0.0500f)
-#define IDENTIFY_V_LD_PU                     FOC_SCALAR(0.0667f)
-#define IDENTIFY_V_LQ_PU                     FOC_SCALAR(0.0667f)
-#define IDENTIFY_CURRENT_LIMIT_PU            FOC_SCALAR(0.20f)
-#define IDENTIFY_MIN_DELTA_I_PU              FOC_SCALAR(0.005f)
-/* 角频率采样步长：Lpu = 2*pi*f_base*Ts * sum(Vpu-Rpu*Ipu)/dIpu。
-   Lbase = Zbase/(2*pi*f_base) 使用 rad/s，故步长必须是 rad/sample，
-   否则辨识出的 Ld/Lq 会小 2*pi 倍。 */
-#define IDENTIFY_RADIANS_PER_SAMPLE          FOC_SCALAR( \
-    (2.0f * 3.14159265358979f * MOTOR_BASE_ELECTRICAL_HZ) / \
-    (float)MOTOR_PWM_FREQ_HZ)
-#define IDENTIFY_MAX_DISPLACEMENT_PU         FOC_SCALAR(0.002f)
+#define IDENTIFY_CURRENT_LOW_PU              FOC_SCALAR(0.0300f)
+#define IDENTIFY_CURRENT_HIGH_PU             FOC_SCALAR(0.0800f)
+#define IDENTIFY_CURRENT_LIMIT_PU            FOC_SCALAR(0.1400f)
+#define IDENTIFY_INJECTION_VOLTAGE_PU        FOC_SCALAR(0.0300f)
+#define IDENTIFY_VOLTAGE_LIMIT_PU            FOC_SCALAR(0.1000f)
+#define IDENTIFY_CURRENT_TOLERANCE_PU        FOC_SCALAR(0.0020f)
+#define IDENTIFY_SLOPE_TOLERANCE_PU          FOC_SCALAR(0.0005f)
+#define IDENTIFY_ZERO_CURRENT_PU             FOC_SCALAR(0.0030f)
+#define IDENTIFY_MIN_DELTA_I_PU              FOC_SCALAR(0.0010f)
+#define IDENTIFY_MAX_DISPLACEMENT_PU         FOC_SCALAR(0.0020f)
+#define IDENTIFY_MAX_SPEED_PU                FOC_SCALAR(0.0010f)
+#define IDENTIFY_MAX_PAIR_SPREAD             FOC_SCALAR(0.0500f)
 
 #endif /* MOTOR_CONFIG_H */

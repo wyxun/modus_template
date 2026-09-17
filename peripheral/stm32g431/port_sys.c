@@ -83,7 +83,7 @@ void peripheral_Clock(void)
 
     if (++s_hwCounter >= 500) {
         s_hwCounter = 0;
-        MDI_Toggle(HW.ptLedStatus);
+        (void)MDI_GPIO_Toggle(HW.ptLedStatus);
     }
 }
 

@@ -6,9 +6,6 @@
 
 /*============================ MACROS ========================================*/
 
-/* Debug output: 1 = enable MLOG/RTT output, 0 = disable */
-#define USERCONFIG_DEBUG_ENABLE 1
-
 /* Route mshell through serial MDI (UART) instead of default RTT.
  * Enable for chips that don't have a debug probe connected (e.g. CH592). */
 #define USERCONFIG_MSHELL_ON_SERIAL 0
@@ -38,8 +35,6 @@
 #   define MWAVEFORM_BATCH_SIZE        64
 #   define MWAVEFORM_BATCH_DEPTH       128
 #   define MWAVEFORM_BATCH_FLUSH_MS    10
-#   define MWAVEFORM_SNAPSHOT_ENABLE   0
-#   define MWAVEFORM_SNAPSHOT_DEPTH    16
 #endif
 
 /*============================ TYPES =========================================*/
