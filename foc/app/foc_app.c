@@ -155,8 +155,12 @@ static foc_result_t foc_app_BindMotorConfig(
         return eResult;
     }
     if (bEncoderReady) {
-        ptMotorConfig->tPosition.ptOps = &g_tFocEncoderPositionOps;
+#if defined(FOC_POSITION_STATIC_BINDING)
         ptMotorConfig->tPosition.pContext = &ptApp->tEncoder;
+#else
+        ptMotorConfig->tPosition.fnGetPosition = foc_encoder_GetPosition;
+        ptMotorConfig->tPosition.pContext = &ptApp->tEncoder;
+#endif
     } else {
         ptMotorConfig->tPosition = (motor_position_if_t){0};
     }
@@ -622,7 +626,9 @@ MODUS_DECLARE_OBJECT(foc_app, FocApp,
         .qSpeedFilterAlpha = FOC_SCALAR(0.25f),
         .wInvalidTimeoutUs = 5000U,
         .bDirectionInvert = false,
+#if !defined(FOC_ENCODER_STATIC_BINDING)
         .ptSensor = &g_tFocEncoderSensorInterface,
+#endif
     },
     .wVoltageBaseMillivolt = MOTOR_BASE_VOLTAGE_MV,
     .wHighFrequencyPeriodNanoseconds = MOTOR_HF_PERIOD_NANOSECONDS,

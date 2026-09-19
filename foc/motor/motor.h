@@ -76,7 +76,6 @@ typedef enum {
 typedef struct {
     motor_params_t tParams;
     motor_limits_t tLimits;
-    motor_position_if_t tPosition;
     foc_scalar_t qAlignCurrent;
     uint32_t wAdcCalibrationTimeoutSteps;
     uint32_t wAlignTargetSteps;
@@ -91,6 +90,13 @@ typedef struct {
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_t tObserver;
 #endif
+#if !defined(FOC_POSITION_STATIC_BINDING)
+    /* Runtime-selected FOC builds retain the generic dispatch object. */
+    motor_position_provider_t tPosition;
+#endif
+    /* Static targets retain only provider state in the hot object; hardware
+     * operations are selected at compile time. */
+    const void *pPositionState;
     foc_angle_t tElectricalZero;
     uint32_t wCalibrationSteps;
     uint32_t wAlignStepCount;

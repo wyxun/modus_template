@@ -70,7 +70,10 @@ int main(void)
     foc_encoder_t tEncoder = {0};
     foc_encoder_status_t tStatus = {0};
     foc_position_t tPosition = {0};
-    const motor_position_ops_t *ptPositionOps = NULL;
+    motor_position_if_t tPositionProvider = {
+        .fnGetPosition = foc_encoder_GetPosition,
+        .pContext = &tEncoder,
+    };
 
     assert(foc_encoder_Init(&tEncoder, &tConfig) == FOC_RESULT_OK);
     assert(tSensor.wInitCount == 1U);
@@ -92,10 +95,8 @@ int main(void)
     assert(tPosition.bValid);
     assert(tSensor.wReadCount == 2U);
 
-    ptPositionOps = &g_tFocEncoderPositionOps;
-    assert(ptPositionOps != NULL);
-    assert(ptPositionOps->fnGetPosition != NULL);
-    assert(ptPositionOps->fnCaptureZero != NULL);
+    assert(tPositionProvider.fnGetPosition != NULL);
+    assert(tPositionProvider.pContext == &tEncoder);
 
     foc_encoder_Stop(&tEncoder);
     assert(foc_encoder_GetStatus(&tEncoder, &tStatus) == FOC_RESULT_OK);

@@ -5,6 +5,7 @@
  * @date    2026-09-11
  ****************************************************************************/
 
+#include "foc_port.h"
 #include "foc_encoder.h"
 
 #include <limits.h>
@@ -169,11 +170,6 @@ static foc_result_t _foc_encoder_InitFailure(foc_encoder_t *ptEncoder,
     return eResult;
 }
 
-const motor_position_ops_t g_tFocEncoderPositionOps = {
-    .fnGetPosition = foc_encoder_GetPosition,
-    .fnCaptureZero = foc_encoder_CaptureZero,
-};
-
 foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
                               const foc_encoder_cfg_t *ptConfig)
 {
@@ -187,16 +183,17 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
     *ptEncoder = (foc_encoder_t){0};
     ptEncoder->eState = FOC_ENCODER_STATE_UNINITIALIZED;
     ptEncoder->eLastError = FOC_RESULT_OK;
+#if !defined(FOC_ENCODER_STATIC_BINDING)
     if (ptConfig->ptSensor == NULL ||
         ptConfig->ptSensor->ptOps == NULL ||
         ptConfig->ptSensor->ptOps->fnInit == NULL ||
         ptConfig->ptSensor->ptOps->fnRead == NULL) {
         return _foc_encoder_InitFailure(ptEncoder, FOC_RESULT_DISABLED);
     }
+#endif
     if (ptConfig->qSpeedFilterAlpha < FOC_ZERO ||
         ptConfig->qSpeedFilterAlpha > FOC_ONE ||
-        ptConfig->wInvalidTimeoutUs == 0U ||
-        ptConfig->ptSensor->pContext == NULL) {
+        ptConfig->wInvalidTimeoutUs == 0U) {
         return _foc_encoder_InitFailure(ptEncoder,
                                         FOC_RESULT_INVALID_ARGUMENT);
     }
@@ -214,13 +211,21 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
     if (llTimeoutTicks > UINT32_MAX) {
         llTimeoutTicks = UINT32_MAX;
     }
-    ptEncoder->tSensor = *ptConfig->ptSensor;
     ptEncoder->qSpeedFilterAlpha = ptConfig->qSpeedFilterAlpha;
     ptEncoder->bDirectionInvert = ptConfig->bDirectionInvert;
     ptEncoder->wTickFrequency = wFrequency;
     ptEncoder->wInvalidTimeoutTicks = (uint32_t)llTimeoutTicks;
+#if defined(FOC_ENCODER_STATIC_BINDING)
+    eResult = FOC_ENCODER_PORT_INIT();
+#else
+    if (ptConfig->ptSensor->pContext == NULL) {
+        return _foc_encoder_InitFailure(ptEncoder,
+                                        FOC_RESULT_INVALID_ARGUMENT);
+    }
+    ptEncoder->tSensor = *ptConfig->ptSensor;
     eResult = ptEncoder->tSensor.ptOps->fnInit(
         ptEncoder->tSensor.pContext);
+#endif
     if (eResult != FOC_RESULT_OK) {
         return _foc_encoder_InitFailure(ptEncoder, eResult);
     }
@@ -248,12 +253,16 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
     if (ptEncoder->eState == FOC_ENCODER_STATE_ERROR) {
         return ptEncoder->eLastError;
     }
+#if defined(FOC_ENCODER_STATIC_BINDING)
+    eResult = FOC_ENCODER_PORT_READ(&hwRawAngle);
+#else
     if (ptEncoder->tSensor.ptOps == NULL ||
         ptEncoder->tSensor.ptOps->fnRead == NULL) {
         return FOC_RESULT_DISABLED;
     }
     eResult = ptEncoder->tSensor.ptOps->fnRead(
         ptEncoder->tSensor.pContext, &hwRawAngle);
+#endif
     if (eResult != FOC_RESULT_OK) {
         ptEncoder->eLastError = eResult;
         ptEncoder->wFaults |= FOC_ENCODER_FAULT_SENSOR;

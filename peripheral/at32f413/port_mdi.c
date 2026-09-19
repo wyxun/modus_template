@@ -8,7 +8,7 @@
 
 #include "mdi_hw.h"
 #include "at32f413.h"
-#include "mdi/mdi.h"
+#include "mdi/legacy/mdi.h"
 
 #include "port_mdi.h"
 #include "halpwm.h"

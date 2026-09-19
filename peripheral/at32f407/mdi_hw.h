@@ -9,8 +9,8 @@
 #ifndef __MDI_HW_H__
 #define __MDI_HW_H__
 
-#include "mdi/mdi.h"
-#include "mdi/mdi_static.h"
+#include "mdi/legacy/mdi.h"
+#include "mdi/legacy/mdi_static.h"
 
 #define MDI_STREAM_WRITE_ASSOCIATIONS \
     mdi_stream_t *: mdi_stream_Write

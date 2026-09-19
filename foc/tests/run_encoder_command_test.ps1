@@ -28,9 +28,10 @@ $includePaths = @(
     "modus/src/arch/cortex-m", "modus/src/arch/riscv",
     "modus/src/utilities", "modus/src/mdebug",
     "modus/src/mdebug/segger_rtt", "modus/lib/plooc",
-    "modus/lib/perf_counter", "peripheral", "peripheral/stm32g431",
+    "modus/lib/perf_counter", "peripheral",
     "peripheral/driver", "class", "foc", "foc/math", "foc/hal",
     "foc/motor", "foc/middleware", "foc/control", "foc/modulation",
+    "foc/tests",
     "foc/observer", "foc/app"
 )
 $includeArgs = @($includePaths | ForEach-Object { "-I$(Join-Path $repoRoot $_)" })

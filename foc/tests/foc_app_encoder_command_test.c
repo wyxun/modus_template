@@ -200,8 +200,6 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
     return FOC_RESULT_OK;
 }
 
-const motor_position_ops_t g_tFocEncoderPositionOps = {0};
-
 /**
  * @brief Stub Motor initialization for the unused App initialization path.
  * @param ptMotor Motor object.

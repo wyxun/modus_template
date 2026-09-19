@@ -10,10 +10,7 @@
 
 #define FOC_PORT_HAS_POSITION 1
 
-#include "foc_encoder.h"
 #include "foc_port.h"
-
-extern const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface;
 
 void foc_port_NotifyBreak(void);
 

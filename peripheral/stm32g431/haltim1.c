@@ -183,7 +183,13 @@ void haltim1_Start(void)
 
 void haltim1_StartAdcTrigger(void)
 {
-    /* CH4 is an internal trigger; CH1-CH3 remain disabled. */
+    /*
+     * MDI_PWM_SafeStop() stops the timer counter as part of its generic
+     * lifecycle contract.  ADC calibration still needs the internal CH4
+     * trigger, while CH1-CH3 must remain disabled, so restart the counter
+     * explicitly here without opening the three-phase power outputs.
+     */
+    LL_TIM_EnableCounter(TIM1);
     LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH4);
     LL_TIM_EnableAllOutputs(TIM1);
 }

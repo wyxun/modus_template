@@ -12,7 +12,7 @@
 #include "haladc.h"
 #include "halledgpio.h"
 #include "stm32g4xx_ll_tim.h"
-#include "mdi/mdi.h"
+#include "mdi/legacy/mdi.h"
 
 /* --------------------------------------------------------------------------
  *  Static MDI GPIO capability
@@ -24,7 +24,7 @@ struct mdi_gpio_pin_t {
     bool bActiveLow;
 };
 
-mdi_status_t mdi_gpio_pin_Set(
+mdi_legacy_status_t mdi_gpio_pin_Set(
     const mdi_gpio_pin_t *ptPin,
     mdi_gpio_level_t eLevel)
 {
@@ -41,7 +41,7 @@ mdi_status_t mdi_gpio_pin_Set(
     return MDI_STATUS_OK;
 }
 
-mdi_status_t mdi_gpio_pin_Get(
+mdi_legacy_status_t mdi_gpio_pin_Get(
     const mdi_gpio_pin_t *ptPin,
     mdi_gpio_level_t *peLevel)
 {
@@ -63,7 +63,7 @@ mdi_status_t mdi_gpio_pin_Get(
     return MDI_STATUS_OK;
 }
 
-mdi_status_t mdi_gpio_pin_Toggle(const mdi_gpio_pin_t *ptPin)
+mdi_legacy_status_t mdi_gpio_pin_Toggle(const mdi_gpio_pin_t *ptPin)
 {
     if (ptPin == NULL || ptPin->pPort == NULL) {
         return MDI_STATUS_EINVAL;
@@ -100,7 +100,7 @@ static const mdi_gpio_pin_t s_tGpioComp4 = {
  *  Static MDI ADC capability
  * -------------------------------------------------------------------------- */
 
-mdi_status_t mdi_adc_channel_Sample(
+mdi_legacy_status_t mdi_adc_channel_Sample(
     const mdi_adc_channel_t *ptAdc,
     uint32_t *pwSample)
 {
@@ -119,7 +119,7 @@ mdi_status_t mdi_adc_channel_Sample(
     }
 }
 
-mdi_status_t mdi_phase_current_adc_Sample(
+mdi_legacy_status_t mdi_phase_current_adc_Sample(
     const mdi_phase_current_adc_t *ptAdc,
     uint32_t *pwSampleU,
     uint32_t *pwSampleV,
@@ -157,7 +157,7 @@ static const mdi_phase_current_adc_t s_tAdcPhaseCurrent = {
  *  Static MDI PWM capability — TIM1 motor phase group
  * -------------------------------------------------------------------------- */
 
-mdi_status_t mdi_motor_pwm_SetDuty3(
+mdi_legacy_status_t mdi_motor_pwm_SetDuty3(
     const mdi_motor_pwm_t *ptPwm,
     uint32_t wDutyU,
     uint32_t wDutyV,
@@ -175,7 +175,7 @@ mdi_status_t mdi_motor_pwm_SetDuty3(
     return MDI_STATUS_OK;
 }
 
-mdi_status_t mdi_motor_pwm_Enable(
+mdi_legacy_status_t mdi_motor_pwm_Enable(
     const mdi_motor_pwm_t *ptPwm,
     bool bEnable)
 {
@@ -190,7 +190,7 @@ mdi_status_t mdi_motor_pwm_Enable(
     return MDI_STATUS_OK;
 }
 
-mdi_status_t mdi_motor_pwm_SafeStop(const mdi_motor_pwm_t *ptPwm)
+mdi_legacy_status_t mdi_motor_pwm_SafeStop(const mdi_motor_pwm_t *ptPwm)
 {
     if (ptPwm == NULL) {
         return MDI_STATUS_EINVAL;

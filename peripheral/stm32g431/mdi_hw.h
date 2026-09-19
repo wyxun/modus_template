@@ -8,8 +8,13 @@
 #ifndef __MDI_HW_H__
 #define __MDI_HW_H__
 
-#include "mdi/mdi.h"
-#include "mdi/mdi_static.h"
+#include "mdi/legacy/mdi.h"
+/* New static MDI users already provide the core operation names. Keep the
+ * legacy _Generic convenience macros for old board consumers, but do not
+ * reintroduce their colliding PWM names into a new MDI translation unit. */
+#if !defined(MDI_CORE_CONTRACT_H)
+#include "mdi/legacy/mdi_static.h"
+#endif
 
 /* 本芯片 MDI 硬件池携带 I2C 编码器（AS5600, I2C1 PB7/PB8） */
 #define MDI_HW_HAS_I2C_ENCODER   1
@@ -20,15 +25,15 @@
 
 typedef struct mdi_gpio_pin_t mdi_gpio_pin_t;
 
-mdi_status_t mdi_gpio_pin_Set(
+mdi_legacy_status_t mdi_gpio_pin_Set(
     const mdi_gpio_pin_t *ptPin,
     mdi_gpio_level_t eLevel);
 
-mdi_status_t mdi_gpio_pin_Get(
+mdi_legacy_status_t mdi_gpio_pin_Get(
     const mdi_gpio_pin_t *ptPin,
     mdi_gpio_level_t *peLevel);
 
-mdi_status_t mdi_gpio_pin_Toggle(const mdi_gpio_pin_t *ptPin);
+mdi_legacy_status_t mdi_gpio_pin_Toggle(const mdi_gpio_pin_t *ptPin);
 
 #define MDI_GPIO_SET_ASSOCIATIONS                                               \
     const mdi_gpio_pin_t *: mdi_gpio_pin_Set
@@ -43,7 +48,7 @@ typedef struct {
     uint32_t wChannel;
 } mdi_adc_channel_t;
 
-mdi_status_t mdi_adc_channel_Sample(
+mdi_legacy_status_t mdi_adc_channel_Sample(
     const mdi_adc_channel_t *ptAdc,
     uint32_t *pwSample);
 
@@ -55,7 +60,7 @@ typedef struct {
     uint8_t achRank[3];
 } mdi_phase_current_adc_t;
 
-mdi_status_t mdi_phase_current_adc_Sample(
+mdi_legacy_status_t mdi_phase_current_adc_Sample(
     const mdi_phase_current_adc_t *ptAdc,
     uint32_t *pwSampleU,
     uint32_t *pwSampleV,
@@ -68,17 +73,17 @@ typedef struct {
     uint32_t wPeriod;
 } mdi_motor_pwm_t;
 
-mdi_status_t mdi_motor_pwm_SetDuty3(
+mdi_legacy_status_t mdi_motor_pwm_SetDuty3(
     const mdi_motor_pwm_t *ptPwm,
     uint32_t wDutyU,
     uint32_t wDutyV,
     uint32_t wDutyW);
 
-mdi_status_t mdi_motor_pwm_Enable(
+mdi_legacy_status_t mdi_motor_pwm_Enable(
     const mdi_motor_pwm_t *ptPwm,
     bool bEnable);
 
-mdi_status_t mdi_motor_pwm_SafeStop(const mdi_motor_pwm_t *ptPwm);
+mdi_legacy_status_t mdi_motor_pwm_SafeStop(const mdi_motor_pwm_t *ptPwm);
 
 #define MDI_PWM_SET_DUTY3_ASSOCIATIONS                                          \
     const mdi_motor_pwm_t *: mdi_motor_pwm_SetDuty3

@@ -128,6 +128,7 @@ PERIF_LIB_SOURCES =                                                             
 
 PERIPHERAL_SOURCES = $(wildcard peripheral/*.c)
 PERIPHERAL_SOURCES += $(wildcard peripheral/$(TARGET_CHIP)/*.c)
+PERIPHERAL_SOURCES += $(wildcard peripheral/$(TARGET_CHIP)/mdi/*.c)
 PERIPHERAL_SOURCES += $(wildcard peripheral/driver/*.c)
 
 

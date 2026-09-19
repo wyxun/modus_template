@@ -8,7 +8,7 @@
 
 #include <stdint.h>
 
-#include "mdi/mdi.h"
+#include "mdi/legacy/mdi.h"
 
 #define AS5600_I2C_ADDR        0x36U
 #define AS5600_REG_RAW_ANGLE_H 0x0CU

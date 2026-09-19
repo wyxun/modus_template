@@ -7,7 +7,9 @@
 - **基线测试状态:**
   - `run_identify_test.ps1`: FLOAT / FIXED Identify tests passed (旧最小实现基线)
   - `run_encoder_command_test.ps1`: FLOAT / FIXED FOC App tests passed (默认辨识关闭)
-- **既有修改状态:** 包含 MDI 硬件抽象层重构与相关测试（`run_mdi_foc_realtime_interface_test.ps1` 等），均严格予以保留。
+- **MDI 验证入口:** MDI 硬件抽象层的契约、负编译和零开销检查统一由
+  `python modus/src/mdi/tests/run_tests.py` 执行；本目录只保留 FOC 自身的算法与
+  编码器测试。
 
 ---
 

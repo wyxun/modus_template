@@ -13,7 +13,6 @@
 #include "halcomp.h"
 #include "haltim1.h"
 #include "halusart.h"
-#include "hali2c.h"
 #include "halfdcan.h"
 #include "halledgpio.h"
 #include "halcordic.h"
@@ -21,6 +20,7 @@
 /* MDI interface includes */
 #include "mdi.h"
 #include "mdi_hw.h"
+#include "mdi/instance.h"
 
 /* --------------------------------------------------------------------------
  *  系统时钟配置：HSI 16 MHz → PLL → 170 MHz
@@ -83,7 +83,7 @@ void peripheral_Clock(void)
 
     if (++s_hwCounter >= 500) {
         s_hwCounter = 0;
-        (void)MDI_GPIO_Toggle(HW.ptLedStatus);
+        (void)mdi_gpio_pin_Toggle(HW.ptLedStatus);
     }
 }
 
@@ -106,7 +106,7 @@ void peripheral_Init(void)
 
     halusart_Init();
 
-    hali2c_Init();
+    (void)mdi_stm32_g431_i2c1_Init();
 
     extern void haladc_EnableISR(void);
     haladc_EnableISR();

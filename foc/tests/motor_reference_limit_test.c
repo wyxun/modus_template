@@ -55,11 +55,6 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
     return FOC_RESULT_OK;
 }
 
-static const motor_position_ops_t s_tPositionOps = {
-    .fnGetPosition = test_GetPosition,
-    .fnCaptureZero = test_GetPosition,
-};
-
 static uint8_t s_chPositionContext = 0U;
 
 /**
@@ -80,7 +75,7 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.tPosition.ptOps = &s_tPositionOps;
+    tConfig.tPosition.fnGetPosition = test_GetPosition;
     tConfig.tPosition.pContext = &s_chPositionContext;
     tConfig.chSpeedLoopDiv = 1U;
     tConfig.wAdcCalibrationTimeoutSteps = 2U;

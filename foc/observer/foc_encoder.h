@@ -1,6 +1,9 @@
 /****************************************************************************
  * @file    foc_encoder.h
  * @brief   Mechanical angle and speed backend for an absolute sensor.
+ * @note    A standalone build may use the legacy sensor binding below. A
+ *          target defining FOC_ENCODER_STATIC_BINDING supplies
+ *          FOC_ENCODER_PORT_INIT/READ and removes that runtime sensor object.
  * @author  Codex
  * @date    2026-09-11
  ****************************************************************************/
@@ -13,6 +16,7 @@
 
 #include "motor_position.h"
 
+#if !defined(FOC_ENCODER_STATIC_BINDING)
 typedef struct {
     foc_result_t (*fnInit)(void *pContext);
     foc_result_t (*fnRead)(void *pContext, uint16_t *phwRawAngle);
@@ -22,12 +26,15 @@ typedef struct {
     const foc_encoder_sensor_ops_t *ptOps;
     void *pContext;
 } foc_encoder_sensor_if_t;
+#endif
 
 typedef struct {
     foc_scalar_t qSpeedFilterAlpha;
     uint32_t wInvalidTimeoutUs;
     bool bDirectionInvert;
+#if !defined(FOC_ENCODER_STATIC_BINDING)
     const foc_encoder_sensor_if_t *ptSensor;
+#endif
 } foc_encoder_cfg_t;
 
 typedef enum {
@@ -42,7 +49,9 @@ typedef struct {
 } foc_encoder_position_slot_t;
 
 typedef struct {
+#if !defined(FOC_ENCODER_STATIC_BINDING)
     foc_encoder_sensor_if_t tSensor;
+#endif
     foc_scalar_t qSpeedFilterAlpha;
     bool bDirectionInvert;
     foc_encoder_position_slot_t atPosition[2];
@@ -66,9 +75,10 @@ typedef struct {
 } foc_encoder_status_t;
 
 /**
- * @brief Initialize the encoder and its bound raw sensor.
+ * @brief Initialize the encoder and its raw sensor provider.
  * @param ptEncoder Encoder object.
- * @param ptConfig Sensor binding and mechanical filter configuration.
+ * @param ptConfig Mechanical filter configuration and, for a dynamic build,
+ *                 the sensor binding.
  * @return FOC_RESULT_OK, DISABLED, or an initialization error.
  */
 foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
@@ -125,11 +135,5 @@ foc_result_t foc_encoder_GetPosition(const void *pEncoder,
 foc_result_t foc_encoder_CaptureZero(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition);
-
-/**
- * @brief Typed Motor position interface implemented by Encoder.
- * @note The table is immutable and contains no Encoder instance state.
- */
-extern const motor_position_ops_t g_tFocEncoderPositionOps;
 
 #endif /* FOC_ENCODER_H */

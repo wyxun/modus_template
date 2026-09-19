@@ -84,7 +84,7 @@ static foc_result_t _motor_ReadCurrent(const motor_t *ptMotor,
     if (!ptMotor->tCalib.bIsCalibrated) {
         return FOC_RESULT_SAFETY;
     }
-    eResult = foc_SampleCurrent(&tSample);
+    eResult = FOC_PORT_SAMPLE_CURRENT(&tSample);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
@@ -135,7 +135,7 @@ static void _motor_EnterFault(motor_t *ptMotor, motor_fault_e eFault)
         return;
     }
     if (ptMotor->eState != MOTOR_STATE_FAULT) {
-        eStop = foc_PwmSafeStop();
+        eStop = FOC_PORT_PWM_SAFE_STOP();
         if (eStop != FOC_RESULT_OK) {
             ptMotor->wFaults |= (uint32_t)MOTOR_FAULT_PWM;
         }
@@ -153,12 +153,16 @@ static void _motor_EnterFault(motor_t *ptMotor, motor_fault_e eFault)
  */
 static bool _motor_InterfacesValid(const motor_cfg_t *ptConfig)
 {
-    if (ptConfig->tPosition.ptOps == NULL ||
-        ptConfig->tPosition.pContext == NULL ||
-        ptConfig->tPosition.ptOps->fnGetPosition == NULL ||
-        ptConfig->tPosition.ptOps->fnCaptureZero == NULL) {
+#if !defined(FOC_POSITION_STATIC_BINDING)
+    if (ptConfig->tPosition.fnGetPosition == NULL ||
+        ptConfig->tPosition.pContext == NULL) {
         return false;
     }
+#else
+    if (ptConfig->tPosition.pContext == NULL) {
+        return false;
+    }
+#endif
     return true;
 }
 
@@ -264,13 +268,13 @@ static foc_result_t _motor_EnablePwm(motor_t *ptMotor)
 
     foc_core_Reset(&ptMotor->tCore);
     _motor_ResetObserver(ptMotor);
-    eResult = foc_SetDuty(&ptMotor->tCore.tDuty);
+    eResult = FOC_PORT_SET_DUTY(&ptMotor->tCore.tDuty);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
-    eResult = foc_PwmEnable();
+    eResult = FOC_PORT_PWM_ENABLE();
     if (eResult != FOC_RESULT_OK) {
-        (void)foc_PwmSafeStop();
+        (void)FOC_PORT_PWM_SAFE_STOP();
         return eResult;
     }
     ptMotor->bPwmEnabled = true;
@@ -290,7 +294,7 @@ static void _motor_AdcCalibrationStep(motor_t *ptMotor)
     if (ptMotor->wCalibrationSteps < UINT32_MAX) {
         ptMotor->wCalibrationSteps++;
     }
-    eResult = foc_SampleCurrent(&tSample);
+    eResult = FOC_PORT_SAMPLE_CURRENT(&tSample);
     if (eResult != FOC_RESULT_OK) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_ADC_CAL);
         return;
@@ -374,8 +378,7 @@ static void _motor_RunControlStep(motor_t *ptMotor, uint32_t wNowTick)
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return;
     }
-    eResult = ptMotor->tPosition.ptOps->fnGetPosition(
-        ptMotor->tPosition.pContext, wNowTick, &tPosition);
+    eResult = FOC_POSITION_GET(ptMotor, wNowTick, &tPosition);
     if (eResult != FOC_RESULT_OK || !tPosition.bValid) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_POSITION);
         return;
@@ -397,7 +400,7 @@ static void _motor_RunControlStep(motor_t *ptMotor, uint32_t wNowTick)
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return;
     }
-    eResult = foc_SetDuty(&ptMotor->tCore.tDuty);
+    eResult = FOC_PORT_SET_DUTY(&ptMotor->tCore.tDuty);
     if (eResult != FOC_RESULT_OK) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_PWM);
     }
@@ -435,7 +438,7 @@ static void _motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return;
     }
-    eResult = foc_SetDuty(&ptMotor->tCore.tDuty);
+    eResult = FOC_PORT_SET_DUTY(&ptMotor->tCore.tDuty);
     if (eResult != FOC_RESULT_OK) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_PWM);
         return;
@@ -446,8 +449,8 @@ static void _motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
     if (ptMotor->wAlignStepCount < ptMotor->wAlignTargetSteps) {
         return;
     }
-    eResult = ptMotor->tPosition.ptOps->fnCaptureZero(
-        ptMotor->tPosition.pContext, wNowTick, &tPosition);
+    eResult = FOC_POSITION_CAPTURE_ZERO(ptMotor,
+                                        wNowTick, &tPosition);
     if (eResult != FOC_RESULT_OK || !tPosition.bValid) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_ALIGN);
         return;
@@ -455,7 +458,7 @@ static void _motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
     ptMotor->tElectricalZero = _motor_MechanicalToElectrical(
         ptMotor, tPosition.tMechanicalAngle);
     ptMotor->bElectricalZeroValid = true;
-    (void)foc_PwmSafeStop();
+    (void)FOC_PORT_PWM_SAFE_STOP();
     ptMotor->bPwmEnabled = false;
     _motor_ResetObserver(ptMotor);
     ptMotor->eState = MOTOR_STATE_IDLE;
@@ -478,13 +481,16 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
     ptMotor->tParams.wCurrentBaseMilliamp =
         FOC_CURRENT_BASE_MILLIAMP;
     ptMotor->tLimits = ptConfig->tLimits;
+    ptMotor->pPositionState = ptConfig->tPosition.pContext;
+#if !defined(FOC_POSITION_STATIC_BINDING)
     ptMotor->tPosition = ptConfig->tPosition;
+#endif
     ptMotor->qAlignCurrent = ptConfig->qAlignCurrent;
     ptMotor->wAdcCalibrationTimeoutSteps =
         ptConfig->wAdcCalibrationTimeoutSteps;
     ptMotor->wAlignTargetSteps = ptConfig->wAlignSteps;
     ptMotor->chSpeedLoopDiv = ptConfig->chSpeedLoopDiv;
-    eResult = foc_PwmSafeStop();
+    eResult = FOC_PORT_PWM_SAFE_STOP();
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
@@ -493,7 +499,7 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
                                 &ptMotor->tParams,
                                 &ptConfig->tObserverCfg);
     if (eResult != FOC_RESULT_OK) {
-        (void)foc_PwmSafeStop();
+        (void)FOC_PORT_PWM_SAFE_STOP();
         return eResult;
     }
 #endif
@@ -503,7 +509,7 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
         &ptMotor->qMechanicalToElectricalSpeedPuGain);
     if (eResult != FOC_RESULT_OK ||
         ptMotor->qMechanicalToElectricalSpeedPuGain <= FOC_ZERO) {
-        (void)foc_PwmSafeStop();
+        (void)FOC_PORT_PWM_SAFE_STOP();
         return FOC_RESULT_OUT_OF_RANGE;
     }
     ptMotor->eState = MOTOR_STATE_INITIALIZING;
@@ -519,13 +525,13 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
                                &ptConfig->tSpeedPiParams);
     }
     if (eResult != FOC_RESULT_OK) {
-        (void)foc_PwmSafeStop();
+        (void)FOC_PORT_PWM_SAFE_STOP();
         return eResult;
     }
     foc_core_Reset(&ptMotor->tCore);
     _motor_ResetObserver(ptMotor);
     _motor_ResetAdcCalibration(ptMotor);
-    foc_port_StartAdcTrigger();
+    FOC_PORT_START_ADC_TRIGGER();
     ptMotor->eState = MOTOR_STATE_ADC_CAL;
     return FOC_RESULT_OK;
 }
@@ -542,7 +548,7 @@ foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
         return FOC_RESULT_DISABLED;
     }
     /* 硬件 break 锁存未清除时禁止重新使能功率级 */
-    if (foc_PwmGetFault()) {
+    if (FOC_PORT_PWM_GET_FAULT()) {
         return FOC_RESULT_SAFETY;
     }
     tIrqState = perfc_port_disable_global_interrupt();
@@ -573,7 +579,7 @@ void motor_Stop(motor_t *ptMotor)
         return;
     }
     tIrqState = perfc_port_disable_global_interrupt();
-    (void)foc_PwmSafeStop();
+    (void)FOC_PORT_PWM_SAFE_STOP();
     ptMotor->bPwmEnabled = false;
     foc_pid_Reset(&ptMotor->tSpeedPi);
     _motor_ResetObserver(ptMotor);
@@ -600,7 +606,7 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
     }
     /* 清除 PWM 故障前先确认硬件 break 源已释放，否则拒绝 */
     if ((ptMotor->wFaults & (uint32_t)MOTOR_FAULT_PWM) != 0U &&
-        foc_PwmClearFault() != FOC_RESULT_OK) {
+        FOC_PORT_PWM_CLEAR_FAULT() != FOC_RESULT_OK) {
         perfc_port_resume_global_interrupt(tIrqState);
         return FOC_RESULT_SAFETY;
     }
@@ -625,7 +631,7 @@ void motor_PollBreakFault(motor_t *ptMotor)
 {
     perfc_global_interrupt_status_t tIrqState = 0U;
 
-    if (ptMotor == NULL || !foc_PwmGetFault()) {
+    if (ptMotor == NULL || !FOC_PORT_PWM_GET_FAULT()) {
         return;
     }
     tIrqState = perfc_port_disable_global_interrupt();
@@ -772,7 +778,7 @@ void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick)
     }
     switch (ptMotor->eState) {
     case MOTOR_STATE_INITIALIZING:
-    (void)foc_PwmSafeStop();
+    (void)FOC_PORT_PWM_SAFE_STOP();
         ptMotor->eState = MOTOR_STATE_ADC_CAL;
         break;
     case MOTOR_STATE_ADC_CAL:

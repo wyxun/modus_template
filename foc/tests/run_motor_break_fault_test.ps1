@@ -54,6 +54,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
         "-DFOC_OFFSET_CALIB_TIMES=1U",
+        "-DFOC_TEST_EXTERNAL_FAULT_PORT=1",
         "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0", $backendDefine
     ) + $includeArgs + $sourceFiles + @("-lm", "-o", $testExe)
 

@@ -9,7 +9,7 @@
 #include "mdi_hw.h"
 #include "at32f403a_407.h"
 #include "at32f403a_407_dma.h"
-#include "mdi/mdi.h"
+#include "mdi/legacy/mdi.h"
 #include <stdbool.h>
 
 #include "port_mdi.h"

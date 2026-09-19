@@ -13,7 +13,7 @@
 
 #include "haladc.h"
 #include "halpwm.h"
-#include "mdi/mdi.h"
+#include "mdi/legacy/mdi.h"
 #include "mdi_hw.h"
 
 /**

@@ -37,12 +37,14 @@ foc_result_t foc_PwmSafeStop(void)
     return FOC_RESULT_OK;
 }
 
-__attribute__((weak)) bool foc_PwmGetFault(void)
+#if !defined(FOC_TEST_EXTERNAL_FAULT_PORT)
+bool foc_PwmGetFault(void)
 {
     return false;
 }
 
-__attribute__((weak)) foc_result_t foc_PwmClearFault(void)
+foc_result_t foc_PwmClearFault(void)
 {
     return FOC_RESULT_OK;
 }
+#endif
