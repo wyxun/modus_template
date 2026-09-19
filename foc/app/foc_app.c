@@ -379,7 +379,7 @@ void foc_app_HighFrequencyISR(void)
         motor_IsrStep(&tFocApp.tMotor, wNowTick);
     }
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
-    foc_app_WaveformStep();
+    //foc_app_WaveformStep();
 #endif
     lElapsedTicks = get_system_ticks() - lStartTicks -
                     (int64_t)g_nOffset;

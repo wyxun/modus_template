@@ -13,7 +13,7 @@
 FOC_INCLUDES = -Ifoc \
                -Ifoc/math -Ifoc/hal -Ifoc/motor \
                -Ifoc/middleware -Ifoc/control \
-               -Ifoc/modulation -Ifoc/observer \
+               -Ifoc/modulation -Ifoc/observer -Ifoc/identify \
                -Ifoc/app
 
 FOC_SOURCES = foc/math/foc_numeric.c \
@@ -26,5 +26,6 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/observer/foc_encoder.c \
               foc/observer/foc_observer.c \
               foc/observer/foc_smo.c \
+              foc/identify/identify.c \
               foc/motor/motor.c \
               foc/app/foc_app.c

@@ -59,7 +59,8 @@ mdi_status_t template_SetAdcSampleFrequency(
 /**
  * @brief Schedule ADC conversion and reduce one completed block.
  * @param wCurrentTick Current wrapping SysTick counter.
- * @return MDI_OK when work completed or no work was due.
+ * @return MDI_OK when work completed or no work was due; MDI_OVERRUN after
+ *         recovering from one or more overwritten DMA blocks.
  * @note The DMA ISR only calls template_AdcDmaCompleteIrq().
  */
 mdi_status_t template_AdcService(uint32_t wCurrentTick)
@@ -67,7 +68,7 @@ mdi_status_t template_AdcService(uint32_t wCurrentTick)
     mdi_status_t eStatus = MDI_OK;
     if (MDI_ADC_DMA_IsReady(adc1_dma)) {
         eStatus = MDI_ADC_MeanUpdate(adc1_mean);
-        if (eStatus != MDI_OK) {
+        if (eStatus != MDI_OK && eStatus != MDI_OVERRUN) {
             return eStatus;
         }
     }

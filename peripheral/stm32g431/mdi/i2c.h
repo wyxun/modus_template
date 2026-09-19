@@ -19,6 +19,49 @@
 #define MDI_STM32_I2C_ERROR_FLAGS \
     (I2C_ISR_NACKF | I2C_ISR_BERR | I2C_ISR_ARLO | I2C_ISR_OVR)
 
+/* G431 backend calibration: the wait loop's bounded body is budgeted at 32
+ * core cycles under the release compiler/clock configuration. Board ports that
+ * change clock, flash wait states, or optimization must override both values.
+ */
+#ifndef MDI_STM32_I2C_CLOCK_HZ
+#define MDI_STM32_I2C_CLOCK_HZ 170000000U
+#endif
+#ifndef MDI_STM32_I2C_POLL_CYCLES
+#define MDI_STM32_I2C_POLL_CYCLES 32U
+#endif
+#ifndef MDI_STM32_I2C_POLLS_PER_US
+#define MDI_STM32_I2C_POLLS_PER_US \
+    (MDI_STM32_I2C_CLOCK_HZ / (MDI_STM32_I2C_POLL_CYCLES * 1000000U))
+#endif
+
+_Static_assert(MDI_STM32_I2C_CLOCK_HZ > 0U,
+               "I2C core clock must be nonzero");
+_Static_assert(MDI_STM32_I2C_POLL_CYCLES > 0U,
+               "I2C poll cycle estimate must be nonzero");
+_Static_assert(MDI_STM32_I2C_POLLS_PER_US > 0U,
+               "I2C poll calibration is below one poll per microsecond");
+
+/** @brief Convert a microsecond timeout to a bounded polling budget.
+ * @param wTimeoutUs Requested timeout in microseconds.
+ * @param wPollsPerUs Calibrated polling iterations per microsecond.
+ * @param wMaximum Maximum provider polling iterations.
+ * @return The bounded polling budget, or zero for a zero timeout.
+ */
+MDI_INLINE uint32_t mdi_stm32_i2c_PollBudget(
+    uint32_t wTimeoutUs, uint32_t wPollsPerUs, uint32_t wMaximum)
+{
+    uint64_t qwBudget;
+
+    if (wTimeoutUs == 0U || wPollsPerUs == 0U || wMaximum == 0U) {
+        return 0U;
+    }
+    qwBudget = (uint64_t)wTimeoutUs * (uint64_t)wPollsPerUs;
+    if (qwBudget > (uint64_t)wMaximum) {
+        return wMaximum;
+    }
+    return (uint32_t)qwBudget;
+}
+
 /**
  * @brief Initialize the G431 encoder I2C1 resource owned by MDI.
  *
@@ -68,12 +111,15 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
     uint32_t wPoll = 0U;
     uint32_t wStatus = ptI2c->ISR;
 
-    while ((wStatus & wReadyMask) == 0U) {
+    for (;;) {
+        if ((wStatus & I2C_ISR_TIMEOUT) != 0U) {
+            return MDI_TIMEOUT;
+        }
         if ((wStatus & MDI_STM32_I2C_ERROR_FLAGS) != 0U) {
             return MDI_IO_ERROR;
         }
-        if ((wStatus & I2C_ISR_TIMEOUT) != 0U) {
-            return MDI_TIMEOUT;
+        if ((wStatus & wReadyMask) != 0U) {
+            return MDI_OK;
         }
         if (wPoll >= wPollLimit) {
             return MDI_TIMEOUT;
@@ -81,10 +127,13 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
         ++wPoll;
         wStatus = ptI2c->ISR;
     }
-    return MDI_OK;
 }
 
-/** @brief Bind one initialized STM32G4 I2C peripheral to MDI. */
+/** @brief Bind one initialized STM32G4 I2C peripheral to MDI.
+ * @param POLL_LIMIT Maximum calibrated status-register polls per wait.
+ * @note wTimeoutUs applies to each blocking phase. It is converted with the
+ *       board's clock/cycle calibration and capped by POLL_LIMIT.
+ */
 #define MDI_STM32_I2C_BIND(NAME, INSTANCE, POLL_LIMIT)                         \
     _Static_assert((POLL_LIMIT) > 0U, "I2C poll limit must be nonzero");       \
     MDI_INLINE mdi_status_t MDI_OP(NAME, _i2c_Transfer)(                      \
@@ -93,6 +142,10 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
         mdi_status_t eStatus = MDI_OK;                                         \
         uint32_t wIndex;                                                        \
         uint32_t wControl;                                                      \
+        const uint32_t wPollLimit = mdi_stm32_i2c_PollBudget(                   \
+            ptTransfer == NULL ? 0U : ptTransfer->wTimeoutUs,                   \
+            MDI_STM32_I2C_POLLS_PER_US,                                          \
+            (POLL_LIMIT));                                                      \
         if (ptTransfer == NULL) { return MDI_INVALID; }                       \
         if (ptTransfer->hwAddress7 > 0x7FU ||                                  \
             ptTransfer->wTimeoutUs == 0U) { return MDI_RANGE; }                \
@@ -118,7 +171,7 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
             (INSTANCE)->CR2 = wControl;                                        \
             for (wIndex = 0U; wIndex < ptTransfer->wTxLength; ++wIndex) {      \
                 eStatus = mdi_stm32_i2c_wait(                                  \
-                    (INSTANCE), I2C_ISR_TXIS, (POLL_LIMIT));                   \
+                    (INSTANCE), I2C_ISR_TXIS, wPollLimit);                      \
                 if (eStatus != MDI_OK) { break; }                               \
                 (INSTANCE)->TXDR = ptTransfer->pchTx[wIndex];                  \
             }                                                                   \
@@ -130,7 +183,7 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
         if (ptTransfer->wRxLength != 0U) {                                     \
             if (ptTransfer->wTxLength != 0U) {                                 \
                 eStatus = mdi_stm32_i2c_wait(                                  \
-                    (INSTANCE), I2C_ISR_TC, (POLL_LIMIT));                     \
+                    (INSTANCE), I2C_ISR_TC, wPollLimit);                       \
                 if (eStatus != MDI_OK) {                                       \
                     (INSTANCE)->CR2 |= I2C_CR2_STOP;                            \
                     return eStatus;                                             \
@@ -144,7 +197,7 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
             (INSTANCE)->CR2 = wControl;                                        \
             for (wIndex = 0U; wIndex < ptTransfer->wRxLength; ++wIndex) {      \
                 eStatus = mdi_stm32_i2c_wait(                                  \
-                    (INSTANCE), I2C_ISR_RXNE, (POLL_LIMIT));                   \
+                    (INSTANCE), I2C_ISR_RXNE, wPollLimit);                     \
                 if (eStatus != MDI_OK) {                                       \
                     (INSTANCE)->CR2 |= I2C_CR2_STOP;                            \
                     return eStatus;                                             \
@@ -153,7 +206,7 @@ MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(
             }                                                                   \
         }                                                                       \
         eStatus = mdi_stm32_i2c_wait(                                          \
-            (INSTANCE), I2C_ISR_STOPF, (POLL_LIMIT));                          \
+            (INSTANCE), I2C_ISR_STOPF, wPollLimit);                            \
         (INSTANCE)->ICR = I2C_ICR_STOPCF | I2C_ICR_NACKCF |                     \
                           I2C_ICR_BERRCF | I2C_ICR_ARLOCF |                     \
                           I2C_ICR_OVRCF;                                       \

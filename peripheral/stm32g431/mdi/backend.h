@@ -72,7 +72,7 @@ typedef struct {
     MDI_STM32_IO_BIND_CAPS(NAME, WIDTH, PORTS,                                   \
                            MDI_IO_CAP_INPUT | MDI_IO_CAP_OUTPUT)
 
-#define MDI_STM32_IO_BIND_CAPS(NAME, WIDTH, PORTS, CAPS)                         \
+#define MDI_STM32_IO_BIND_VALIDATE(NAME, WIDTH, PORTS, CAPS)                     \
     _Static_assert((WIDTH) > 0 && (WIDTH) <= 32, "invalid IO width");            \
     PORTS(MDI_CORE_PORT_CHECK, WIDTH)                                             \
     _Static_assert((0ULL PORTS(MDI_CORE_PORT_SUM, 0)) ==                          \
@@ -80,7 +80,13 @@ typedef struct {
     _Static_assert((0UL PORTS(MDI_CORE_PORT_LOGICAL, 0)) ==                        \
                    ((UINT64_C(1) << (WIDTH)) - 1U), "missing logical pin");   \
     enum { MDI_OP(NAME, _io_width) = (WIDTH) };                               \
-    enum { MDI_OP(NAME, _io_caps) = (CAPS) };                                 \
+    enum { MDI_OP(NAME, _io_caps) = (CAPS) };
+
+#define MDI_STM32_IO_BIND_CAPS(NAME, WIDTH, PORTS, CAPS)                         \
+    _Static_assert(((CAPS) & (MDI_IO_CAP_INPUT | MDI_IO_CAP_OUTPUT)) ==          \
+                   (MDI_IO_CAP_INPUT | MDI_IO_CAP_OUTPUT),                      \
+                   "use input/output-specific binding for one-way IO");        \
+    MDI_STM32_IO_BIND_VALIDATE(NAME, WIDTH, PORTS, CAPS)                         \
     MDI_INLINE void MDI_OP(NAME, _io_Write)(uint32_t wValue)              \
     {                                                                          \
         PORTS(MDI_CORE_PORT_WRITE, wValue)                                        \
@@ -96,6 +102,34 @@ typedef struct {
         uint32_t wValue = 0U;                                                   \
         PORTS(MDI_CORE_PORT_READ, wValue)                                         \
         return wValue;                                                         \
+    }
+
+#define MDI_STM32_IO_BIND_INPUT_CAPS(NAME, WIDTH, PORTS, CAPS)                  \
+    _Static_assert(((CAPS) & MDI_IO_CAP_INPUT) != 0U &&                         \
+                   ((CAPS) & MDI_IO_CAP_OUTPUT) == 0U,                         \
+                   "input binding capabilities must be input-only");           \
+    MDI_STM32_IO_BIND_VALIDATE(NAME, WIDTH, PORTS, CAPS)                         \
+    MDI_INLINE uint32_t MDI_OP(NAME, _io_Read)(void)                              \
+    {                                                                            \
+        uint32_t wValue = 0U;                                                    \
+        PORTS(MDI_CORE_PORT_READ, wValue)                                        \
+        return wValue;                                                           \
+    }
+
+#define MDI_STM32_IO_BIND_OUTPUT_CAPS(NAME, WIDTH, PORTS, CAPS)                 \
+    _Static_assert(((CAPS) & MDI_IO_CAP_OUTPUT) != 0U &&                        \
+                   ((CAPS) & MDI_IO_CAP_INPUT) == 0U,                          \
+                   "output binding capabilities must be output-only");        \
+    MDI_STM32_IO_BIND_VALIDATE(NAME, WIDTH, PORTS, CAPS)                         \
+    MDI_INLINE void MDI_OP(NAME, _io_Write)(uint32_t wValue)                     \
+    {                                                                            \
+        PORTS(MDI_CORE_PORT_WRITE, wValue)                                       \
+    }                                                                            \
+    MDI_INLINE void MDI_OP(NAME, _io_WriteMasked)(                               \
+        uint32_t wMask, uint32_t wValue)                                         \
+    {                                                                            \
+        const mdi_io_write_t tWrite = {wMask, wValue};                           \
+        PORTS(MDI_CORE_PORT_WRITE_MASKED, &tWrite)                               \
     }
 #endif
 

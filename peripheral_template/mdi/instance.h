@@ -15,11 +15,13 @@
 /* GPIO resources. Each physical port occurs once in a resource binding. */
 #define PT32_LED_PINS(X, V, ...) X(V, 0, 5, 0)
 #define PT32_LED_PORTS(X, V) X(V, PT32_GPIOC->IDR, PT32_GPIOC->BSRR, PT32_LED_PINS)
-MDI_PT32_IO_BIND_CAPS(status_led, 1, PT32_LED_PORTS, MDI_IO_CAP_OUTPUT)
+MDI_PT32_IO_BIND_OUTPUT_CAPS(status_led, 1, PT32_LED_PORTS,
+                             MDI_IO_CAP_OUTPUT)
 
 #define PT32_BUTTON_PINS(X, V, ...) X(V, 0, 13, 0)
 #define PT32_BUTTON_PORTS(X, V) X(V, PT32_GPIOC->IDR, PT32_GPIOC->BSRR, PT32_BUTTON_PINS)
-MDI_PT32_IO_BIND_CAPS(user_button, 1, PT32_BUTTON_PORTS, MDI_IO_CAP_INPUT)
+MDI_PT32_IO_BIND_INPUT_CAPS(user_button, 1, PT32_BUTTON_PORTS,
+                            MDI_IO_CAP_INPUT)
 
 #define PT32_DAC_A(X, V, ...) X(V, 0, 0, 0) X(V, 1, 1, 0) X(V, 2, 2, 0) X(V, 3, 3, 0)
 #define PT32_DAC_B(X, V, ...) X(V, 4, 0, 0) X(V, 5, 1, 0) X(V, 6, 2, 0) X(V, 7, 3, 0)
@@ -131,7 +133,8 @@ MDI_FOC_BIND(template_foc_cycle, phase_current, bridge)
 /* SPI EEPROM: the CS pin is a normal MDI IO resource. */
 #define PT32_EEPROM_CS_PINS(X, V, ...) X(V, 0, 4, 0)
 #define PT32_EEPROM_CS_PORTS(X, V) X(V, PT32_GPIOA->IDR, PT32_GPIOA->BSRR, PT32_EEPROM_CS_PINS)
-MDI_PT32_IO_BIND_CAPS(eeprom_cs, 1, PT32_EEPROM_CS_PORTS, MDI_IO_CAP_OUTPUT)
+MDI_PT32_IO_BIND_OUTPUT_CAPS(eeprom_cs, 1, PT32_EEPROM_CS_PORTS,
+                             MDI_IO_CAP_OUTPUT)
 MDI_PT32_SPI_BIND(config_spi, PT32_SPI0, 1000U)
 MDI_SPI_EEPROM_BIND(config_eeprom, config_spi, eeprom_cs,
                     65536U, 64U, 100U)
