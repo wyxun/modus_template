@@ -228,6 +228,9 @@ int main(void)
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);
+    test_AssertNear(tMotor.tCurrentAbc.qU, 0.2f);
+    test_AssertNear(tMotor.tCurrentAbc.qV, 0.1f);
+    test_AssertNear(tMotor.tCurrentAbc.qW, -0.3f);
     motor_IsrStep(&tMotor, 2U);
     assert(s_wClarkeCalls == 2U);
     assert(s_wCoreCalls == 2U);
@@ -249,6 +252,7 @@ int main(void)
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);
+    test_AssertNear(tMotor.tCurrentAbc.qU, 0.2f);
     assert(!s_bPwmEnabled);
     return 0;
 }

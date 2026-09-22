@@ -6,7 +6,10 @@
 
 volatile uint16_t g_awPt32AdcDma[PT32_ADC_BLOCK_SIZE * 2U];
 volatile uint32_t g_awPt32AdcMean[PT32_ADC_CHANNEL_COUNT];
-volatile uint32_t g_wPt32AdcMeanSequence;
-volatile bool g_bPt32AdcMeanValid;
-volatile uint32_t g_wPt32AdcPublished;
-volatile uint32_t g_wPt32AdcConsumed;
+volatile uint32_t g_wPt32AdcMeanSequence = 0U;
+volatile bool g_bPt32AdcMeanValid = false;
+volatile uint32_t g_wPt32AdcPublished = 0U;
+volatile uint32_t g_wPt32AdcConsumed = 0U;
+volatile mdi_tick_t g_qwPt32RawTick = 0U;
+volatile mdi_status_t g_ePt32AdcStatus = MDI_OK;
+pt32_stream_state_t g_tPt32Stream;

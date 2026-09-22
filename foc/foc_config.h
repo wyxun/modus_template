@@ -25,7 +25,7 @@
 #endif
 
 #ifndef FOC_CURRENT_BASE_MILLIAMP
-#define FOC_CURRENT_BASE_MILLIAMP   7000U
+#define FOC_CURRENT_BASE_MILLIAMP   3500U
 #endif
 
 #ifndef FOC_CURRENT_COUNTS_PER_BASE
@@ -34,6 +34,46 @@
 
 #ifndef FOC_CURRENT_SAMPLE_INVERTED
 #define FOC_CURRENT_SAMPLE_INVERTED 1
+#endif
+
+/* DC-bus source contract. A target must opt in after validating its sample
+ * timing and ADC scale; the default keeps Ld identification disabled. */
+#define FOC_DCBUS_SOURCE_NONE       (0U)
+#define FOC_DCBUS_SOURCE_NOMINAL    (1U)
+#define FOC_DCBUS_SOURCE_ADC        (2U)
+
+#ifndef FOC_DCBUS_SOURCE
+#define FOC_DCBUS_SOURCE             FOC_DCBUS_SOURCE_NONE
+#endif
+#ifndef FOC_DCBUS_NOMINAL_MILLIVOLT
+#define FOC_DCBUS_NOMINAL_MILLIVOLT  (0U)
+#endif
+#ifndef FOC_DCBUS_MV_PER_COUNT_NUM
+#define FOC_DCBUS_MV_PER_COUNT_NUM   (1U)
+#endif
+#ifndef FOC_DCBUS_MV_PER_COUNT_DEN
+#define FOC_DCBUS_MV_PER_COUNT_DEN   (1U)
+#endif
+#ifndef FOC_DCBUS_OFFSET_MILLIVOLT
+#define FOC_DCBUS_OFFSET_MILLIVOLT   (0)
+#endif
+#ifndef FOC_DCBUS_SAMPLE_DELAY_CYCLES
+#define FOC_DCBUS_SAMPLE_DELAY_CYCLES (0U)
+#endif
+#ifndef FOC_DCBUS_MAX_AGE_CYCLES
+#define FOC_DCBUS_MAX_AGE_CYCLES     (0U)
+#endif
+#ifndef FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES
+#define FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES (1U)
+#endif
+#ifndef FOC_DCBUS_MAX_MILLIVOLT
+#define FOC_DCBUS_MAX_MILLIVOLT      (60000U)
+#endif
+#ifndef FOC_DCBUS_MODULATION_NUM
+#define FOC_DCBUS_MODULATION_NUM     (1U)
+#endif
+#ifndef FOC_DCBUS_MODULATION_DEN
+#define FOC_DCBUS_MODULATION_DEN     (1U)
 #endif
 
 #define FOC_DEFAULT_SENSING_TOPOLOGY    SENSING_TOPOLOGY_3P  /**< 默认采样拓扑 */

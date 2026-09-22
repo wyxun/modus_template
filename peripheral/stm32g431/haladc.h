@@ -30,10 +30,18 @@
 #define HALADC_INJ_U        0U  /* ADC1_IN3  (PA2, OPAMP1 out) */
 #define HALADC_INJ_V        1U  /* ADC2_IN3  (PA6, OPAMP2 out) */
 #define HALADC_INJ_W        1U  /* ADC1_IN12 (PB1, OPAMP3 out) */
+#define HALADC_INJ_DCBUS    1U  /* ADC1_IN1  (PA0, VBUS divider) */
+
+/* PB10 drives Q48 and selects the 48 V divider range.  The current board is
+ * powered from 12 V, so the default is the low-voltage range (Q48 off). */
+#ifndef HALADC_VBUS_RANGE_48V
+#define HALADC_VBUS_RANGE_48V 0U
+#endif
 
 #include "stm32g4xx_ll_adc.h"
 
 void haladc_Init(void);
+void haladc_SetVbusRange48V(uint32_t bEnable);
 void haladc_EnableISR(void);
 void haladc_StartRegular(void);
 uint32_t haladc_GetRegular(uint32_t wChannel);

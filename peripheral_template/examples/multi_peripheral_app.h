@@ -9,11 +9,14 @@
 
 #include "mdi/instance.h"
 
-/** Set the tick-driven ADC frequency and establish its current tick origin. */
+/** Set the ADC frequency and update the compatibility raw-tick origin. */
 mdi_status_t template_SetAdcSampleFrequency(uint32_t wHz,
                                              uint32_t wCurrentTick);
 
-/** Run ADC scheduling and process one completed block in caller context. */
+/**
+ * Run the board MDI service for compatibility with pre-0.6.1.2 callers.
+ * New applications should let modus_Run() invoke mdi_Service().
+ */
 mdi_status_t template_AdcService(uint32_t wCurrentTick);
 
 /** Read the filtered bus-voltage channel. */

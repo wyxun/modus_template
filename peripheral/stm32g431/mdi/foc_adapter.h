@@ -12,10 +12,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "foc/foc_config.h"
 #include "foc/hal/foc_port.h"
 #include "foc/foc_types.h"
 #include "mdi/instance.h"
 #include "haltim1.h"
+#include "haladc.h"
 
 /** @brief Translate an MDI result to the independent FOC result domain. */
 static inline foc_result_t mdi_g431_foc_status(mdi_status_t eStatus)
@@ -86,6 +88,46 @@ static inline foc_result_t mdi_g431_foc_set_duty(
         return mdi_g431_foc_status(eStatus);
     }
     return mdi_g431_foc_status(MDI_PWM_Commit(bridge));
+}
+
+/**
+ * @brief Read the completed, synchronized DC-bus sample.
+ * @param pwMillivolt Output DC-bus voltage in millivolts.
+ * @return FOC_RESULT_OK, FOC_RESULT_NULL, or FOC_RESULT_DISABLED.
+ * @note The bus sample is ADC1 injected rank 2 and is completed with the
+ *       current frame; the regular ADC path is not used from the ISR.
+ */
+static inline foc_result_t mdi_g431_foc_sample_dcbus_millivolt(
+    uint32_t *pwMillivolt)
+{
+    uint32_t wAdcCount = 0U;
+    uint64_t ullMillivolt = 0U;
+
+    if (pwMillivolt == NULL) {
+        return FOC_RESULT_NULL;
+    }
+#if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
+    wAdcCount = haladc_GetInjected(HALADC_ADC1, HALADC_INJ_DCBUS);
+    wAdcCount = (wAdcCount >> 4U) & 0x0FFFU;
+    ullMillivolt = (uint64_t)wAdcCount *
+                   FOC_DCBUS_MV_PER_COUNT_NUM;
+    ullMillivolt /= FOC_DCBUS_MV_PER_COUNT_DEN;
+    ullMillivolt += (int64_t)FOC_DCBUS_OFFSET_MILLIVOLT;
+    if (ullMillivolt > UINT32_MAX) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
+    *pwMillivolt = (uint32_t)ullMillivolt;
+    return FOC_RESULT_OK;
+#elif FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_NOMINAL
+    if (FOC_DCBUS_NOMINAL_MILLIVOLT == 0U) {
+        return FOC_RESULT_DISABLED;
+    }
+    *pwMillivolt = FOC_DCBUS_NOMINAL_MILLIVOLT;
+    return FOC_RESULT_OK;
+#else
+    (void)pwMillivolt;
+    return FOC_RESULT_DISABLED;
+#endif
 }
 
 static inline void mdi_g431_foc_start_adc_trigger(void)
@@ -166,6 +208,9 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
 #define FOC_PORT_SAMPLE_CURRENT(P) mdi_g431_foc_sample_current(P)
 #undef FOC_PORT_SET_DUTY
 #define FOC_PORT_SET_DUTY(P) mdi_g431_foc_set_duty(P)
+#undef FOC_PORT_SAMPLE_DCBUS_MILLIVOLT
+#define FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(P) \
+    mdi_g431_foc_sample_dcbus_millivolt(P)
 #undef FOC_PORT_START_ADC_TRIGGER
 #define FOC_PORT_START_ADC_TRIGGER() mdi_g431_foc_start_adc_trigger()
 #undef FOC_PORT_PWM_ENABLE
