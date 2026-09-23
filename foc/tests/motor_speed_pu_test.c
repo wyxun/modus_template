@@ -98,22 +98,35 @@ static uint8_t s_chPositionContext = 0U;
 int main(void)
 {
     motor_t tMotor = {0};
+    motor_position_t tPosition = {0};
     motor_cfg_t tConfig = {0};
+    motor_position_cfg_t tPositionCfg = {0};
+    motor_position_sample_t tSample = {0};
+    motor_electrical_feedback_t tFeedback = {0};
     foc_result_t eResult = FOC_RESULT_OK;
 
     tConfig.tParams.chPolePairs = 7U;
     tConfig.tParams.wResistanceMilliohm = 500U;
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
     tConfig.tParams.wInductanceQMicroHenry = 1000U;
+    tConfig.tParams.wVoltageBaseMillivolt = 12000U;
     tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tConfig.nHardDragElectricalMilliHz = 5000;
+    tConfig.wControlFrequencyHz = 20000U;
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.tPosition.fnGetPosition = test_GetPosition;
-    tConfig.tPosition.pContext = &s_chPositionContext;
-    tConfig.chSpeedLoopDiv = 1U;
-    tConfig.wAdcCalibrationTimeoutSteps = 2U;
-    tConfig.wAlignSteps = 1U;
+    tPositionCfg.tSensor.fnGetPosition = test_GetPosition;
+    tPositionCfg.tSensor.pContext = &s_chPositionContext;
+    tPositionCfg.chPolePairs = 7U;
+    tPositionCfg.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tPositionCfg.tObserverCfg.tSmo.wSampleFrequencyHz = 20000U;
+    tPositionCfg.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
+    tPositionCfg.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
+    tPositionCfg.tObserverCfg.tSmo.qCurrentEstimateLimit = FOC_ONE;
+    tConfig.wSpeedLoopFrequencyHz = 20000U;
+    tConfig.fAdcCalibrationTimeoutSeconds = 0.0001f;
+    tConfig.fAlignTimeSeconds = 0.00005f;
     tConfig.qAlignCurrent = FOC_SCALAR(0.1f);
     eResult = foc_gain_from_float(1.0f,
         &tConfig.tSpeedPiParams.tKp);
@@ -132,21 +145,37 @@ int main(void)
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 0U);
+    tPositionCfg.ptMotorParams = &tMotor.tParams;
+    assert(motor_position_Init(&tPosition, &tPositionCfg) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
     eResult = motor_Start(&tMotor, FOC_MODE_SPEED);
     assert(eResult == FOC_RESULT_OK);
 
     s_qMechanicalSpeed = FOC_SCALAR(10.0f);
     eResult = motor_SetSpeedReference(&tMotor, FOC_SCALAR(0.8f));
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 1U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(tSample.tHardDragCandidate.bValid);
+    assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 == 0U);
+    test_AssertNear(tSample.tHardDragCandidate.qElectricalSpeedPu, 0.05f);
+    assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
+           FOC_RESULT_OK);
+    motor_IsrControlStep(&tMotor, &tFeedback);
     test_AssertNear(s_tLastInput.qElectricalSpeedPu, 0.7f);
     test_AssertNear(s_tLastCommand.tCurrentReference.qQ, 0.1f);
 
     s_qMechanicalSpeed = FOC_SCALAR(-10.0f);
     eResult = motor_SetSpeedReference(&tMotor, FOC_SCALAR(-0.8f));
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 2U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 ==
+           tMotor.wHardDragAngleStepBam32);
+    assert(FOC_POSITION_GET(&tPosition, 2U, &tSample, &tFeedback) ==
+           FOC_RESULT_OK);
+    motor_IsrControlStep(&tMotor, &tFeedback);
     test_AssertNear(s_tLastInput.qElectricalSpeedPu, -0.7f);
     test_AssertNear(s_tLastCommand.tCurrentReference.qQ, -0.1f);
 
@@ -156,6 +185,28 @@ int main(void)
     eResult = motor_SetSpeedReference(&tMotor, (foc_scalar_t)NAN);
     assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
 #endif
+    motor_Stop(&tMotor);
+    assert(motor_Start(&tMotor, FOC_MODE_CURRENT) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 == 0U);
+    motor_IsrControlStep(&tMotor, &tFeedback);
+    motor_Stop(&tMotor);
+
+    tConfig.nHardDragElectricalMilliHz = -5000;
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
+    assert(motor_Start(&tMotor, FOC_MODE_CURRENT) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    test_AssertNear(tSample.tHardDragCandidate.qElectricalSpeedPu, -0.05f);
+    motor_IsrControlStep(&tMotor, &tFeedback);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 ==
+           tMotor.wHardDragAngleStepBam32);
+    motor_IsrControlStep(&tMotor, &tFeedback);
     motor_Stop(&tMotor);
     return 0;
 }

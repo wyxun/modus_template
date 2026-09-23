@@ -16,6 +16,7 @@
 #include "mdi/core/stream.h"
 #include "mdi/core/tick.h"
 #include "mdi/core/timer.h"
+#include "mdi/feature/uart_stream.h"
 
 #ifndef PT32_CORE_CLOCK_HZ
 #define PT32_CORE_CLOCK_HZ 80000000U
@@ -45,8 +46,13 @@ typedef struct {
     volatile uint32_t JDR1;
     volatile uint32_t JDR2;
     volatile uint32_t JDR3;
+    volatile uint32_t INJ_CONTROL;
     volatile uint32_t RATE_HZ;
+    volatile uintptr_t DMA_DEST;
+    volatile uint32_t DMA_LENGTH;
 } pt32_adc_t;
+
+#define PT32_ADC_PHASE_READY UINT32_C(1)
 
 typedef struct {
     volatile uint32_t CONTROL;
@@ -63,12 +69,65 @@ typedef struct {
 } pt32_fault_t;
 
 typedef struct {
-    uint8_t achData[64];
-    uint32_t wRead;
-    uint32_t wWrite;
-    uint32_t wCount;
-    bool bBusy;
-} pt32_stream_state_t;
+    volatile uint32_t ISR;
+    volatile uint32_t CR1;
+    volatile uint32_t RDR;
+    volatile uint32_t TDR;
+    volatile uint32_t ICR;
+} pt32_uart_t;
+
+#define PT32_UART_ISR_RX_READY UINT32_C(1)
+#define PT32_UART_ISR_TX_DONE  UINT32_C(2)
+#define PT32_UART_CR1_RX_IRQ  UINT32_C(1)
+#define PT32_UART_CR1_TX_IRQ  UINT32_C(2)
+
+MDI_INLINE bool pt32_uart_RxReady(pt32_uart_t *ptUart)
+{
+    return (ptUart->ISR & PT32_UART_ISR_RX_READY) != 0U;
+}
+
+MDI_INLINE uint8_t pt32_uart_RxRead(pt32_uart_t *ptUart)
+{
+    ptUart->ISR &= ~PT32_UART_ISR_RX_READY;
+    return (uint8_t)ptUart->RDR;
+}
+
+MDI_INLINE bool pt32_uart_TxComplete(pt32_uart_t *ptUart)
+{
+    return (ptUart->ISR & PT32_UART_ISR_TX_DONE) != 0U;
+}
+
+MDI_INLINE void pt32_uart_TxWrite(pt32_uart_t *ptUart, uint8_t chData)
+{
+    ptUart->TDR = chData;
+}
+
+MDI_INLINE void pt32_uart_TxClear(pt32_uart_t *ptUart)
+{
+    ptUart->ICR = PT32_UART_ISR_TX_DONE;
+    ptUart->ISR &= ~PT32_UART_ISR_TX_DONE;
+}
+
+MDI_INLINE void pt32_uart_TxIrqEnable(pt32_uart_t *ptUart)
+{
+    ptUart->CR1 |= PT32_UART_CR1_TX_IRQ;
+}
+
+MDI_INLINE void pt32_uart_TxIrqDisable(pt32_uart_t *ptUart)
+{
+    ptUart->CR1 &= ~PT32_UART_CR1_TX_IRQ;
+}
+
+#ifndef PT32_UART1_BASE
+#define PT32_UART1_BASE UINT32_C(0x40050000)
+#endif
+#define PT32_UART1 ((pt32_uart_t *)(uintptr_t)PT32_UART1_BASE)
+
+#define PT32_UART_STREAM_BIND(NAME, STATE, UART)                                \
+    MDI_UART_STREAM_BIND(                                                        \
+        NAME, STATE, UART, pt32_uart_RxReady, pt32_uart_RxRead,                  \
+        pt32_uart_TxComplete, pt32_uart_TxWrite, pt32_uart_TxClear,              \
+        pt32_uart_TxIrqEnable, pt32_uart_TxIrqDisable)
 
 extern volatile mdi_tick_t g_qwPt32RawTick;
 
@@ -266,88 +325,6 @@ typedef struct {
     MDI_INLINE mdi_tick_t MDI_OP(NAME, _tick_Now)(void)                    \
     {                                                                       \
         return (mdi_tick_t)(NOW_FN)();                                     \
-    }
-
-#define PT32_STREAM_CAPACITY 64U
-
-MDI_INLINE int32_t pt32_stream_Write(pt32_stream_state_t *ptState,
-                                     const uint8_t *pchData, uint32_t wLength)
-{
-    uint32_t wIndex;
-    uint32_t wWritable;
-
-    if (ptState == NULL || (wLength != 0U && pchData == NULL)) {
-        return -1;
-    }
-    wWritable = PT32_STREAM_CAPACITY - ptState->wCount;
-    if (wLength < wWritable) {
-        wWritable = wLength;
-    }
-    for (wIndex = 0U; wIndex < wWritable; ++wIndex) {
-        ptState->achData[ptState->wWrite] = pchData[wIndex];
-        ptState->wWrite = (ptState->wWrite + 1U) % PT32_STREAM_CAPACITY;
-    }
-    ptState->wCount += wWritable;
-    ptState->bBusy = wWritable != 0U;
-    return (int32_t)wWritable;
-}
-
-MDI_INLINE int32_t pt32_stream_Read(pt32_stream_state_t *ptState,
-                                    uint8_t *pchData, uint32_t wLength)
-{
-    uint32_t wIndex;
-    uint32_t wReadable;
-
-    if (ptState == NULL || (wLength != 0U && pchData == NULL)) {
-        return -1;
-    }
-    wReadable = ptState->wCount;
-    if (wLength < wReadable) {
-        wReadable = wLength;
-    }
-    for (wIndex = 0U; wIndex < wReadable; ++wIndex) {
-        pchData[wIndex] = ptState->achData[ptState->wRead];
-        ptState->wRead = (ptState->wRead + 1U) % PT32_STREAM_CAPACITY;
-    }
-    ptState->wCount -= wReadable;
-    return (int32_t)wReadable;
-}
-
-MDI_INLINE uint32_t pt32_stream_Available(const pt32_stream_state_t *ptState)
-{
-    return ptState == NULL ? 0U : ptState->wCount;
-}
-
-MDI_INLINE bool pt32_stream_IsBusy(const pt32_stream_state_t *ptState)
-{
-    return ptState != NULL && ptState->bBusy;
-}
-
-MDI_INLINE void pt32_stream_Clock(pt32_stream_state_t *ptState)
-{
-    if (ptState != NULL) {
-        ptState->bBusy = false;
-    }
-}
-
-#define MDI_PT32_STREAM_BIND(NAME, STATE)                                  \
-    MDI_INLINE int32_t MDI_OP(NAME, _stream_Write)(                         \
-        const uint8_t *pchData, uint32_t wLength)                           \
-    {                                                                        \
-        return pt32_stream_Write(&(STATE), pchData, wLength);               \
-    }                                                                        \
-    MDI_INLINE int32_t MDI_OP(NAME, _stream_Read)(                          \
-        uint8_t *pchData, uint32_t wLength)                                 \
-    {                                                                        \
-        return pt32_stream_Read(&(STATE), pchData, wLength);                \
-    }                                                                        \
-    MDI_INLINE uint32_t MDI_OP(NAME, _stream_Available)(void)                \
-    {                                                                        \
-        return pt32_stream_Available(&(STATE));                             \
-    }                                                                        \
-    MDI_INLINE bool MDI_OP(NAME, _stream_IsBusy)(void)                      \
-    {                                                                        \
-        return pt32_stream_IsBusy(&(STATE));                                \
     }
 
 /* A compact reference PWM timing provider. Replace the divider algorithm with

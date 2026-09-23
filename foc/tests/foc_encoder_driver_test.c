@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include "foc_encoder.h"
+#include "motor_position.h"
 
 typedef struct {
     uint32_t wInitCount;
@@ -60,7 +61,7 @@ int main(void)
     test_sensor_t tSensor = {0U, 0U, 4090U};
     foc_encoder_cfg_t tConfig = {
         .qSpeedFilterAlpha = FOC_SCALAR(0.25f),
-        .wInvalidTimeoutUs = 5000U,
+        .fInvalidTimeoutSeconds = 0.005f,
         .bDirectionInvert = false,
         .ptSensor = &(const foc_encoder_sensor_if_t){
             .ptOps = &s_tSensorOps,

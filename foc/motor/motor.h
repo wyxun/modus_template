@@ -13,8 +13,6 @@
 
 #include "foc_config.h"
 #include "foc_core.h"
-#include "foc_observer.h"
-#include "foc_position.h"
 #include "foc_port.h"
 #include "motor_position.h"
 
@@ -39,19 +37,28 @@ typedef struct {
 } motor_limits_t;
 
 typedef struct {
+    uint32_t wOffsetU;
+    uint32_t wOffsetV;
+    uint32_t wOffsetW;
+    uint64_t ullSumU;
+    uint64_t ullSumV;
+    uint64_t ullSumW;
+    uint16_t hwSampleCount;
+    bool bIsCalibrated;
+} motor_adc_calib_t;
+
+typedef struct {
     motor_params_t tParams;
     motor_limits_t tLimits;
     foc_pid_params_t tCurrentPiParams;
     foc_pid_params_t tSpeedPiParams;
-    uint32_t wAdcCalibrationTimeoutSteps;
-    uint32_t wAlignSteps;
-    uint8_t chSpeedLoopDiv;
+    float fAdcCalibrationTimeoutSeconds; /**< Configured in seconds. */
+    float fAlignTimeSeconds;             /**< Configured in seconds. */
+    uint32_t wSpeedLoopFrequencyHz;      /**< Configured in hertz. */
     foc_scalar_t qAlignCurrent;
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
-    motor_position_if_t tPosition;
-#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    foc_observer_cfg_t tObserverCfg;
-#endif
+    int32_t nHardDragElectricalMilliHz; /**< Zero disables the candidate. */
+    uint32_t wControlFrequencyHz;         /**< High-frequency ISR rate. */
 } motor_cfg_t;
 
 typedef enum {
@@ -83,22 +90,14 @@ typedef struct {
     uint8_t chSpeedLoopDiv;
     foc_core_state_t tCore;
     foc_pid_t tSpeedPi;
-    foc_scalar_t qMechanicalToElectricalSpeedPuGain;
-    foc_adc_calib_t tCalib;
+    motor_adc_calib_t tCalib;
     uint32_t wCurrentBaseMilliamp;
     foc_core_command_t tCommand;
     foc_core_input_t tInput;
-#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    foc_observer_t tObserver;
-#endif
-#if !defined(FOC_POSITION_STATIC_BINDING)
-    /* Runtime-selected FOC builds retain the generic dispatch object. */
-    motor_position_provider_t tPosition;
-#endif
-    /* Static targets retain only provider state in the hot object; hardware
-     * operations are selected at compile time. */
-    const void *pPositionState;
-    foc_angle_t tElectricalZero;
+    uint32_t wRunGeneration;
+    uint32_t wHardDragAngleStepBam32;
+    foc_angle_t tHardDragAngle;
+    foc_scalar_t qHardDragSpeedPu;
     uint32_t wCalibrationSteps;
     uint32_t wAlignStepCount;
     uint8_t chSpeedLoopCount;
@@ -106,8 +105,15 @@ typedef struct {
     uint32_t wFaults;
     bool bPwmEnabled;
     bool bElectricalZeroValid;
-    foc_current_abc_t tCurrentAbc;
+    bool bControlPrepared;
+    bool bAlignCapturePending;
 } motor_t;
+
+typedef enum {
+    MOTOR_ISR_NO_CONTROL = 0,
+    MOTOR_ISR_CONTROL_READY,
+    MOTOR_ISR_CAPTURE_ZERO,
+} motor_isr_phase_t;
 
 typedef struct {
     motor_state_e eState;
@@ -217,12 +223,20 @@ foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
 foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor);
 
 /**
- * @brief Execute one deterministic Motor Driver ISR step.
+ * @brief Sample one ISR period before App obtains electrical feedback.
  * @param ptMotor Motor object.
- * @param wNowTick Low 32 bits of the current system tick.
- * @return None.
+ * @param ptSample Current and prior voltage snapshot for position sources.
+ * @return Whether App must supply feedback or complete alignment.
  */
-void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick);
+motor_isr_phase_t motor_IsrPrepare(motor_t *ptMotor,
+                                   motor_position_sample_t *ptSample);
+
+/** @brief Run Core once with the final electrical feedback. */
+void motor_IsrControlStep(
+    motor_t *ptMotor, const motor_electrical_feedback_t *ptFeedback);
+
+/** @brief Finish an ALIGN capture requested by motor_IsrPrepare. */
+void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture);
 
 /**
  * @brief Copy a safe status snapshot.

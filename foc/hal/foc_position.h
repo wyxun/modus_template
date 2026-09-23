@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    foc_position.h
- * @brief   Mechanical position value published by the encoder backend.
+ * @brief   Mechanical position snapshot shared by sensor backends.
  * @author  Codex
  * @date    2026-09-11
  ****************************************************************************/
@@ -12,10 +12,11 @@
 
 #include "foc_angle.h"
 
+/** @brief Position sample in mechanical coordinates. */
 typedef struct {
-    foc_angle_t tMechanicalAngle;
-    foc_scalar_t qMechanicalSpeed;
-    bool bValid;
+    foc_angle_t tMechanicalAngle;       /**< BAM32 mechanical angle. */
+    foc_scalar_t qMechanicalSpeed;      /**< Signed mechanical turns/second. */
+    bool bValid;                        /**< Sample is current and usable. */
 } foc_position_t;
 
 #endif /* FOC_POSITION_H */

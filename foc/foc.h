@@ -1,7 +1,8 @@
 /****************************************************************************
  * @file    foc.h
- * @brief   极简 FOC 顶层统一 include
- *          用户只需 #include "foc/foc.h" 即可使用极简单电机 FOC 核心
+ * @brief   FOC algorithms and Motor public API umbrella.
+ * @note    MODUS composition is application-specific; include foc_app.h
+ *          separately when the application uses foc_app_t.
  ****************************************************************************/
 
 #ifndef __FOC_H__
@@ -18,7 +19,5 @@
 #include "observer/foc_observer.h"
 #include "identify/identify.h"
 #include "motor/motor.h"
-
-#include "app/foc_app.h"
 
 #endif /* __FOC_H__ */

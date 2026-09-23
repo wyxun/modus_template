@@ -22,7 +22,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
         "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1", "-DFOC_TRIG_BACKEND=1",
-        "-DFOC_HF_PROFILE=0", "-DFOC_NUMERIC_$backend=1"
+        "-DFOC_NUMERIC_$backend=1"
     ) + $includeArgs + $sourceFiles + @("-lm", "-o", $testExe)
     & gcc @compileArgs
     if ($LASTEXITCODE -ne 0) {

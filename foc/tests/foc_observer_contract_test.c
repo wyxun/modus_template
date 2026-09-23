@@ -27,7 +27,7 @@ int main(void)
     };
     const foc_observer_cfg_t tConfig = {
         .tSmo = {
-            .wSamplePeriodNanoseconds = 50000U,
+            .wSampleFrequencyHz = 20000U,
             .wBemfCutoffRadiansPerSecond = 10000U,
             .wSlidingGainMillivolt = 3500U,
             .qCurrentEstimateLimit = FOC_ONE,

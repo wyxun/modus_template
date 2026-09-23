@@ -12,18 +12,6 @@
 static bool s_bBreakFault = false;
 static bool s_bClearOk = true;
 
-static foc_result_t test_GetPosition(const void *pContext,
-                                     uint32_t wNowTick,
-                                     foc_position_t *ptPosition)
-{
-    (void)pContext;
-    (void)wNowTick;
-    ptPosition->tMechanicalAngle = (foc_angle_t){0U};
-    ptPosition->qMechanicalSpeed = FOC_ZERO;
-    ptPosition->bValid = true;
-    return FOC_RESULT_OK;
-}
-
 foc_result_t foc_core_step(foc_core_state_t *ptState,
                            const foc_core_command_t *ptCommand,
                            const foc_core_input_t *ptInput)
@@ -65,7 +53,6 @@ foc_result_t foc_PwmClearFault(void)
     return FOC_RESULT_OK;
 }
 
-static uint8_t s_chPositionContext = 0U;
 
 /**
  * @brief Verify break fault latches, blocks start, and clears.
@@ -78,6 +65,7 @@ int main(void)
     motor_status_t tStatus = {0};
     foc_result_t eResult = FOC_RESULT_OK;
 
+    tConfig.wControlFrequencyHz = 20000U;
     tConfig.tParams.chPolePairs = 7U;
     tConfig.tParams.wResistanceMilliohm = 500U;
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
@@ -86,11 +74,9 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.tPosition.fnGetPosition = test_GetPosition;
-    tConfig.tPosition.pContext = &s_chPositionContext;
-    tConfig.chSpeedLoopDiv = 1U;
-    tConfig.wAdcCalibrationTimeoutSteps = 2U;
-    tConfig.wAlignSteps = 1U;
+    tConfig.wSpeedLoopFrequencyHz = 20000U;
+    tConfig.fAdcCalibrationTimeoutSeconds = 0.0001f;
+    tConfig.fAlignTimeSeconds = 0.00005f;
     tConfig.qAlignCurrent = FOC_SCALAR(0.1f);
     eResult = foc_gain_from_float(1.0f,
                                   &tConfig.tSpeedPiParams.tKp);
@@ -109,7 +95,7 @@ int main(void)
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 0U);
+    assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
 
     /* 1. Latched break blocks motor_Start. */
     s_bBreakFault = true;

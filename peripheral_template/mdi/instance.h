@@ -18,8 +18,11 @@
  * the service is scheduled from the board-owned raw tick provider. */
 MDI_PT32_TIMER_BIND(adc_service_timer, PT32_TIMER3, PT32_CORE_CLOCK_HZ)
 MDI_PT32_TICK_BIND(pt32_raw_tick, pt32_GetSystemTicks)
-extern pt32_stream_state_t g_tPt32Stream;
-MDI_PT32_STREAM_BIND(board_stream, g_tPt32Stream)
+#define PT32_STREAM_CAPACITY 64U
+extern mdi_uart_stream_state_t g_tPt32Stream;
+extern uint8_t g_achPt32StreamTx[PT32_STREAM_CAPACITY];
+extern uint8_t g_achPt32StreamRx[PT32_STREAM_CAPACITY];
+PT32_UART_STREAM_BIND(board_stream, g_tPt32Stream, PT32_UART1)
 
 /* GPIO resources. Each physical port occurs once in a resource binding. */
 #define PT32_LED_PINS(X, V, ...) X(V, 0, 5, 0)
@@ -75,16 +78,16 @@ MDI_I2C_REG8_BIND(encoder_angle_hw, encoder_i2c_hw, 0x36U)
 #ifndef PT32_ADC_SAMPLE_COUNT
 #define PT32_ADC_SAMPLE_COUNT 8U
 #endif
-#define PT32_ADC_CHANNEL_COUNT 5U
+#define PT32_ADC_CHANNEL_COUNT 3U
+#define PT32_ADC_DMA_SLOT_COUNT 2U
 #define PT32_ADC_BLOCK_SIZE (PT32_ADC_SAMPLE_COUNT * PT32_ADC_CHANNEL_COUNT)
 #define PT32_ADC_CHANNELS(X, ...)                                                \
-    X(__VA_ARGS__, phase_u, 0)                                                   \
-    X(__VA_ARGS__, phase_v, 1)                                                   \
-    X(__VA_ARGS__, bus_voltage, 2)                                               \
-    X(__VA_ARGS__, bus_current, 3)                                               \
-    X(__VA_ARGS__, temperature, 4)
+    X(__VA_ARGS__, bus_voltage, 0)                                               \
+    X(__VA_ARGS__, bus_current, 1)                                               \
+    X(__VA_ARGS__, temperature, 2)
 
-extern volatile uint16_t g_awPt32AdcDma[PT32_ADC_BLOCK_SIZE * 2U];
+extern volatile uint16_t
+    g_awPt32AdcDma[PT32_ADC_BLOCK_SIZE * PT32_ADC_DMA_SLOT_COUNT];
 extern volatile uint32_t g_awPt32AdcMean[PT32_ADC_CHANNEL_COUNT];
 extern volatile uint32_t g_wPt32AdcMeanSequence;
 extern volatile bool g_bPt32AdcMeanValid;
@@ -92,49 +95,57 @@ extern volatile uint32_t g_wPt32AdcPublished;
 extern volatile uint32_t g_wPt32AdcConsumed;
 extern volatile mdi_status_t g_ePt32AdcStatus;
 
-MDI_ADC_DMA_FLAG_BIND(adc1_dma, g_wPt32AdcPublished, g_wPt32AdcConsumed, 2U)
+MDI_ADC_DMA_FLAG_BIND(adc1_dma, g_wPt32AdcPublished,
+                      g_wPt32AdcConsumed, PT32_ADC_DMA_SLOT_COUNT)
 MDI_ADC_MEAN_GROUP_BIND(adc1_mean, adc1_dma, g_awPt32AdcDma,
                         PT32_ADC_SAMPLE_COUNT, PT32_ADC_CHANNEL_COUNT,
                         PT32_ADC_CHANNELS, g_awPt32AdcMean,
                         g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid,
                         PT32_ADC1->RATE_HZ, PT32_CORE_CLOCK_HZ)
 
+/** @brief Bind the next mock DMA slot and start one regular ADC block. */
 MDI_INLINE mdi_status_t pt32_adc1_start(void)
 {
-    PT32_ADC1->CONTROL |= UINT32_C(1);
+    uint32_t wSlot;
+
+    if (PT32_ADC1->CONTROL != 0U) {
+        return MDI_BUSY;
+    }
+    wSlot = MDI_ADC_DMA_Published(adc1_dma) % PT32_ADC_DMA_SLOT_COUNT;
+    PT32_ADC1->DMA_DEST = (uintptr_t)&g_awPt32AdcDma[
+        wSlot * PT32_ADC_BLOCK_SIZE];
+    PT32_ADC1->DMA_LENGTH = PT32_ADC_BLOCK_SIZE;
+    PT32_ADC1->CONTROL = UINT32_C(1);
     return MDI_OK;
 }
 
 MDI_ADC_TRIGGER_FN_BIND(adc1_mean, pt32_adc1_start)
 
-MDI_ADC_CHANNEL_VIEW_BIND(phase_u, g_awPt32AdcMean[0], 0xFFFFU, 0,
+MDI_ADC_CHANNEL_VIEW_BIND(bus_voltage, g_awPt32AdcMean[0], 0xFFFFU, 0,
                           g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
-MDI_ADC_CHANNEL_VIEW_BIND(phase_v, g_awPt32AdcMean[1], 0xFFFFU, 0,
+MDI_ADC_CHANNEL_VIEW_BIND(bus_current, g_awPt32AdcMean[1], 0xFFFFU, 0,
                           g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
-MDI_ADC_CHANNEL_VIEW_BIND(bus_voltage, g_awPt32AdcMean[2], 0xFFFFU, 0,
-                          g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
-MDI_ADC_CHANNEL_VIEW_BIND(bus_current, g_awPt32AdcMean[3], 0xFFFFU, 0,
-                          g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
-MDI_ADC_CHANNEL_VIEW_BIND(temperature, g_awPt32AdcMean[4], 0xFFFFU, 0,
+MDI_ADC_CHANNEL_VIEW_BIND(temperature, g_awPt32AdcMean[2], 0xFFFFU, 0,
                           g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
 
-/* The full mixed frame is available when consumers need coherent values. */
+/* The regular DMA frame is independent of the injected FOC phase frame. */
 #define PT32_ADC_FRAME_CHANNELS(X)                                               \
-    X(phase_u, g_awPt32AdcMean[0], 0xFFFFU, 0)                                   \
-    X(phase_v, g_awPt32AdcMean[1], 0xFFFFU, 0)                                   \
-    X(bus_voltage, g_awPt32AdcMean[2], 0xFFFFU, 0)                               \
-    X(bus_current, g_awPt32AdcMean[3], 0xFFFFU, 0)                               \
-    X(temperature, g_awPt32AdcMean[4], 0xFFFFU, 0)
+    X(bus_voltage, g_awPt32AdcMean[0], 0xFFFFU, 0)                               \
+    X(bus_current, g_awPt32AdcMean[1], 0xFFFFU, 0)                               \
+    X(temperature, g_awPt32AdcMean[2], 0xFFFFU, 0)
 MDI_SAMPLE_SEQ_BIND(adc1_snapshot, PT32_ADC_FRAME_CHANNELS,
                     g_wPt32AdcMeanSequence)
 
-/* FOC gets a coherent three-phase view over the same ADC group. */
+/* FOC reads one completed injected conversion frame at the control ISR. */
 #define PT32_PHASE_CHANNELS(X)                                                   \
-    X(u, g_awPt32AdcMean[0], 0xFFFFU, 0)                                         \
-    X(v, g_awPt32AdcMean[1], 0xFFFFU, 0)                                         \
-    X(w, g_awPt32AdcMean[2], 0xFFFFU, 0)
-MDI_SAMPLE_SEQ_BIND(phase_current, PT32_PHASE_CHANNELS,
-                    g_wPt32AdcMeanSequence)
+    X(u, PT32_ADC1->JDR1, 0xFFFFU, 0)                                           \
+    X(v, PT32_ADC1->JDR2, 0xFFFFU, 0)                                           \
+    X(w, PT32_ADC1->JDR3, 0xFFFFU, 0)
+#define PT32_PHASE_READY (PT32_ADC1->ISR & PT32_ADC_PHASE_READY)
+#define PT32_PHASE_CLEAR \
+    (PT32_ADC1->ISR &= ~PT32_ADC_PHASE_READY)
+MDI_SAMPLE_READY_BIND(phase_current, PT32_PHASE_CHANNELS,
+                      PT32_PHASE_READY, PT32_PHASE_CLEAR)
 
 /* Center-aligned three-phase PWM and a single-channel variable-frequency PWM. */
 #define PT32_BRIDGE_CHANNELS(X)                                                  \
@@ -150,8 +161,6 @@ MDI_PT32_PWM_FAULT_BIND(bridge, PT32_TIMER1, UINT32_C(1), PT32_FAULT)
 MDI_PWM_REG_BIND(buzzer, PT32_BUZZER_CHANNELS)
 MDI_PT32_PWM_TIMING_BIND(buzzer, PT32_TIMER2, 80000000U, PT32_BUZZER_CHANNELS)
 MDI_PT32_PWM_LIFECYCLE_BIND(buzzer, PT32_TIMER2, UINT32_C(1))
-
-MDI_FOC_BIND(template_foc_cycle, phase_current, bridge)
 
 /* SPI EEPROM: the CS pin is a normal MDI IO resource. */
 #define PT32_EEPROM_CS_PINS(X, V, ...) X(V, 0, 4, 0)

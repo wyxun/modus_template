@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    foc_observer.h
- * @brief   Motor-owned observer facade for the configured estimator.
+ * @brief   Position-owned observer facade for the configured estimator.
  ****************************************************************************/
 
 #ifndef FOC_OBSERVER_H
@@ -32,8 +32,8 @@ typedef struct {
 } foc_observer_t;
 
 /**
- * @brief Initialize the configured estimator owned by Motor.
- * @param ptObserver Motor-owned Observer object.
+ * @brief Initialize the configured estimator owned by Position.
+ * @param ptObserver Position-owned Observer object.
  * @param ptMotorParams Motor parameters shared with Motor.
  * @param ptConfig Algorithm configuration.
  * @return FOC_RESULT_OK or an initialization error.
@@ -45,7 +45,7 @@ foc_result_t foc_observer_Init(
 
 /**
  * @brief Run one observer sample and publish the common output.
- * @param ptObserver Motor-owned Observer object.
+ * @param ptObserver Position-owned Observer object.
  * @param ptInput Common current, voltage, and optional bus input.
  * @return FOC_RESULT_OK or an observer input error.
  */

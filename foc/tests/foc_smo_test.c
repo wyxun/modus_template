@@ -42,7 +42,7 @@ static void test_BuildConfig(motor_params_t *ptMotorParams,
         .wCurrentBaseMilliamp = 7000U,
     };
     *ptConfig = (foc_smo_cfg_t){
-        .wSamplePeriodNanoseconds = 50000U,
+        .wSampleFrequencyHz = 20000U,
         .wBemfCutoffRadiansPerSecond = 10000U,
         .wSlidingGainMillivolt = 3500U,
         .qCurrentEstimateLimit = FOC_ONE,

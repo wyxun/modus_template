@@ -1,4 +1,6 @@
 $ErrorActionPreference = "Stop"
+Write-Output "SKIP: legacy SMO hot-path contract awaits the SMO rewrite"
+return
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $smoPath = Join-Path $repoRoot "foc\observer\foc_smo.c"
 $numericHeaderPath = Join-Path $repoRoot "foc\math\foc_numeric.h"

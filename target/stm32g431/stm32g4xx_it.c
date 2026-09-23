@@ -2,25 +2,23 @@
  * @file   stm32g4xx_it.c
  * @brief  Interrupt handlers (STM32G431)
  *
- * SysTick_Handler → perf_counter + modus + peripheral 1ms clock.
+ * SysTick_Handler → perf_counter + MODUS/MDI 1 ms clock.
  * ADC1_2 → foc_app_HighFrequencyISR (FOC 20 kHz control step, TIM1 CH4 trigger).
  * USART / FDCAN / TIM1 break handlers active; other peripherals are stubs.
  */
 
 #include "stm32g4xx_hal.h"
 #include "perf_counter.h"
-#include "halusart.h"
 #include "halfdcan.h"
 #include "mdebug_cm.h"
 #include "foc_app.h"
-#include "foc_port.h"
-#include "foc_port_config.h"
 #include "haltim1.h"
+#include "mdi/instance.h"
+#include "mdi/service.h"
 #include <math.h>
 
 /* Exported by main.c */
 extern void modus_Clock(void);
-extern void peripheral_Clock(void);
 
 /* --------------------------------------------------------------------------
  *  Cortex-M4 Core Exceptions
@@ -43,7 +41,6 @@ void SysTick_Handler(void)
 #if MODUS_ENABLE
     modus_Clock();
 #endif
-    peripheral_Clock();
 }
 
 /* --------------------------------------------------------------------------
@@ -51,9 +48,9 @@ void SysTick_Handler(void)
  * -------------------------------------------------------------------------- */
 
 /* ---- USART ---- */
-void USART1_IRQHandler(void)        { HAL_UART_IRQHandler(&huart1); }
-void USART2_IRQHandler(void)        { HAL_UART_IRQHandler(&huart2); }
-void USART3_IRQHandler(void)        { HAL_UART_IRQHandler(&huart3); }
+void USART1_IRQHandler(void)        {}
+void USART2_IRQHandler(void)        { MDI_UART_STREAM_IRQ(board_stream); }
+void USART3_IRQHandler(void)        {}
 
 /* ---- FDCAN ---- */
 void FDCAN1_IT0_IRQHandler(void)    { HAL_FDCAN_IRQHandler(&hfdcan1); }
@@ -63,7 +60,7 @@ void FDCAN1_IT1_IRQHandler(void)    { HAL_FDCAN_IRQHandler(&hfdcan1); }
 void TIM1_BRK_TIM15_IRQHandler(void)
 {
     /* 先锁存软件故障，再清硬件标志，避免前台读到被清空的 BIF */
-    foc_port_NotifyBreak();
+    mdi_g431_fault_notify_break();
     (void)haltim1_ClearBreakFault();
 }
 
@@ -110,7 +107,10 @@ void EXTI1_IRQHandler(void)                 {}
 void EXTI2_IRQHandler(void)                 {}
 void EXTI3_IRQHandler(void)                 {}
 void EXTI4_IRQHandler(void)                 {}
-void DMA1_Channel1_IRQHandler(void)         {}
+void DMA1_Channel1_IRQHandler(void)
+{
+    mdi_g431_adc_dma_complete();
+}
 void DMA1_Channel2_IRQHandler(void)         {}
 void DMA1_Channel3_IRQHandler(void)         {}
 void DMA1_Channel4_IRQHandler(void)         {}

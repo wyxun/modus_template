@@ -24,8 +24,6 @@ extern "C" {
 #define HAL_PWR_MODULE_ENABLED
 #define HAL_DMA_MODULE_ENABLED
 #define HAL_FDCAN_MODULE_ENABLED
-#define HAL_UART_MODULE_ENABLED
-#define HAL_USART_MODULE_ENABLED
 #define HAL_ADC_MODULE_ENABLED
 #define HAL_COMP_MODULE_ENABLED
 #define HAL_DAC_MODULE_ENABLED
@@ -38,7 +36,6 @@ extern "C" {
 #define USE_HAL_COMP_REGISTER_CALLBACKS       0U
 #define USE_HAL_DMA_REGISTER_CALLBACKS        0U
 #define USE_HAL_GPIO_REGISTER_CALLBACKS       0U
-#define USE_HAL_UART_REGISTER_CALLBACKS       0U
 
 /* ------------------------------------------------------------------
  * Oscillator values
@@ -100,12 +97,6 @@ extern "C" {
 #endif
 #ifdef HAL_FDCAN_MODULE_ENABLED
 #include "stm32g4xx_hal_fdcan.h"
-#endif
-#ifdef HAL_UART_MODULE_ENABLED
-#include "stm32g4xx_hal_uart.h"
-#endif
-#ifdef HAL_USART_MODULE_ENABLED
-#include "stm32g4xx_hal_usart.h"
 #endif
 #ifdef HAL_ADC_MODULE_ENABLED
 #include "stm32g4xx_hal_adc.h"

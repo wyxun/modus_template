@@ -3,8 +3,8 @@
  * @brief G431 adapter from the generic MDI sample/PWM capabilities to FOC.
  * @author Codex
  * @date 2026-09-19
- * @note This file is a target adapter. It does not change the portable MDI
- *       contract or the standalone FOC hardware-port contract.
+ * @note This is a private implementation included only by the target
+ *       foc_port.h. FOC sources must not include this file directly.
  */
 #ifndef STM32G431_MDI_FOC_ADAPTER_H
 #define STM32G431_MDI_FOC_ADAPTER_H
@@ -17,10 +17,9 @@
 #include "foc/foc_types.h"
 #include "mdi/instance.h"
 #include "haltim1.h"
-#include "haladc.h"
 
 /** @brief Translate an MDI result to the independent FOC result domain. */
-static inline foc_result_t mdi_g431_foc_status(mdi_status_t eStatus)
+MDI_INLINE foc_result_t mdi_g431_foc_status(mdi_status_t eStatus)
 {
     switch (eStatus) {
     case MDI_OK:
@@ -39,7 +38,7 @@ static inline foc_result_t mdi_g431_foc_status(mdi_status_t eStatus)
 }
 
 /** @brief Read one completed, coherent three-phase current frame. */
-static inline foc_result_t mdi_g431_foc_sample_current(
+MDI_INLINE foc_result_t mdi_g431_foc_sample_current(
     foc_current_sample_t *ptSample)
 {
     MDI_Sample_Frame(phase_current_completed) tFrame = {0};
@@ -59,9 +58,13 @@ static inline foc_result_t mdi_g431_foc_sample_current(
 }
 
 /** @brief Convert the FOC normalized duty to the MDI Q16 duty unit. */
-static inline uint32_t mdi_g431_foc_duty_q16(foc_scalar_t qDuty)
+MDI_INLINE uint32_t mdi_g431_foc_duty_q16(foc_scalar_t qDuty)
 {
-    qDuty = foc_sat(qDuty, FOC_ZERO, FOC_ONE);
+    if (qDuty < FOC_ZERO) {
+        qDuty = FOC_ZERO;
+    } else if (qDuty > FOC_ONE) {
+        qDuty = FOC_ONE;
+    }
 #if defined(FOC_NUMERIC_FIXED)
     return (uint32_t)(((int64_t)qDuty * 65536LL +
                        (FOC_Q_SCALE / 2)) / FOC_Q_SCALE);
@@ -71,7 +74,7 @@ static inline uint32_t mdi_g431_foc_duty_q16(foc_scalar_t qDuty)
 }
 
 /** @brief Submit one complete normalized three-phase duty frame. */
-static inline foc_result_t mdi_g431_foc_set_duty(
+MDI_INLINE foc_result_t mdi_g431_foc_set_duty(
     const foc_duty_abc_t *ptDuty)
 {
     MDI_PWM_DutyFrame(bridge) tDuty;
@@ -91,42 +94,23 @@ static inline foc_result_t mdi_g431_foc_set_duty(
 }
 
 /**
- * @brief Read the completed, synchronized DC-bus sample.
- * @param pwMillivolt Output DC-bus voltage in millivolts.
- * @return FOC_RESULT_OK, FOC_RESULT_NULL, or FOC_RESULT_DISABLED.
- * @note The bus sample is ADC1 injected rank 2 and is completed with the
- *       current frame; the regular ADC path is not used from the ISR.
+ * @brief Read the published mean DC-bus ADC count.
+ * @param eChannel Logical FOC ADC channel token.
+ * @return Right-aligned ADC count or FOC_PORT_ADC_SAMPLE_INVALID.
  */
-static inline foc_result_t mdi_g431_foc_sample_dcbus_millivolt(
-    uint32_t *pwMillivolt)
+MDI_INLINE uint32_t mdi_g431_foc_sample_dcbus_raw(
+    foc_port_adc_channel_e eChannel)
 {
-    uint32_t wAdcCount = 0U;
-    uint64_t ullMillivolt = 0U;
-
-    if (pwMillivolt == NULL) {
-        return FOC_RESULT_NULL;
+    if (eChannel != FOC_PORT_ADC_CHANNEL_DCBUS) {
+        return FOC_PORT_ADC_SAMPLE_INVALID;
     }
 #if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
-    wAdcCount = haladc_GetInjected(HALADC_ADC1, HALADC_INJ_DCBUS);
-    wAdcCount = (wAdcCount >> 4U) & 0x0FFFU;
-    ullMillivolt = (uint64_t)wAdcCount *
-                   FOC_DCBUS_MV_PER_COUNT_NUM;
-    ullMillivolt /= FOC_DCBUS_MV_PER_COUNT_DEN;
-    ullMillivolt += (int64_t)FOC_DCBUS_OFFSET_MILLIVOLT;
-    if (ullMillivolt > UINT32_MAX) {
-        return FOC_RESULT_OUT_OF_RANGE;
+    if (!MDI_ADC_IsReady(adc_bus_voltage)) {
+        return FOC_PORT_ADC_SAMPLE_INVALID;
     }
-    *pwMillivolt = (uint32_t)ullMillivolt;
-    return FOC_RESULT_OK;
-#elif FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_NOMINAL
-    if (FOC_DCBUS_NOMINAL_MILLIVOLT == 0U) {
-        return FOC_RESULT_DISABLED;
-    }
-    *pwMillivolt = FOC_DCBUS_NOMINAL_MILLIVOLT;
-    return FOC_RESULT_OK;
+    return MDI_ADC_ReadFast(adc_bus_voltage);
 #else
-    (void)pwMillivolt;
-    return FOC_RESULT_DISABLED;
+    return FOC_PORT_ADC_SAMPLE_INVALID;
 #endif
 }
 
@@ -208,9 +192,8 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
 #define FOC_PORT_SAMPLE_CURRENT(P) mdi_g431_foc_sample_current(P)
 #undef FOC_PORT_SET_DUTY
 #define FOC_PORT_SET_DUTY(P) mdi_g431_foc_set_duty(P)
-#undef FOC_PORT_SAMPLE_DCBUS_MILLIVOLT
-#define FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(P) \
-    mdi_g431_foc_sample_dcbus_millivolt(P)
+#undef FOC_PORT_SAMPLE_DCBUS_RAW
+#define FOC_PORT_SAMPLE_DCBUS_RAW(P) mdi_g431_foc_sample_dcbus_raw(P)
 #undef FOC_PORT_START_ADC_TRIGGER
 #define FOC_PORT_START_ADC_TRIGGER() mdi_g431_foc_start_adc_trigger()
 #undef FOC_PORT_PWM_ENABLE
@@ -226,11 +209,11 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
  * service still owns filtering, age checks and publication state; this only
  * removes the per-cycle motor position provider dispatch. */
 #define FOC_POSITION_STATIC_BINDING 1
-#undef FOC_POSITION_GET
-#define FOC_POSITION_GET(P, T, O) \
-    foc_encoder_GetPosition((P)->pPositionState, (T), (O))
-#undef FOC_POSITION_CAPTURE_ZERO
-#define FOC_POSITION_CAPTURE_ZERO(P, T, O) \
-    foc_encoder_CaptureZero((P)->pPositionState, (T), (O))
+#undef FOC_SENSOR_POSITION_GET
+#define FOC_SENSOR_POSITION_GET(P, T, O) \
+    foc_encoder_GetPosition((P)->pSensorState, (T), (O))
+#undef FOC_SENSOR_POSITION_CAPTURE_ZERO
+#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O) \
+    foc_encoder_CaptureZero((P)->pSensorState, (T), (O))
 
 #endif /* STM32G431_MDI_FOC_ADAPTER_H */

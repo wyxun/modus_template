@@ -50,6 +50,9 @@ typedef enum {
 
 /**
  * @brief Initialization configuration for template_class.
+ *
+ * Child cfg is passed to template_driver_Init() and is not embedded in the
+ * runtime template_class_t or template_driver_t objects.
  */
 typedef struct {
     uint8_t *pchRingBuffer;

@@ -9,6 +9,7 @@
 #include "foc_encoder.h"
 
 #include <limits.h>
+#include <math.h>
 #include <stddef.h>
 
 #include "perf_counter.h"
@@ -174,6 +175,7 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
                               const foc_encoder_cfg_t *ptConfig)
 {
     uint32_t wFrequency = 0U;
+    double dTimeoutTicks = 0.0;
     uint64_t llTimeoutTicks = 0U;
     foc_result_t eResult = FOC_RESULT_OK;
 
@@ -193,7 +195,8 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
 #endif
     if (ptConfig->qSpeedFilterAlpha < FOC_ZERO ||
         ptConfig->qSpeedFilterAlpha > FOC_ONE ||
-        ptConfig->wInvalidTimeoutUs == 0U) {
+        !isfinite(ptConfig->fInvalidTimeoutSeconds) ||
+        ptConfig->fInvalidTimeoutSeconds <= 0.0f) {
         return _foc_encoder_InitFailure(ptEncoder,
                                         FOC_RESULT_INVALID_ARGUMENT);
     }
@@ -202,9 +205,15 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
         return _foc_encoder_InitFailure(ptEncoder,
                                         FOC_RESULT_INVALID_ARGUMENT);
     }
-    llTimeoutTicks = ((uint64_t)wFrequency *
-                      (uint64_t)ptConfig->wInvalidTimeoutUs) /
-                     1000000ULL;
+    dTimeoutTicks = (double)ptConfig->fInvalidTimeoutSeconds *
+                    (double)wFrequency;
+    if (dTimeoutTicks > (double)UINT32_MAX) {
+        return _foc_encoder_InitFailure(ptEncoder,
+                                        FOC_RESULT_OUT_OF_RANGE);
+    }
+    dTimeoutTicks = dTimeoutTicks < 1.0 ? 1.0 :
+                    ceil(dTimeoutTicks - 1.0e-6);
+    llTimeoutTicks = (uint64_t)dTimeoutTicks;
     if (llTimeoutTicks < FOC_ENCODER_TIMEOUT_MIN_TICK) {
         llTimeoutTicks = FOC_ENCODER_TIMEOUT_MIN_TICK;
     }

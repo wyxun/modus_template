@@ -13,6 +13,18 @@
 
 #define IDENTIFY_INDUCTANCE_TIMEOUT_MARGIN_MS (500U)
 
+#ifndef FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES
+#define FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES  (1U)
+#endif
+
+#ifndef FOC_DCBUS_MODULATION_NUM
+#define FOC_DCBUS_MODULATION_NUM              (1U)
+#endif
+
+#ifndef FOC_DCBUS_MODULATION_DEN
+#define FOC_DCBUS_MODULATION_DEN              (1U)
+#endif
+
 typedef struct {
     uint16_t hwHalfCount;
     uint64_t ullVoltageSumMillivolt;

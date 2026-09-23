@@ -14,9 +14,12 @@
 #include "stm32g4xx_ll_rcc.h"
 #include "stm32g4xx_ll_bus.h"
 #include "stm32g4xx_ll_gpio.h"
+#include "stm32g4xx_ll_dma.h"
+#include "stm32g4xx_ll_dmamux.h"
 
 /* Post-calibration delay from ST example formula */
 #define ADC_DELAY_CALIB_ENABLE_CPU_CYCLES  (LL_ADC_DELAY_CALIB_ENABLE_ADC_CYCLES * 32UL)
+static volatile bool s_bRegularBusy;
 
 /*----------------------------------------------------------------------------*/
 /* Helpers                                                                    */
@@ -108,8 +111,8 @@ static void MX_ADC1_Init(void)
     ADC_REG_Init.TriggerSource    = LL_ADC_REG_TRIG_SOFTWARE;
     ADC_REG_Init.SequencerLength  = LL_ADC_REG_SEQ_SCAN_ENABLE_3RANKS;
     ADC_REG_Init.SequencerDiscont = LL_ADC_REG_SEQ_DISCONT_DISABLE;
-    ADC_REG_Init.ContinuousMode   = LL_ADC_REG_CONV_SINGLE;
-    ADC_REG_Init.DMATransfer      = LL_ADC_REG_DMA_TRANSFER_NONE;
+    ADC_REG_Init.ContinuousMode   = LL_ADC_REG_CONV_CONTINUOUS;
+    ADC_REG_Init.DMATransfer      = LL_ADC_REG_DMA_TRANSFER_UNLIMITED;
     ADC_REG_Init.Overrun          = LL_ADC_REG_OVR_DATA_PRESERVED;
     LL_ADC_REG_Init(ADC1, &ADC_REG_Init);
 
@@ -149,15 +152,12 @@ static void MX_ADC1_Init(void)
     LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_11, LL_ADC_SAMPLINGTIME_47CYCLES_5);
     LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_11, LL_ADC_SINGLE_ENDED);
 
-    /* Injected ranks */
+    /* Injected ranks. Rank 2 repeats U to preserve the two-rank JEOS timing. */
     LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_1, LL_ADC_CHANNEL_3);
     LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_3, LL_ADC_SAMPLINGTIME_6CYCLES_5);
     LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_3, LL_ADC_SINGLE_ENDED);
 
-    LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_2, LL_ADC_CHANNEL_1);
-    LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_1,
-                                  LL_ADC_SAMPLINGTIME_47CYCLES_5);
-    LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_1, LL_ADC_SINGLE_ENDED);
+    LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_2, LL_ADC_CHANNEL_3);
 
     /* ---- Calibration ---- */
     LL_ADC_StartCalibration(ADC1, LL_ADC_SINGLE_ENDED);
@@ -255,6 +255,24 @@ static void MX_ADC2_Init(void)
     LL_ADC_INJ_StartConversion(ADC2);
 }
 
+static void regular_dma_init(void)
+{
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
+    LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMAMUX1);
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
+    s_bRegularBusy = false;
+    LL_DMAMUX_SetRequestID(DMAMUX1, LL_DMAMUX_CHANNEL_0,
+                           LL_DMAMUX_REQ_ADC1);
+    LL_DMA_ConfigTransfer(DMA1, LL_DMA_CHANNEL_1,
+        LL_DMA_DIRECTION_PERIPH_TO_MEMORY | LL_DMA_MODE_NORMAL |
+        LL_DMA_PERIPH_NOINCREMENT | LL_DMA_MEMORY_INCREMENT |
+        LL_DMA_PDATAALIGN_HALFWORD | LL_DMA_MDATAALIGN_HALFWORD |
+        LL_DMA_PRIORITY_HIGH);
+    LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
+    HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 2, 0);
+    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+}
+
 /*----------------------------------------------------------------------------*/
 /* Public API                                                                 */
 /*----------------------------------------------------------------------------*/
@@ -267,12 +285,14 @@ void haladc_Init(void)
 
     MX_ADC1_Init();
     MX_ADC2_Init();
+    regular_dma_init();
 
     /* 注入序列完成中断：双 ADC 同沿触发、等长等速序列，
      * 只需 ADC1 的 JEOS 作为高频环时基（同 MCSDK 做法）。 */
     LL_ADC_EnableIT_JEOS(ADC1);
     HAL_NVIC_SetPriority(ADC1_2_IRQn, 1, 0);
     /* NVIC 在所有底层硬件（含 TIM1）初始化完成后统一由 haladc_EnableISR 使能 */
+
 }
 
 void haladc_EnableISR(void)
@@ -280,17 +300,35 @@ void haladc_EnableISR(void)
     HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
 }
 
-void haladc_StartRegular(void)
+bool haladc_StartRegular(volatile uint16_t *pwDmaBuffer,
+                         uint32_t wTransferCount)
 {
+    if (pwDmaBuffer == NULL || wTransferCount == 0U ||
+        wTransferCount > UINT16_MAX || s_bRegularBusy) {
+        return false;
+    }
+    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
+    LL_DMA_ClearFlag_GI1(DMA1);
+    LL_DMA_ConfigAddresses(DMA1, LL_DMA_CHANNEL_1,
+        (uint32_t)(uintptr_t)&ADC1->DR,
+        (uint32_t)(uintptr_t)pwDmaBuffer,
+        LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
+    LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_1, wTransferCount);
+    s_bRegularBusy = true;
+    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
     LL_ADC_REG_StartConversion(ADC1);
+    return true;
 }
 
-uint32_t haladc_GetRegular(uint32_t wChannel)
+bool haladc_RegularDmaCompleteISR(void)
 {
-    uint32_t timeout = 1000000UL;
-    while (!LL_ADC_IsActiveFlag_EOS(ADC1) && (--timeout)) {}
-    LL_ADC_ClearFlag_EOS(ADC1);
-    (void)wChannel;
-    return LL_ADC_REG_ReadConversionData12(ADC1);
+    if (LL_DMA_IsActiveFlag_TC1(DMA1) != 0U) {
+        LL_DMA_ClearFlag_TC1(DMA1);
+        LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
+        LL_ADC_REG_StopConversion(ADC1);
+        s_bRegularBusy = false;
+        return true;
+    }
+    return false;
 }
 

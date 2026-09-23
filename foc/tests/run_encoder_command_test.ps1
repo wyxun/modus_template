@@ -21,7 +21,11 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
     (Join-Path $repoRoot "foc/math/foc_trig_lut.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
-    (Join-Path $repoRoot "foc/observer/foc_smo.c")
+    (Join-Path $repoRoot "foc/observer/foc_smo.c"),
+    (Join-Path $repoRoot "foc/motor/motor_position.c"),
+    (Join-Path $repoRoot "foc/identify/identify.c"),
+    (Join-Path $repoRoot "foc/identify/identify_resistance.c"),
+    (Join-Path $repoRoot "foc/identify/identify_inductance.c")
 )
 $includePaths = @(
     ".", "src", "modus/src", "modus/src/mdi", "modus/src/arch",
@@ -32,7 +36,7 @@ $includePaths = @(
     "peripheral/driver", "class", "foc", "foc/math", "foc/hal",
     "foc/motor", "foc/middleware", "foc/control", "foc/modulation",
     "foc/tests",
-    "foc/observer", "foc/app"
+    "foc/observer", "foc/identify", "foc/app"
 )
 $includeArgs = @($includePaths | ForEach-Object { "-I$(Join-Path $repoRoot $_)" })
 $commonArgs = @(
@@ -45,7 +49,10 @@ $commonArgs = @(
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
     "-D__COMPILER_HAS_GNU_EXTENSIONS__=1", "-DTRACE_USE_LIBC_PRINTF=0",
     "-DMODUS_CFG_USER_CONFIG_INCLUSION=<userconfig.h>",
-    "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0"
+    "-DFOC_TRIG_BACKEND=1",
+    "-DFOC_HF_ISR_HZ=20000U",
+    "-DFOC_DCBUS_SOURCE=1U",
+    "-DFOC_DCBUS_NOMINAL_MILLIVOLT=12000U"
 )
 
 foreach ($backend in @("FLOAT", "FIXED")) {

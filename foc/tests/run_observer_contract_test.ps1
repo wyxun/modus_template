@@ -19,7 +19,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
     $backendDefine = "-DFOC_NUMERIC_$backend=1"
     $compileArgs = @(
         "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
-        "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0",
+        "-DFOC_TRIG_BACKEND=1",
         "-DFOC_ENABLE_SMO=1", $backendDefine,
         $includeArgs, $sourceFiles, @("-lm", "-o", $testExe)
     )

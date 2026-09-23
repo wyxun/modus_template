@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    foc_types.h
- * @brief   Shared value types for the minimal FOC core.
+ * @brief   Public value types shared by FOC algorithm modules.
  * @author  Codex
  * @date    2026-09-11
  ****************************************************************************/
@@ -43,17 +43,6 @@ typedef struct {
     uint32_t wV;
     uint32_t wW;
 } foc_current_sample_t;
-
-typedef struct {
-    uint32_t wOffsetU;
-    uint32_t wOffsetV;
-    uint32_t wOffsetW;
-    uint64_t ullSumU;
-    uint64_t ullSumV;
-    uint64_t ullSumW;
-    uint16_t hwSampleCount;
-    bool bIsCalibrated;
-} foc_adc_calib_t;
 
 typedef enum {
     FOC_MODE_VOLTAGE = 0,

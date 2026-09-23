@@ -3,6 +3,8 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/identify_resistance_test.c"),
     (Join-Path $repoRoot "foc/identify/identify.c"),
+    (Join-Path $repoRoot "foc/identify/identify_resistance.c"),
+    (Join-Path $repoRoot "foc/identify/identify_inductance.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c")
 )
 $includePaths = @(
@@ -19,7 +21,8 @@ $commonArgs = @(
     "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
     "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
-    "-DFOC_TRIG_BACKEND=1", "-DFOC_HF_PROFILE=0"
+    "-DFOC_HF_ISR_HZ=20000U",
+    "-DFOC_TRIG_BACKEND=1"
 )
 
 foreach ($backend in @("FLOAT", "FIXED")) {

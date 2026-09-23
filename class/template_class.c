@@ -263,6 +263,7 @@ MODUS_DECLARE_OBJECT(template_class, TemplateClass,
             .pContext = &s_tTemplateClassBaseCfg,
         },
         .wInitialValue = 0U,
-        .wPeriodTicks = 1U,
+        .wTickRateHz = 1000U,
+        .wUpdateRateHz = 1000U,
     }
 )

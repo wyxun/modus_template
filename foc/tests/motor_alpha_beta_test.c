@@ -16,6 +16,7 @@ static foc_current_abc_t s_tSample = {0};
 static uint32_t s_wClarkeCalls = 0U;
 static uint32_t s_wCoreCalls = 0U;
 static bool s_bPwmEnabled = false;
+static bool s_bPositionValid = true;
 
 /**
  * @brief Compare a backend scalar with a floating-point expectation.
@@ -43,7 +44,7 @@ static foc_result_t test_GetPosition(const void *pContext,
     (void)wNowTick;
     ptPosition->tMechanicalAngle = (foc_angle_t){0x10000000U};
     ptPosition->qMechanicalSpeed = FOC_SCALAR(0.25f);
-    ptPosition->bValid = true;
+    ptPosition->bValid = s_bPositionValid;
     return FOC_RESULT_OK;
 }
 
@@ -177,10 +178,14 @@ static uint8_t s_chPositionContext = 0U;
 int main(void)
 {
     motor_t tMotor = {0};
+    motor_position_t tPosition = {0};
     motor_cfg_t tConfig = {0};
+    motor_position_cfg_t tPositionCfg = {0};
+    motor_position_sample_t tSample = {0};
+    motor_electrical_feedback_t tFeedback = {0};
     const foc_observer_cfg_t tObserverConfig = {
         .tSmo = {
-            .wSamplePeriodNanoseconds = 50000U,
+            .wSampleFrequencyHz = 20000U,
             .wBemfCutoffRadiansPerSecond = 10000U,
             .wSlidingGainMillivolt = 3500U,
             .qCurrentEstimateLimit = FOC_ONE,
@@ -188,6 +193,7 @@ int main(void)
     };
     foc_result_t eResult = FOC_RESULT_OK;
 
+    tConfig.wControlFrequencyHz = 20000U;
     tConfig.tParams.chPolePairs = 7U;
     tConfig.tParams.wResistanceMilliohm = 500U;
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
@@ -198,61 +204,87 @@ int main(void)
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);
-    tConfig.tObserverCfg = tObserverConfig;
-    tConfig.tPosition.fnGetPosition = test_GetPosition;
-    tConfig.tPosition.pContext = &s_chPositionContext;
+    tPositionCfg.tSensor.fnGetPosition = test_GetPosition;
+    tPositionCfg.tSensor.pContext = &s_chPositionContext;
+    tPositionCfg.chPolePairs = 7U;
+    tPositionCfg.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tPositionCfg.tObserverCfg = tObserverConfig;
     tConfig.tCurrentPiParams.qOutputMinimum = FOC_NEG_ONE;
     tConfig.tCurrentPiParams.qOutputMaximum = FOC_ONE;
     tConfig.tCurrentPiParams.qIntegratorMinimum = FOC_NEG_ONE;
     tConfig.tCurrentPiParams.qIntegratorMaximum = FOC_ONE;
     tConfig.tSpeedPiParams = tConfig.tCurrentPiParams;
-    tConfig.wAdcCalibrationTimeoutSteps = 10U;
-    tConfig.wAlignSteps = 1U;
-    tConfig.chSpeedLoopDiv = 1U;
+    tConfig.fAdcCalibrationTimeoutSeconds = 0.0005f;
+    tConfig.fAlignTimeSeconds = 0.00005f;
+    tConfig.wSpeedLoopFrequencyHz = 20000U;
     tConfig.qAlignCurrent = FOC_SCALAR(0.1f);
     s_tSample = (foc_current_abc_t){
         FOC_SCALAR(0.2f), FOC_SCALAR(0.1f), FOC_SCALAR(-0.3f)};
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
+    tPositionCfg.ptMotorParams = &tMotor.tParams;
+    assert(motor_position_Init(&tPosition, &tPositionCfg) == FOC_RESULT_OK);
     tMotor.wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP / 2U;
-    motor_IsrStep(&tMotor, 0U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
     eResult = motor_Start(&tMotor, FOC_MODE_VOLTAGE);
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 1U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
+           FOC_RESULT_OK);
+    motor_IsrControlStep(&tMotor, &tFeedback);
 
     assert(s_wClarkeCalls == 1U);
     assert(s_wCoreCalls == 1U);
-    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage <
+    assert(tPosition.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage <
            FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);
-    test_AssertNear(tMotor.tCurrentAbc.qU, 0.2f);
-    test_AssertNear(tMotor.tCurrentAbc.qV, 0.1f);
-    test_AssertNear(tMotor.tCurrentAbc.qW, -0.3f);
-    motor_IsrStep(&tMotor, 2U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(FOC_POSITION_GET(&tPosition, 2U, &tSample, &tFeedback) ==
+           FOC_RESULT_OK);
+    motor_IsrControlStep(&tMotor, &tFeedback);
     assert(s_wClarkeCalls == 2U);
     assert(s_wCoreCalls == 2U);
-    assert(foc_to_float(tMotor.tObserver.tSmo.tAxis[0].qCurrentEstimate) >
+    assert(foc_to_float(tPosition.tObserver.tSmo.tAxis[0].qCurrentEstimate) >
            0.006f);
 
     motor_Stop(&tMotor);
-    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
+    motor_position_ResetObserver(&tPosition);
+    assert(tPosition.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
            FOC_ZERO);
     eResult = motor_RequestPositionCalibration(&tMotor);
     assert(eResult == FOC_RESULT_OK);
-    motor_IsrStep(&tMotor, 3U);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CAPTURE_ZERO);
+    assert(motor_position_CaptureZero(&tPosition, 3U) == FOC_RESULT_OK);
+    motor_CompleteAlignIsr(&tMotor, FOC_RESULT_OK);
 
     assert(s_wClarkeCalls == 3U);
     assert(s_wCoreCalls == 3U);
     assert(s_tLastCoreInput.tElectricalAngle.wBam32 == 0U);
-    assert(tMotor.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
+    assert(tPosition.tObserver.tSmo.tAxis[0].qPreviousSlidingVoltage ==
            FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
                     0.4f * 0.5773502692f);
-    test_AssertNear(tMotor.tCurrentAbc.qU, 0.2f);
+    assert(!s_bPwmEnabled);
+    assert(tMotor.bElectricalZeroValid);
+
+    eResult = motor_Start(&tMotor, FOC_MODE_CURRENT);
+    assert(eResult == FOC_RESULT_OK);
+    s_bPositionValid = false;
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    eResult = FOC_POSITION_GET(&tPosition, 4U, &tSample, &tFeedback);
+    assert(eResult != FOC_RESULT_OK);
+    motor_IsrControlStep(&tMotor, NULL);
+    assert(tMotor.eState == MOTOR_STATE_FAULT);
+    assert((tMotor.wFaults & MOTOR_FAULT_POSITION) != 0U);
     assert(!s_bPwmEnabled);
     return 0;
 }

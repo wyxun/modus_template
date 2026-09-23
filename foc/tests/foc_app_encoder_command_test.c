@@ -16,6 +16,7 @@
 const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface = {0};
 
 #include "../app/foc_app.c"
+#include "../app/foc_debug.c"
 
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 #include "mdebug/mwaveform.h"
@@ -28,11 +29,11 @@ static uint32_t s_wWaveIsrPeriodNs = 0U;
 static uint32_t s_wWaveTargetHz = 0U;
 static uint32_t s_wWaveChannelRateCount = 0U;
 static uint8_t s_chWaveCount = 0U;
-static char s_achWaveNames[6][16] = {{0}};
-static uint8_t s_achWaveTypes[6] = {0U};
-static float s_afWaveScales[6] = {0.0f};
-static void *s_apvWaveValues[6] = {NULL};
-static uint32_t s_awWaveChannelRates[6] = {0U};
+static char s_achWaveNames[8][16] = {{0}};
+static uint8_t s_achWaveTypes[8] = {0U};
+static float s_afWaveScales[8] = {0.0f};
+static void *s_apvWaveValues[8] = {NULL};
+static uint32_t s_awWaveChannelRates[8] = {0U};
 
 /**
  * @brief Record waveform API initialization.
@@ -60,7 +61,7 @@ static uint8_t test_WaveAddVariable(const char *pchName, float fScale,
     size_t hwLength = 0U;
     uint8_t chIndex = s_chWaveCount;
 
-    if (chIndex >= 6U) {
+    if (chIndex >= 8U) {
         return 0xFFU;
     }
     hwLength = strlen(pchName);
@@ -84,7 +85,7 @@ static uint8_t test_WaveAddVariable(const char *pchName, float fScale,
 static uint32_t test_WaveSetChannelRate(uint8_t chID, uint32_t wHz)
 {
     s_wWaveChannelRateCount++;
-    if (chID >= s_chWaveCount || chID >= 6U) {
+    if (chID >= s_chWaveCount || chID >= 8U) {
         return 0U;
     }
     s_awWaveChannelRates[chID] = wHz;
@@ -157,6 +158,7 @@ static int64_t s_lTickStep = 0;
 static uint32_t s_wShortTimeoutBudget = 0U;
 static bool s_bReportTimeout = false;
 static uint32_t s_wMotorStepCount = 0U;
+static uint32_t s_wEncoderInitCount = 0U;
 static motor_cfg_t s_tCapturedMotorConfig = {0};
 
 uint8_t g_chGLogMask = MLOG_MASK_ALL;
@@ -186,6 +188,7 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
 {
     (void)ptEncoder;
     (void)ptConfig;
+    s_wEncoderInitCount++;
     return FOC_RESULT_OK;
 }
 
@@ -208,7 +211,10 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
  */
 foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
 {
-    (void)ptMotor;
+    *ptMotor = (motor_t){0};
+    ptMotor->tParams = ptConfig->tParams;
+    ptMotor->tParams.wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP;
+    ptMotor->wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP;
     s_tCapturedMotorConfig = *ptConfig;
     return FOC_RESULT_OK;
 }
@@ -216,14 +222,44 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
 /**
  * @brief Stub the Motor high-frequency path.
  * @param ptMotor Motor object.
- * @param wNowTick Current tick.
+ * @param ptSample Prepared Motor sample.
  * @return None.
  */
-void motor_IsrStep(motor_t *ptMotor, uint32_t wNowTick)
+motor_isr_phase_t motor_IsrPrepare(motor_t *ptMotor,
+                                   motor_position_sample_t *ptSample)
 {
     (void)ptMotor;
-    (void)wNowTick;
+    (void)ptSample;
     s_wMotorStepCount++;
+    return MOTOR_ISR_NO_CONTROL;
+}
+
+void motor_IsrControlStep(
+    motor_t *ptMotor, const motor_electrical_feedback_t *ptFeedback)
+{
+    (void)ptMotor;
+    (void)ptFeedback;
+}
+
+void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture)
+{
+    (void)ptMotor;
+    (void)eCapture;
+}
+
+foc_result_t motor_IdentificationApplyIsr(
+    motor_t *ptMotor, const foc_dq_t *ptVoltageCommand)
+{
+    (void)ptMotor;
+    (void)ptVoltageCommand;
+    return FOC_RESULT_OK;
+}
+
+void motor_IdentificationAbortIsr(motor_t *ptMotor,
+                                  motor_fault_e eFault)
+{
+    (void)ptMotor;
+    (void)eFault;
 }
 
 /**
@@ -459,7 +495,7 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
  */
 int main(void)
 {
-    foc_app_CmdMotor("encoder");
+    foc_debug_CmdMotor("encoder");
 
     assert(s_wPositionCallCount == 1U);
     assert(s_ptReadEncoder == &tFocApp.tEncoder);
@@ -469,7 +505,7 @@ int main(void)
 
     s_ePositionResult = FOC_RESULT_SAFETY;
     s_chLog[0] = '\0';
-    foc_app_CmdMotor("encoder");
+    foc_debug_CmdMotor("encoder");
 
     assert(s_wPositionCallCount == 2U);
     assert(strstr(s_chLog, "encoder data unavailable") != NULL);
@@ -511,8 +547,11 @@ int main(void)
         tConfig.tMotorCfg.tLimits.qMaxModulation =
             FOC_SCALAR(0.5773502692f);
         tConfig.wVoltageBaseMillivolt = 12000U;
-        tConfig.wHighFrequencyPeriodNanoseconds = 50000U;
+        tConfig.wHighFrequencyIsrHz = 20000U;
         tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+        tConfig.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
+        tConfig.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
+        tConfig.tObserverCfg.tSmo.qCurrentEstimateLimit = FOC_ONE;
         assert(foc_gain_from_float(0.2f,
             &tConfig.tMotorCfg.tSpeedPiParams.tKp) ==
                FOC_RESULT_OK);
@@ -539,64 +578,65 @@ int main(void)
                    &s_tCapturedMotorConfig.tSpeedPiParams.tKiTs,
                    FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
-        assert(s_chWaveCount == 6U);
-        assert(strcmp(s_achWaveNames[0], "Sine500") == 0);
-        assert(strcmp(s_achWaveNames[1], "WaveSeq") == 0);
-        assert(strcmp(s_achWaveNames[2], "SpeedPU") == 0);
-        assert(strcmp(s_achWaveNames[3], "SpeedRefPU") == 0);
-        assert(strcmp(s_achWaveNames[4], "Iq") == 0);
-        assert(strcmp(s_achWaveNames[5], "IqRef") == 0);
-        assert(s_afWaveScales[0] == 1000.0f);
-        assert(s_afWaveScales[1] == 1.0f);
-        assert(s_afWaveScales[2] == 100.0f);
-        assert(s_afWaveScales[3] == 100.0f);
-        assert(s_afWaveScales[4] == 1000.0f);
-        assert(s_afWaveScales[5] == 1000.0f);
-        assert(s_achWaveTypes[0] == MWAVEFORM_VAR_FLOAT);
-        assert(s_achWaveTypes[1] == MWAVEFORM_VAR_RAW);
-        assert(s_achWaveTypes[2] == MWAVEFORM_VAR_FLOAT);
-        assert(s_achWaveTypes[3] == MWAVEFORM_VAR_FLOAT);
-        assert(s_achWaveTypes[4] == MWAVEFORM_VAR_FLOAT);
-        assert(s_achWaveTypes[5] == MWAVEFORM_VAR_FLOAT);
-        assert(s_apvWaveValues[0] != NULL);
-        assert(s_apvWaveValues[1] != NULL);
-        assert(s_apvWaveValues[2] ==
-               &tFocApp.tMotor.tInput.qElectricalSpeedPu);
-        assert(s_apvWaveValues[3] ==
-               &tFocApp.tMotor.tCommand.qSpeedReferencePu);
-        assert(s_apvWaveValues[4] ==
-               &tFocApp.tMotor.tCore.tCurrent.qQ);
-        assert(s_apvWaveValues[5] ==
-               &tFocApp.tMotor.tCommand.tCurrentReference.qQ);
+        assert(s_chWaveCount == 8U);
+        assert(strcmp(s_achWaveNames[0], "Ialpha") == 0);
+        assert(strcmp(s_achWaveNames[1], "Ibeta") == 0);
+        assert(strcmp(s_achWaveNames[2], "UmodelAlpha") == 0);
+        assert(strcmp(s_achWaveNames[3], "UmodelBeta") == 0);
+        assert(strcmp(s_achWaveNames[4], "eAlpha") == 0);
+        assert(strcmp(s_achWaveNames[5], "eBeta") == 0);
+        assert(strcmp(s_achWaveNames[6], "EncoderElec") == 0);
+        assert(strcmp(s_achWaveNames[7], "SmoAngle") == 0);
+        for (uint32_t wIndex = 0U; wIndex < 8U; wIndex++) {
+            assert(s_afWaveScales[wIndex] == 1000.0f);
+            assert(s_achWaveTypes[wIndex] == MWAVEFORM_VAR_FLOAT);
+            assert(s_apvWaveValues[wIndex] != NULL);
+        }
         assert(s_wWaveDecimation == 0U);
         assert(s_wWaveIsrPeriodNs == 50000U);
         assert(s_wWaveTargetHz == 10000U);
-        assert(s_wWaveChannelRateCount == 2U);
-        assert(s_awWaveChannelRates[3] == 1000U);
-        assert(s_awWaveChannelRates[5] == 1000U);
+        assert(s_wWaveChannelRateCount == 0U);
+
+        tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_SENSOR;
+        tFocApp.tMotor.tInput.tCurrentAlphaBeta =
+            (foc_ab_t){FOC_SCALAR(0.1f), FOC_SCALAR(0.2f)};
+        tFocApp.tMotor.tCore.tVoltageAlphaBeta =
+            (foc_ab_t){FOC_SCALAR(0.3f), FOC_SCALAR(-0.4f)};
+        tFocApp.tMotor.tInput.tElectricalAngle.wBam32 = 0x20000000U;
+        tFocApp.tMotor.tInput.bAngleValid = true;
+        tFocApp.tPosition.tObserver.tSmo.tAxis[0].qBemf =
+            FOC_SCALAR(0.5f);
+        tFocApp.tPosition.tObserver.tSmo.tAxis[1].qBemf =
+            FOC_SCALAR(0.6f);
+        tFocApp.tPosition.tObserver.tOutput.tElectricalAngle.wBam32 =
+            0x60000000U;
+        tFocApp.tPosition.tObserver.tOutput.bValid = true;
+        foc_debug_WaveformStep();
+        assert(s_afWaveScales[0] == 1000.0f);
+        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.1f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.2f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[2] - 0.3f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[3] + 0.4f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[4] - 0.5f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[5] - 0.6f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[6] - 0.125f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[7] - 0.375f) < 0.001f);
+        s_wWaveStepCount = 0U;
+        assert(s_wEncoderInitCount == 1U);
+        tConfig.ePositionSource = MOTOR_POSITION_SOURCE_HARD_DRAG;
+        tConfig.tMotorCfg.nHardDragElectricalMilliHz = 5000;
+        assert(foc_app_Init((uintptr_t)&tFocApp,
+                            (uintptr_t)&tConfig) == MODUS_SUCCESS);
+        assert(tFocApp.bReady);
+        assert(tFocApp.tPosition.eSource ==
+               MOTOR_POSITION_SOURCE_HARD_DRAG);
+        assert(s_wEncoderInitCount == 1U);
+        assert(s_tCapturedMotorConfig.wControlFrequencyHz == 20000U);
         assert(s_wWaveStartCount == 1U);
 
         s_wWaveStepCount = 0U;
-        {
-            float fMinimum = 2.0f;
-            float fMaximum = -2.0f;
-            float *pfSine = (float *)s_apvWaveValues[0];
-            int16_t *phwSequence = (int16_t *)s_apvWaveValues[1];
-            uint32_t wIndex = 0U;
-
-            for (wIndex = 0U; wIndex < 40U; wIndex++) {
-                foc_app_HighFrequencyISR();
-                if (*pfSine < fMinimum) {
-                    fMinimum = *pfSine;
-                }
-                if (*pfSine > fMaximum) {
-                    fMaximum = *pfSine;
-                }
-            }
-            assert(fMinimum == -1.0f);
-            assert(fMaximum == 1.0f);
-            assert(*pfSine == 0.0f);
-            assert(*phwSequence == 40);
+        for (uint32_t wIndex = 0U; wIndex < 40U; wIndex++) {
+            foc_app_HighFrequencyISR();
         }
         assert(s_wWaveStepCount == 40U);
     }

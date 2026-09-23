@@ -46,7 +46,14 @@ static bool _template_driver_IsConfigValid(
         && (ptCfg->tHw.ptOps->fnSample != NULL)
         && (ptCfg->tHw.ptOps->fnApply != NULL)
         && (ptCfg->tHw.ptOps->fnStop != NULL)
-        && (ptCfg->wPeriodTicks != 0U)) {
+        && (ptCfg->wUpdateRateHz != 0U)
+        && (ptCfg->wTickRateHz >= ptCfg->wUpdateRateHz)
+        && (((ptCfg->wTickRateHz / ptCfg->wUpdateRateHz)
+             < (UINT32_MAX / 2U))
+            || (((ptCfg->wTickRateHz / ptCfg->wUpdateRateHz)
+                 == (UINT32_MAX / 2U))
+                && ((ptCfg->wTickRateHz % ptCfg->wUpdateRateHz)
+                    == 0U)))) {
         bValid = true;
     }
 
@@ -127,7 +134,10 @@ template_driver_result_t template_driver_Init(
     }
 
     ptThis->tHw = ptCfg->tHw;
-    ptThis->wPeriodTicks = ptCfg->wPeriodTicks;
+    ptThis->wPeriodTicks = ptCfg->wTickRateHz / ptCfg->wUpdateRateHz;
+    if ((ptCfg->wTickRateHz % ptCfg->wUpdateRateHz) != 0U) {
+        ptThis->wPeriodTicks++;
+    }
     ptThis->wValue = ptCfg->wInitialValue;
     eResult = ptThis->tHw.ptOps->fnInit(ptThis->tHw.pContext);
     if (eResult != TEMPLATE_DRIVER_RESULT_OK) {

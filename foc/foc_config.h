@@ -1,154 +1,54 @@
-/*******************************************************************************
+/****************************************************************************
  * @file    foc_config.h
- * @brief   Universal-FOC 框架统一配置入口
- *          所有编译期可调参数集中于此，其他模块通过 #include "foc_config.h" 读取
- ******************************************************************************/
+ * @brief   User-selectable FOC build features and compile-time validation.
+ *
+ * Numeric and trig backends are selected in foc_numeric.h and foc_trig.h.
+ * Board settings belong to the selected target; motor and application
+ * settings belong to app/motor_config.h.
+ ****************************************************************************/
 
-#ifndef __FOC_CONFIG_H__
-#define __FOC_CONFIG_H__
+#ifndef FOC_CONFIG_H
+#define FOC_CONFIG_H
 
-#if defined(FOC_NUMERIC_FLOAT) && defined(FOC_NUMERIC_FIXED)
-#error "Select only one FOC numeric backend"
-#elif !defined(FOC_NUMERIC_FLOAT) && !defined(FOC_NUMERIC_FIXED)
-#error "Select FOC_NUMERIC_FLOAT or FOC_NUMERIC_FIXED"
-#endif
-
-/* Compatibility only. New code selects behavior through foc_numeric.h. */
-#if defined(FOC_NUMERIC_FLOAT)
-#define FOC_USE_FPU_HARDWARE        1       /**< 使用硬件 FPU */
-#else
-#define FOC_USE_FPU_HARDWARE        0       /**< 不使用硬件 FPU */
-#endif
-
+/* Public build options. Set these in the target build configuration. */
 #ifndef FOC_OFFSET_CALIB_TIMES
-#define FOC_OFFSET_CALIB_TIMES      200U    /**< ADC 偏移校准采样次数 */
+#define FOC_OFFSET_CALIB_TIMES              200U
 #endif
 
-#ifndef FOC_CURRENT_BASE_MILLIAMP
-#define FOC_CURRENT_BASE_MILLIAMP   3500U
-#endif
-
-#ifndef FOC_CURRENT_COUNTS_PER_BASE
-#define FOC_CURRENT_COUNTS_PER_BASE 1390U
-#endif
-
-#ifndef FOC_CURRENT_SAMPLE_INVERTED
-#define FOC_CURRENT_SAMPLE_INVERTED 1
-#endif
-
-/* DC-bus source contract. A target must opt in after validating its sample
- * timing and ADC scale; the default keeps Ld identification disabled. */
-#define FOC_DCBUS_SOURCE_NONE       (0U)
-#define FOC_DCBUS_SOURCE_NOMINAL    (1U)
-#define FOC_DCBUS_SOURCE_ADC        (2U)
-
-#ifndef FOC_DCBUS_SOURCE
-#define FOC_DCBUS_SOURCE             FOC_DCBUS_SOURCE_NONE
-#endif
-#ifndef FOC_DCBUS_NOMINAL_MILLIVOLT
-#define FOC_DCBUS_NOMINAL_MILLIVOLT  (0U)
-#endif
-#ifndef FOC_DCBUS_MV_PER_COUNT_NUM
-#define FOC_DCBUS_MV_PER_COUNT_NUM   (1U)
-#endif
-#ifndef FOC_DCBUS_MV_PER_COUNT_DEN
-#define FOC_DCBUS_MV_PER_COUNT_DEN   (1U)
-#endif
-#ifndef FOC_DCBUS_OFFSET_MILLIVOLT
-#define FOC_DCBUS_OFFSET_MILLIVOLT   (0)
-#endif
-#ifndef FOC_DCBUS_SAMPLE_DELAY_CYCLES
-#define FOC_DCBUS_SAMPLE_DELAY_CYCLES (0U)
-#endif
-#ifndef FOC_DCBUS_MAX_AGE_CYCLES
-#define FOC_DCBUS_MAX_AGE_CYCLES     (0U)
-#endif
-#ifndef FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES
-#define FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES (1U)
-#endif
-#ifndef FOC_DCBUS_MAX_MILLIVOLT
-#define FOC_DCBUS_MAX_MILLIVOLT      (60000U)
-#endif
-#ifndef FOC_DCBUS_MODULATION_NUM
-#define FOC_DCBUS_MODULATION_NUM     (1U)
-#endif
-#ifndef FOC_DCBUS_MODULATION_DEN
-#define FOC_DCBUS_MODULATION_DEN     (1U)
-#endif
-
-#define FOC_DEFAULT_SENSING_TOPOLOGY    SENSING_TOPOLOGY_3P  /**< 默认采样拓扑 */
-
-#define FOC_HW_OCP_SUPPORT          1       /**< 硬件过流保护支持 */
-
-#define FOC_OCP_THRESHOLD_A         10      /**< 过流保护阈值，单位 A */
-
-#define FOC_DEFAULT_POLE_PAIRS      4       /**< 默认电机极对数 */
-
-#define FOC_DEBUG_ENABLE            1       /**< 调试输出使能 */
-
-/* Experimental routines can energize a stopped motor.  Products must opt in
- * explicitly after providing current, speed, bus-voltage, and timeout limits. */
 #ifndef FOC_ENABLE_EXPERIMENTAL_NSD
-#define FOC_ENABLE_EXPERIMENTAL_NSD       0   /**< 使能 N/S 极性检测实验模块 */
+#define FOC_ENABLE_EXPERIMENTAL_NSD       0
 #endif
 
+/* User feature switch. foc.mk always lists foc_smo.c;
+ * this macro selects the Observer backend.
+ */
 #ifndef FOC_ENABLE_SMO
-#define FOC_ENABLE_SMO                   0   /**< 使能 SMO 运行路径 */
+#define FOC_ENABLE_SMO                    1
 #endif
 
 #ifndef FOC_ENABLE_HFI
-#define FOC_ENABLE_HFI                   0   /**< 预留 HFI 运行路径 */
+#define FOC_ENABLE_HFI                    0
 #endif
 
-#define FOC_OBSERVER_BACKEND_NONE        0
-#define FOC_OBSERVER_BACKEND_SMO         1
+/* Observer implementation selected for this FOC build. */
+#define FOC_OBSERVER_BACKEND_NONE          0
+#define FOC_OBSERVER_BACKEND_SMO           1
 
 #ifndef FOC_OBSERVER_BACKEND
 #if FOC_ENABLE_SMO
-#define FOC_OBSERVER_BACKEND             FOC_OBSERVER_BACKEND_SMO
+#define FOC_OBSERVER_BACKEND               FOC_OBSERVER_BACKEND_SMO
 #else
-#define FOC_OBSERVER_BACKEND             FOC_OBSERVER_BACKEND_NONE
+#define FOC_OBSERVER_BACKEND               FOC_OBSERVER_BACKEND_NONE
 #endif
+#endif
+
+#if (FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE) && \
+    (FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_SMO)
+#error "Unsupported FOC_OBSERVER_BACKEND"
 #endif
 
 #if (FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO) && !FOC_ENABLE_SMO
 #error "SMO observer backend requires FOC_ENABLE_SMO=1"
 #endif
 
-#ifndef FOC_ENABLE_MOTOR_VERIFY
-#define FOC_ENABLE_MOTOR_VERIFY 1           /**< 使能电机验证函数 */
-#endif
-
-#ifndef FOC_HF_PROFILE
-#define FOC_HF_PROFILE 1                   /**< 使能高频性能分析 */
-#endif
-
-#ifndef FOC_HF_PROFILE_LEVEL
-#define FOC_HF_PROFILE_LEVEL 2             /**< 分析等级（0=关, 1=总周期, 2=细分阶段） */
-#endif
-
-#if !FOC_HF_PROFILE
-#undef FOC_HF_PROFILE_LEVEL
-#define FOC_HF_PROFILE_LEVEL 0
-#endif
-
-#if (FOC_HF_PROFILE_LEVEL < 0) || (FOC_HF_PROFILE_LEVEL > 2)
-#error "FOC_HF_PROFILE_LEVEL must be 0, 1, or 2"
-#endif
-
-/* Target-specific DWT timing contract. A zero deadline disables reporting. */
-#ifndef FOC_HF_DEADLINE_CYCLES
-#define FOC_HF_DEADLINE_CYCLES       0U
-#endif
-
-#ifndef FOC_HF_BASELINE_MAX_CYCLES
-#define FOC_HF_BASELINE_MAX_CYCLES   0U
-#endif
-
-#ifndef FOC_HF_SHADOW_MAX_CYCLES
-#define FOC_HF_SHADOW_MAX_CYCLES     0U
-#endif
-
-#include "foc_trig.h"
-
-#endif /* __FOC_CONFIG_H__ */
+#endif /* FOC_CONFIG_H */

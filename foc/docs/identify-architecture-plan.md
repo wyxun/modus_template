@@ -148,12 +148,17 @@ foc_app_Run()                         foreground, about 1 ms
             `-- active child RunPt()
 
 foc_app_HighFrequencyISR()            one configured HF rate
-    |-- motor_IsrStep(motor)
+    |-- motor_IsrPrepare(motor, sample)
+    |-- FOC_POSITION_GET(position, sample, feedback)
+    |-- motor_IsrControlStep(motor, feedback)
     `-- identify_IsrStep(identify, motor, sample)
             `-- active child IsrStep()
 ```
 
-App 只有一个 Identify ISR 调用点。父 ISR 使用直接 `switch` 分发当前 operation，不使用函数指针或通用命令分派框架。
+RUN 时 App 先让 Motor 采样并准备同步 αβ 样本，再由 Position 产出唯一电角反馈，
+然后执行 Motor 的速度环/Core/PWM；Identify 仍在本周期控制步骤后消费快照。ALIGN
+分支由 Motor 请求 Position 捕获传感器零位。App 只有一个 Identify ISR 调用点。父 ISR
+使用直接 `switch` 分发当前 operation，不使用函数指针或通用命令分派框架。
 
 `identify_isr_sample_t` 只包含当前已实现电阻和 `Ld` 所需的同步快照：
 

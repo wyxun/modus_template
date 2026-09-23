@@ -3,19 +3,30 @@
  * @brief   Portable semantic hardware contract for the FOC power stage.
  * @author  Codex
  * @date    2026-09-19
- * @note    The FOC library does not include MODUS or a chip header. Targets
- *          may redefine the FOC_PORT_* operation macros to static inline
- *          adapters before motor.c is compiled. The declarations below are
- *          the standalone fallback ABI used by host tests and simple ports.
- *          The same rule applies to FOC_POSITION_* and the encoder raw-sample
- *          hooks: standalone fallbacks remain available, while a target
- *          adapter may bind typed providers directly.
+ * @note    This header declares the portable power-stage and ADC contract.
+ *          A target entry header may bind its operations before FOC sources
+ *          are compiled. Position policy hooks live in motor_position.h.
+ *          CORDIC math bindings are selected by FOC_TRIG_BACKEND and exposed
+ *          through foc_angle_*.
  ****************************************************************************/
 
 #ifndef FOC_PORT_H
 #define FOC_PORT_H
 
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "foc_port_config.h"
 #include "foc_types.h"
+
+typedef enum {
+    FOC_PORT_ADC_CHANNEL_DCBUS = 0U
+} foc_port_adc_channel_e;
+
+#define FOC_PORT_ADC_SAMPLE_INVALID UINT32_MAX
+
+/* Optional math-accelerator bindings.  They are macros so a target can map
+ * directly to a static inline operation without adding a runtime dispatch. */
 
 /**
  * @brief Sample raw three-phase ADC current values.
@@ -33,13 +44,13 @@ foc_result_t foc_SampleCurrent(
 foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty);
 
 /**
- * @brief Read a completed DC-bus voltage sample in millivolts.
- * @param pwMillivolt Output DC-bus voltage.
- * @return FOC_RESULT_OK or an unavailable/invalid sample status.
- * @note This operation must not start or wait for an ADC conversion from an
- *       high-frequency ISR. The target adapter owns sample timing and scale.
+ * @brief Read the latest raw DC-bus ADC count.
+ * @param eChannel Logical ADC channel; currently DC bus only.
+ * @return Right-aligned ADC count or FOC_PORT_ADC_SAMPLE_INVALID.
+ * @note The target adapter owns sampling; voltage conversion belongs to the
+ *       application layer.
  */
-foc_result_t foc_SampleDcBusMillivolt(uint32_t *pwMillivolt);
+uint32_t foc_SampleDcBusRaw(foc_port_adc_channel_e eChannel);
 
 /**
  * @brief Start the target ADC trigger used by the FOC sampling schedule.
@@ -84,9 +95,8 @@ foc_result_t foc_PwmClearFault(void);
 #ifndef FOC_PORT_SET_DUTY
 #define FOC_PORT_SET_DUTY(P) foc_SetDuty(P)
 #endif
-#ifndef FOC_PORT_SAMPLE_DCBUS_MILLIVOLT
-#define FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(P) \
-    foc_SampleDcBusMillivolt(P)
+#ifndef FOC_PORT_SAMPLE_DCBUS_RAW
+#define FOC_PORT_SAMPLE_DCBUS_RAW(C) foc_SampleDcBusRaw(C)
 #endif
 #ifndef FOC_PORT_START_ADC_TRIGGER
 #define FOC_PORT_START_ADC_TRIGGER() foc_port_StartAdcTrigger()

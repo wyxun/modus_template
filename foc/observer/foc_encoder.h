@@ -14,7 +14,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "motor_position.h"
+#include "foc_position.h"
 
 #if !defined(FOC_ENCODER_STATIC_BINDING)
 typedef struct {
@@ -30,7 +30,7 @@ typedef struct {
 
 typedef struct {
     foc_scalar_t qSpeedFilterAlpha;
-    uint32_t wInvalidTimeoutUs;
+    float fInvalidTimeoutSeconds;
     bool bDirectionInvert;
 #if !defined(FOC_ENCODER_STATIC_BINDING)
     const foc_encoder_sensor_if_t *ptSensor;

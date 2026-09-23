@@ -9,16 +9,19 @@ peripheral_template/
 ├── README.md
 ├── mdi/
 │   ├── backend.h       抽象 32 位寄存器模型和芯片后端绑定宏
+│   ├── foc_adapter.h   FOC 语义端口到静态 MDI 资源的适配
 │   ├── instance.h      本芯片的多外设资源实例
 │   ├── state.c         DMA、Tick 和 Stream 的实例存储
-│   └── service.c       mdi_Service/mdi_Clock 板级维护
+│   ├── service.c       DMA 中断发布、mdi_Init/mdi_Service/mdi_Clock 板级维护
+│   └── service.h       DMA 中断入口声明
 ├── tests/
 │   ├── contract.c       Timer/Stream 编译期契约
+│   ├── foc_port_contract.c FOC 静态端口编译期契约
 │   ├── runtime.c        Timer/Stream 主机运行检查
 │   └── service_runtime.c Board service 主机运行检查
+├── foc_port.h           FOC 工程的目标头文件入口
 └── examples/
-    ├── multi_peripheral_app.c
-    └── multi_peripheral_app.h
+    └── multi_peripheral_app.c
 ```
 
 ## 本例绑定的外设
@@ -29,9 +32,9 @@ peripheral_template/
 | --- | --- | --- |
 | `status_led`、`user_button` | GPIO 输入输出 | `MDI_IO_Read/Write` |
 | `dac_parallel` | 跨 GPIO 端口的并口数据 | `MDI_IO_Write`、`MDI_IO_WriteMasked` |
-| `adc1_dma` + `adc1_mean` | ADC/DMA 多通道块和按需均值 | `template_SetAdcSampleFrequency`、`mdi_Service` |
-| `phase_u`、`phase_v`、`bus_voltage` 等 | 同一采集组的通道视图 | `MDI_ADC_Read` |
-| `phase_current` | 同一采集组的三相一致帧视图 | `MDI_Sample_ReadCompleted` |
+| `adc1_dma` + `adc1_mean` | 规则 ADC/DMA 多通道块和均值 | `mdi_Service` |
+| `bus_voltage`、`bus_current`、`temperature` | 已发布均值的通道视图 | `MDI_ADC_Read` |
+| `phase_current` | 注入 ADC 的三相完成帧 | `MDI_Sample_ReadCompleted` |
 | `bridge` | 三相中心对齐 PWM | `MDI_PWM_SetDuty/Commit` |
 | `buzzer` | 单路变频 PWM | `MDI_PWM_SetFrequency/SetDuty` |
 | `encoder_i2c_hw` | 硬件 I2C 主机 | `MDI_I2C_Reg8_Read` |
@@ -44,52 +47,39 @@ peripheral_template/
 硬件 I2C 和软件 I2C 是两个可替换 provider。实际产品只能让一个 provider 获得同一组
 SDA/SCL 资源的所有权；本例同时声明它们是为了展示替换关系。
 
-ADC/DMA 的完成中断只调用内部的 `MDI_ADC_DMA_Publish(adc1_dma)`，不做累加、均值或
-滤波。MODUS 0.6.1.2 将板级维护收敛到 `mdi_Service()`：它先尝试消费已发布 block，
-再比较当前 raw tick 与上次启动 tick，决定是否启动下一次 ADC。`modus_Run()` 会在对象 Run 回调前自动调用该服务。通道读取
-只读取已经发布的快照。没有及时读取时，内部可以检测 DMA 丢块；
-真实芯片需要用双缓冲、环形缓冲或暂停 DMA 保证正在处理的 block 不会被覆盖。
+DMA 完成中断调用 `pt32_AdcDmaCompleteIrq()`，释放当前槽位并发布完成计数。
+`modus_Init()` 完成对象初始化后调用 `mdi_Init()` 配置采样频率；`modus_Run()` 在对象 Run 前调用 `mdi_Service()`：先对完成的块求均值，再按 raw tick
+启动下一次规则 ADC 扫描。通道读取只读取已发布的快照。模板启动时将 DMA 目的地址
+设为当前槽位；真实芯片后端还需按硬件规则配置、停止 DMA。
 
 ## ADC/DMA feature 用法
 
-模板把一次 ADC 扫描定义为 5 个通道、每通道 `PT32_ADC_SAMPLE_COUNT` 个连续样本。芯片实例隐藏 DMA 缓冲区，
+模板把一次规则 ADC 扫描定义为 3 个通道、每通道 `PT32_ADC_SAMPLE_COUNT` 个连续样本。芯片实例隐藏 DMA 缓冲区，
 应用只看到按语义命名的通道：
 
 ```c
 mdi_adc_value_t tBusVoltage = {0};
 mdi_adc_value_t tBusCurrent = {0};
 
-(void)template_SetAdcSampleFrequency(100U, qwRawTick);
 (void)modus_Run();  /* 内部自动调用 mdi_Service() */
 (void)MDI_ADC_Read(bus_voltage, &tBusVoltage);
 (void)MDI_ADC_Read(bus_current, &tBusCurrent);
 ```
 
-应用侧也可以只依赖 `examples/multi_peripheral_app.h` 的模板包装入口，隐藏
-`adc1_mean` 资源 token：
+`MDI_ADC_Read()` 不启动转换，也不做滤波；首次服务处理完成前返回 `MDI_BUSY`。
+模板以 `PT32_CORE_CLOCK_HZ` 表示 raw tick 的频率，服务按 100 Hz 调度。需要更高
+采样频率时，应把采集触发改由硬件定时器负责。
 
-```c
-uint32_t wBusVoltage = 0U;
+`bus_voltage`、`bus_current` 和 `temperature` 共用规则 ADC/DMA 采集组；注入 ADC
+的 `phase_current` 独立提供一次完成的 U/V/W 帧。FOC 控制中断直接调用
+`MDI_Sample_ReadCompleted(phase_current, ...)`，完成控制计算后调用
+`MDI_PWM_SetDuty(bridge, ...)` 和 `MDI_PWM_Commit(bridge)`。这两个阶段之间需要运行
+电流环，因此模板不再提供把采样和提交紧挨着执行的 `template_FocCycle()` 包装。
 
-(void)template_SetAdcSampleFrequency(100U, qwRawTick);
-(void)modus_Run();
-(void)template_ReadBusVoltage(&wBusVoltage);
-```
-
-旧的 `template_AdcService()` 保留为迁移包装，会更新模板 tick 后调用同一个板级服务；新
-代码不应在 `modus_Run()` 外重复调用它。DMA 中断入口
-`template_AdcDmaCompleteIrq()` 仍然只发布完成计数。`MDI_ADC_Read()` 不启动转换，也不
-做滤波；如果还没有完成一次服务处理，会返回 `MDI_BUSY`。模板以 `PT32_CORE_CLOCK_HZ`
-表示 raw tick 的频率，服务默认按 100 Hz 调度。`template_SetAdcSampleFrequency()`
-保留用于迁移旧调用，生产板应直接在板级服务中固定采样策略。需要高于前台服务频率的采样时，应把同一
-`MDI_ADC_Start(adc1_mean)` 绑定到硬件定时器触发，而不是提高 while 循环频率；那种
-后端可以直接使用公共的 `MDI_ADC_SetSampleFrequency()` 硬件触发接口。
-
-`bus_voltage` 和 `bus_current` 使用同一个 ADC/DMA 采集组，但每次读取仍是统一的
-`MDI_ADC_Read()`。均值次数、通道顺序和 DMA 缓冲区由 `instance.h` 固定；DMA 中断不
-调用均值函数。FOC 使用同一组中的 `phase_u`、`phase_v`、`phase_w` 一致帧视图，避免
-把三相采样误设计成三个独立硬件采集器。模板中的 `template_FocCycle()` 先在控制
-上下文调用一次内部更新，再把同一快照交给 FOC。
+`foc_port.h` 选择 `mdi/foc_adapter.h`。适配器把 FOC 的三相原始值、归一化占空比、
+母线原始 ADC 值和 PWM 安全操作直接映射到 MDI 的静态资源。FOC 应用负责把母线 ADC
+计数换算成电压；编码器和位置服务由具体目标板接入。移植时将模板的 ADC 注入触发
+寄存器、DMA 和 PWM 故障动作换成实际芯片实现。
 
 `PT32_ADC_SAMPLE_COUNT` 是实例级编译期配置，默认值为 8，也可以在构建配置中覆盖，
 例如 `-DPT32_ADC_SAMPLE_COUNT=16`。它对该采集组的所有通道同时生效，并会改变 DMA
@@ -104,10 +94,10 @@ feature；不要把通道差异加入 core 契约。
 `pt32_raw_tick` 是板级无单位计数器，模板 provider 读取 `g_qwPt32RawTick`；真实板应像参考
 项目一样从单调硬件计数器读取。`mdi_Clock()` 只维护 Stream，不负责制造 raw tick。
 
-`board_stream` 是固定容量的静态环形字节流。写入返回实际写入字节数，读取返回实际读取
-字节数，参数错误返回负值；`MDI_STREAM_Available()` 返回当前可读字节数，
-`MDI_STREAM_IsBusy()` 只表示最近一次写入尚未完成的维护状态。`mdi_Clock()` 只清理该
-状态，不执行协议解析或阻塞操作。
+`board_stream` 使用公共 `mdi/feature/uart_stream.h` 生成。写入返回 TX 队列实际接收的字节数，
+读取在 RX 空闲保护结束后返回当前帧数据；`MDI_STREAM_Available()` 返回 RX 队列字节数，
+`MDI_STREAM_IsBusy()` 表示 TX 队列仍有发送活动。`mdi_Clock()` 只推进 RX 空闲保护，收发
+寄存器由对应 UART IRQ 入口处理，不执行协议解析或阻塞操作。
 
 ## 与 MDI 框架规范的符合性
 
@@ -127,7 +117,7 @@ feature；不要把通道差异加入 core 契约。
 - 目标芯片上的时序、汇编、链接和故障动作验证。
 
 因此，模板满足 MDI 的**分层、资源绑定和调用形态规范**，但不能宣称已经满足某一颗真实
-芯片的全部硬件时序规范。`MDI_FOC_BIND`、25xx EEPROM 和 AS5600 读取属于应用侧组合
+芯片的全部硬件时序规范。25xx EEPROM 和 AS5600 读取属于应用侧组合
 示例，不是 `core` 公共契约的一部分。
 
 ## 接入真实芯片时修改什么
@@ -150,6 +140,11 @@ gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only                                
     peripheral_template/mdi/state.c                                               \
     peripheral_template/mdi/service.c                                             \
     peripheral_template/tests/contract.c
+
+gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only                                 \
+    -DFOC_NUMERIC_FLOAT=1 -I. -Ifoc -Ifoc/math -Imodus/src                       \
+    -Iperipheral_template                                                         \
+    peripheral_template/tests/foc_port_contract.c
 ```
 
 Timer、Stream 和板级服务的主机运行检查：
@@ -163,7 +158,6 @@ gcc -std=c11 -Wall -Wextra -Werror -Imodus/src -Iperipheral_template \
 peripheral_template/tests/service_runtime.exe
 ```
 
-应用层完整调用见 [multi_peripheral_app.c](examples/multi_peripheral_app.c)，公开包装
-声明见 [multi_peripheral_app.h](examples/multi_peripheral_app.h)，资源绑定见
+应用层完整调用见 [multi_peripheral_app.c](examples/multi_peripheral_app.c)，资源绑定见
 [instance.h](mdi/instance.h)，板级服务见 [service.c](mdi/service.c)，后端职责见
 [backend.h](mdi/backend.h)。

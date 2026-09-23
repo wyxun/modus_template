@@ -5,8 +5,10 @@
  * Template reading guide:
  *
  * 1. This file is a capability template, not a mandatory API base class.
- * 2. template_driver_cfg_t contains initialization-time inputs only.
- * 3. template_driver_t owns all mutable state for one Driver instance.
+ * 2. template_driver_cfg_t is a boundary input in developer-facing units.
+ *    Do not embed the whole configuration in template_driver_t.
+ * 3. Init validates and converts configuration into compact execution data;
+ *    template_driver_t owns that data and all mutable per-instance state.
  * 4. The ops/context pair injects one external dependency instance.
  * 5. Public APIs operate on an explicit template_driver_t pointer.
  *
@@ -18,6 +20,8 @@
  *   remove them from a concrete algorithm that is only called by an ISR.
  * - Clock is an optional fixed-rate service and is not a second Run().
  * - IsrStep below is an optional short hardware service with no data model.
+ *   A concrete ISR consumes prevalidated execution fields in its object;
+ *   it must not read cfg or convert physical units on each invocation.
  *   An algorithm that consumes physical values should define a typed
  *   interface such as template_observer_if_t from template_observer.h and
  *   expose its own typed xxx_IsrStep() function. Do not pass algorithm data
@@ -127,12 +131,18 @@ typedef struct {
 } template_driver_hw_if_t;
 
 /**
- * @brief Initialization-only configuration for the template Driver.
+ * @brief Boundary configuration in units meaningful to the caller.
+ *
+ * wTickRateHz describes the tick source passed to Run(). wUpdateRateHz is
+ * the requested service frequency. Init rejects unrepresentable rates and
+ * rounds the period up to a whole tick, so the actual rate never exceeds the
+ * request. The configuration is not retained after initialization.
  */
 typedef struct {
     template_driver_hw_if_t tHw;
     uint32_t                wInitialValue;
-    uint32_t                wPeriodTicks;
+    uint32_t                wTickRateHz;
+    uint32_t                wUpdateRateHz;
 } template_driver_cfg_t;
 
 /**
@@ -148,6 +158,9 @@ typedef struct {
 
 /**
  * @brief Runtime object owned by a parent Class.
+ *
+ * wPeriodTicks is the checked execution parameter used by the service path.
+ * Keep only fields needed by later operations; never add a cfg member here.
  */
 typedef struct {
     template_driver_hw_if_t tHw;

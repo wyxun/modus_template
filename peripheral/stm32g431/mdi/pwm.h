@@ -13,6 +13,39 @@
 #ifndef STM32G431_MDI_PWM_H
 #define STM32G431_MDI_PWM_H
 #include "mdi/core/bind.h"
+#include "halcomp.h"
+#include "haltim1.h"
+
+extern volatile bool g_bG431FaultLatched;
+
+/** @brief Return the live COMP fault source; it must be clear before reset. */
+MDI_INLINE bool mdi_g431_fault_source_active(void)
+{
+    return (halcomp_GetOutput(HALCOMP_IDX_COMP1) != 0U) ||
+           (halcomp_GetOutput(HALCOMP_IDX_COMP2) != 0U) ||
+           (halcomp_GetOutput(HALCOMP_IDX_COMP4) != 0U);
+}
+
+/** @brief Return the software or timer break fault state. */
+MDI_INLINE bool mdi_g431_fault_active(void)
+{
+    return g_bG431FaultLatched || haltim1_GetBreakFault();
+}
+
+/** @brief Clear the software latch and timer break after the source is gone. */
+MDI_INLINE void mdi_g431_fault_clear(void)
+{
+    if (!mdi_g431_fault_source_active()) {
+        g_bG431FaultLatched = false;
+        (void)haltim1_ClearBreakFault();
+    }
+}
+
+/** @brief Latch a break event from the timer interrupt. */
+MDI_INLINE void mdi_g431_fault_notify_break(void)
+{
+    g_bG431FaultLatched = true;
+}
 
 /** @brief Calculate a near-target frequency with maximum timer resolution.
  * @param wClockHz Timer input clock, not the APB bus clock.

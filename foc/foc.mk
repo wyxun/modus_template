@@ -6,8 +6,8 @@
 # (guarded by "FOC_SOURCES ?=" in the top-level makefile) and the FOC
 # include paths default to nothing.
 #
-# 极简构建：编译数学核心 + PID + SVPWM + 编码器 + SMO Observer + App。
-# 非首期 Observer 算法不进入构建；本期 SMO 仅在 Encoder 闭环下 Shadow。
+# 编译数学核心 + PID + SVPWM + 编码器 + App。
+# SMO 的唯一功能开关在 foc_config.h；未启用时链接器回收未引用代码段。
 # =============================================================================
 
 FOC_INCLUDES = -Ifoc \
@@ -29,5 +29,7 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/identify/identify.c \
               foc/identify/identify_resistance.c \
               foc/identify/identify_inductance.c \
+              foc/motor/motor_position.c \
               foc/motor/motor.c \
+              foc/app/foc_debug.c \
               foc/app/foc_app.c

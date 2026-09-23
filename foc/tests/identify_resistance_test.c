@@ -81,6 +81,34 @@ foc_result_t motor_SetVoltageReference(motor_t *ptMotor,
     return FOC_RESULT_OK;
 }
 
+/**
+ * @brief Accept the unused inductance-test voltage hook.
+ * @param ptMotor Motor object.
+ * @param ptVoltageCommand D/Q modulation command.
+ * @return FOC_RESULT_OK.
+ */
+foc_result_t motor_IdentificationApplyIsr(
+    motor_t *ptMotor,
+    const foc_dq_t *ptVoltageCommand)
+{
+    (void)ptMotor;
+    (void)ptVoltageCommand;
+    return FOC_RESULT_OK;
+}
+
+/**
+ * @brief Ignore the unrelated inductance-test abort path.
+ * @param ptMotor Motor object.
+ * @param eFault Requested Motor fault.
+ * @return None.
+ */
+void motor_IdentificationAbortIsr(motor_t *ptMotor,
+                                  motor_fault_e eFault)
+{
+    (void)ptMotor;
+    (void)eFault;
+}
+
 foc_result_t motor_GetStatus(const motor_t *ptMotor,
                              motor_status_t *ptStatus)
 {
@@ -93,14 +121,17 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
 }
 
 static void test_RunCapture(identify_t *ptIdentify,
+                            motor_t *ptMotor,
                             foc_scalar_t qCurrentD)
 {
     uint32_t wIsr = 0U;
     uint32_t wTotalIsr = IDENTIFY_RESISTANCE_SAMPLE_COUNT *
                          IDENTIFY_RESISTANCE_ISR_PER_SAMPLE;
+    identify_isr_sample_t tSample = {.qCurrentD = FOC_ZERO};
 
+    tSample.qCurrentD = qCurrentD;
     for (wIsr = 0U; wIsr < wTotalIsr; wIsr++) {
-        identify_driver_IsrStep(ptIdentify, qCurrentD);
+        identify_IsrStep(ptIdentify, ptMotor, &tSample);
     }
 }
 
@@ -130,10 +161,11 @@ int main(void)
     s_lNowTicks = 101;
     test_RunProgress(&tIdentify, &tMotor);
     identify_GetStatus(&tIdentify, &tStatus);
-    assert(tStatus.eState == IDENTIFY_STATE_RESISTANCE_CAPTURE);
-    test_RunCapture(&tIdentify, FOC_SCALAR(0.10f));
+    assert(tIdentify.tResistance.eState ==
+           IDENTIFY_RESISTANCE_STATE_CAPTURE);
+    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.10f));
     identify_GetStatus(&tIdentify, &tStatus);
-    assert(tStatus.hwCaptureSampleCount ==
+    assert(tIdentify.tResistance.hwCaptureSampleCount ==
            IDENTIFY_RESISTANCE_SAMPLE_COUNT);
     assert(identify_GetResistance(&tIdentify,
                                   &wResistanceMilliohm) ==
@@ -148,7 +180,7 @@ int main(void)
     test_RunProgress(&tIdentify, &tMotor);
     s_lNowTicks = 403;
     test_RunProgress(&tIdentify, &tMotor);
-    test_RunCapture(&tIdentify, FOC_SCALAR(0.20f));
+    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.20f));
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
@@ -160,8 +192,8 @@ int main(void)
                  0.10f) < 0.001f);
     assert(fabsf(foc_to_float(tIdentify.tResistance.aqAverageCurrent[1U]) -
                  0.20f) < 0.001f);
-    assert(wResistanceMilliohm > 3400U);
-    assert(wResistanceMilliohm < 3450U);
+    assert(wResistanceMilliohm > 5100U);
+    assert(wResistanceMilliohm < 5200U);
     assert(identify_GetResistance(&tIdentify,
                                   &wResistanceMilliohm) ==
            FOC_RESULT_BUSY);
@@ -178,6 +210,7 @@ int main(void)
     identify_Stop(&tIdentify, &tMotor);
     identify_GetStatus(&tIdentify, &tStatus);
     assert(tStatus.eState == IDENTIFY_STATE_IDLE);
+    assert(identify_Reset(&tIdentify, &tMotor) == FOC_RESULT_OK);
     assert(identify_StartResistance(&tIdentify) == FOC_RESULT_OK);
     return 0;
 }

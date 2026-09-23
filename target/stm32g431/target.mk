@@ -14,9 +14,6 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 # Chip preprocessor defines
 C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 C_DEFS += -DFOC_TRIG_BACKEND=2
-C_DEFS += -DFOC_HF_DEADLINE_CYCLES=8500U
-C_DEFS += -DFOC_HF_BASELINE_MAX_CYCLES=5950U
-C_DEFS += -DFOC_HF_SHADOW_MAX_CYCLES=6800U
 C_DEFS += -DFOC_HF_ISR_HZ=20000U
 C_DEFS += -DFOC_DCBUS_SOURCE=2U
 # 12 V operation: PB10=0, Q48 off, R30=18 kOhm is the lower divider leg.
@@ -26,6 +23,7 @@ C_DEFS += -DFOC_DCBUS_MV_PER_COUNT_DEN=2457U
 C_DEFS += -DFOC_DCBUS_OFFSET_MILLIVOLT=0
 C_DEFS += -DFOC_SUPPORT=1
 C_DEFS += -DFOC_ENCODER_STATIC_BINDING=1
+C_DEFS += -DMDI_MAIN_STREAM_RESOURCE=board_stream
 
 # CMSIS paths
 CMSIS_CORE = vendor/cortex-m/cmsis_core
@@ -62,10 +60,6 @@ HAL_SOURCES = \
     $(HAL_SRC)/stm32g4xx_hal_fdcan.c \
     $(HAL_SRC)/stm32g4xx_hal_i2c.c \
     $(HAL_SRC)/stm32g4xx_hal_i2c_ex.c \
-    $(HAL_SRC)/stm32g4xx_hal_uart.c \
-    $(HAL_SRC)/stm32g4xx_hal_uart_ex.c \
-    $(HAL_SRC)/stm32g4xx_hal_usart.c \
-    $(HAL_SRC)/stm32g4xx_hal_usart_ex.c \
     $(HAL_SRC)/stm32g4xx_hal_tim.c \
     $(HAL_SRC)/stm32g4xx_hal_tim_ex.c \
     $(HAL_SRC)/stm32g4xx_hal_comp.c \

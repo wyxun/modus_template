@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    foc_observer.c
- * @brief   Initialize the configured estimator owned by Motor.
+ * @brief   Initialize the configured estimator owned by Position.
  ****************************************************************************/
 
 #include "foc_observer.h"
@@ -11,7 +11,7 @@
 
 /**
  * @brief Initialize the SMO contained by this Observer instance.
- * @param ptObserver Motor-owned Observer object.
+ * @param ptObserver Position-owned Observer object.
  * @param ptMotorParams Motor parameters shared with Motor.
  * @param ptConfig Selected SMO configuration.
  * @return FOC_RESULT_OK or an initialization error.
@@ -43,7 +43,7 @@ foc_result_t foc_observer_Init(
 
 /**
  * @brief Run one sample through the configured observer implementation.
- * @param ptObserver Motor-owned Observer object.
+ * @param ptObserver Position-owned Observer object.
  * @param ptInput Common current, voltage, and optional bus input.
  * @return FOC_RESULT_OK or an observer input error.
  */
@@ -70,7 +70,7 @@ foc_result_t foc_observer_Step(
 }
 
 /**
- * @brief Reset the Motor-owned estimator and its common output.
+ * @brief Reset the Position-owned estimator and its common output.
  * @param ptObserver Observer object.
  * @return None.
  */

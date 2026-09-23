@@ -1,6 +1,8 @@
 /**
  * @file   port_sys.c
- * @brief  STM32G431 系统级初始化（时钟 / 全外设 / SysTick）
+ * @brief  STM32G431 board clock and peripheral initialization.
+ * @author Codex
+ * @date   2026-09-23
  */
 
 #include "peripheral.h"
@@ -12,15 +14,8 @@
 #include "haladc.h"
 #include "halcomp.h"
 #include "haltim1.h"
-#include "halusart.h"
-#include "halfdcan.h"
 #include "halledgpio.h"
 #include "halcordic.h"
-
-/* MDI interface includes */
-#include "mdi.h"
-#include "mdi_hw.h"
-#include "mdi/instance.h"
 
 /* --------------------------------------------------------------------------
  *  系统时钟配置：HSI 16 MHz → PLL → 170 MHz
@@ -74,22 +69,8 @@ void SystemClock_Config(void)
 }
 
 /* --------------------------------------------------------------------------
- *  1ms 时钟节拍回调 — SysTick_Handler 中调用
- * -------------------------------------------------------------------------- */
-void peripheral_Clock(void)
-{
-    static uint16_t s_hwCounter = 0;
-    halusart_Clock();
-
-    if (++s_hwCounter >= 500) {
-        s_hwCounter = 0;
-        (void)mdi_gpio_pin_Toggle(HW.ptLedStatus);
-    }
-}
-
-/* --------------------------------------------------------------------------
  *  peripheral_Init — main() 最先调用的底层初始化入口
- *  参考 reference 的初始化顺序：DAC → OPAMP → ADC → COMP → TIM1 → USART → FDCAN → GPIO
+ *  初始化顺序：GPIO → CORDIC → DAC → OPAMP → ADC → COMP → TIM1
  * -------------------------------------------------------------------------- */
 void peripheral_Init(void)
 {
@@ -104,11 +85,6 @@ void peripheral_Init(void)
     halcomp_Init();
     haltim1_Init();
 
-    halusart_Init();
-
-    (void)mdi_stm32_g431_i2c1_Init();
-
-    extern void haladc_EnableISR(void);
     haladc_EnableISR();
     haltim1_EnableISR();
 }

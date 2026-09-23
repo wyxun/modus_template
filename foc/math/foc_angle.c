@@ -4,11 +4,14 @@
  ************************************************************************** */
 
 #include "foc_angle.h"
-#include "foc_config.h"
 #include "foc_trig.h"
+#include "foc_port.h"
 
 #if (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_CORDIC)
-#include "halcordic.h"
+#if !defined(FOC_PORT_TRIG_SINCOS_BAM32) || \
+    !defined(FOC_PORT_TRIG_ATAN2)
+#error "FOC CORDIC backend requires foc_port trigger bindings"
+#endif
 #endif
 
 #if defined(FOC_NUMERIC_FLOAT)
@@ -78,7 +81,7 @@ void foc_angle_sincos(foc_angle_t tAngle,
 {
 #if defined(FOC_NUMERIC_FLOAT)
   #if (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_CORDIC)
-    hal_cordic_SinCosBam32(tAngle.wBam32, pqSin, pqCos);
+    FOC_PORT_TRIG_SINCOS_BAM32(tAngle.wBam32, pqSin, pqCos);
   #elif (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_LUT)
     lut_sincos_bam32(tAngle.wBam32, pqSin, pqCos);
   #else
@@ -88,7 +91,7 @@ void foc_angle_sincos(foc_angle_t tAngle,
   #endif
 #else
   #if (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_CORDIC)
-    hal_cordic_SinCosBam32(tAngle.wBam32, pqSin, pqCos);
+    FOC_PORT_TRIG_SINCOS_BAM32(tAngle.wBam32, pqSin, pqCos);
   #elif (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_LUT)
     lut_sincos_bam32(tAngle.wBam32, pqSin, pqCos);
   #else
@@ -116,7 +119,7 @@ foc_angle_t foc_angle_atan2(foc_scalar_t qY,
 {
 #if defined(FOC_NUMERIC_FLOAT)
   #if (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_CORDIC)
-    return foc_angle_from_scalar(hal_cordic_Atan2(qY, qX));
+    return foc_angle_from_scalar(FOC_PORT_TRIG_ATAN2(qY, qX));
   #else
     float fTurns = atan2f(qY, qX) / FOC_TWO_PI_F;
     return foc_angle_from_turns(fTurns);
