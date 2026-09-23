@@ -14,6 +14,7 @@
 #include "modus.h"
 #include "foc_config.h"
 #include "foc_encoder.h"
+#include "identify.h"
 #include "motor.h"
 
 typedef struct {
@@ -34,6 +35,8 @@ typedef struct {
 typedef struct {
     modus_base_t *ptBase;
     motor_t tMotor;
+    identify_t tIdentify;
+    identify_state_t eLastIdentifyState;
     foc_encoder_t tEncoder;
     foc_app_hf_stats_t tHfStats;
     uint8_t chRunPt;

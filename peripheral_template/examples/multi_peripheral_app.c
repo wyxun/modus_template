@@ -6,12 +6,7 @@
 
 #include "multi_peripheral_app.h"
 
-#ifndef TEMPLATE_SYSTICK_HZ
-#define TEMPLATE_SYSTICK_HZ 1000U
-#endif
-
-static uint32_t s_wAdcPeriodTicks;
-static uint32_t s_wAdcLastTick;
+extern void mdi_Service(void);
 
 void template_UpdateOutputs(uint8_t chValue)
 {
@@ -37,49 +32,33 @@ void template_AdcDmaCompleteIrq(void)
 }
 
 /**
- * @brief Set the ADC scan frequency used by the tick-driven service.
- * @param wHz Requested scan frequency in hertz, up to SysTick frequency.
- * @param wCurrentTick Current SysTick counter used as the period origin.
- * @return MDI_OK when the tick period accepts the value.
+ * @brief Set the fixed ADC scan frequency used by the board service.
+ * @param wHz Must equal PT32_ADC_SERVICE_RATE_HZ.
+ * @param wCurrentTick Current board raw tick; retained for compatibility.
+ * @return MDI_OK when the ADC frequency is accepted.
  */
 mdi_status_t template_SetAdcSampleFrequency(
     uint32_t wHz, uint32_t wCurrentTick)
 {
-    if (wHz == 0U || wHz > TEMPLATE_SYSTICK_HZ) {
+    if (wHz != PT32_ADC_SERVICE_RATE_HZ) {
         return MDI_RANGE;
     }
-    s_wAdcPeriodTicks = TEMPLATE_SYSTICK_HZ / wHz;
-    if (s_wAdcPeriodTicks == 0U) {
-        s_wAdcPeriodTicks = 1U;
-    }
-    s_wAdcLastTick = wCurrentTick;
-    return MDI_OK;
+    g_qwPt32RawTick = (mdi_tick_t)wCurrentTick;
+    return MDI_ADC_SetSampleFrequency(adc1_mean, wHz);
 }
 
 /**
  * @brief Schedule ADC conversion and reduce one completed block.
- * @param wCurrentTick Current wrapping SysTick counter.
- * @return MDI_OK when work completed or no work was due; MDI_OVERRUN after
- *         recovering from one or more overwritten DMA blocks.
- * @note The DMA ISR only calls template_AdcDmaCompleteIrq().
+ * @param wCurrentTick Current wrapping board raw tick.
+ * @return The last status reported by the board MDI service.
+ * @note This compatibility wrapper is retained for existing callers. New
+ *       applications should let modus_Run() invoke mdi_Service().
  */
 mdi_status_t template_AdcService(uint32_t wCurrentTick)
 {
-    mdi_status_t eStatus = MDI_OK;
-    if (MDI_ADC_DMA_IsReady(adc1_dma)) {
-        eStatus = MDI_ADC_MeanUpdate(adc1_mean);
-        if (eStatus != MDI_OK && eStatus != MDI_OVERRUN) {
-            return eStatus;
-        }
-    }
-    if (s_wAdcPeriodTicks == 0U) {
-        return MDI_BUSY;
-    }
-    if ((uint32_t)(wCurrentTick - s_wAdcLastTick) >= s_wAdcPeriodTicks) {
-        s_wAdcLastTick = wCurrentTick;
-        eStatus = MDI_ADC_Start(adc1_mean);
-    }
-    return eStatus;
+    g_qwPt32RawTick = (mdi_tick_t)wCurrentTick;
+    mdi_Service();
+    return g_ePt32AdcStatus;
 }
 
 mdi_status_t template_ReadBusVoltage(uint32_t *pwCode)

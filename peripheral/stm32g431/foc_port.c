@@ -28,6 +28,11 @@ foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty)
     return mdi_g431_foc_set_duty(ptDuty);
 }
 
+foc_result_t foc_SampleDcBusMillivolt(uint32_t *pwMillivolt)
+{
+    return mdi_g431_foc_sample_dcbus_millivolt(pwMillivolt);
+}
+
 void foc_port_StartAdcTrigger(void)
 {
     mdi_g431_foc_start_adc_trigger();

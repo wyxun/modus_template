@@ -13,6 +13,13 @@
 #include <stdint.h>
 
 #include "mdi/core/bind.h"
+#include "mdi/core/stream.h"
+#include "mdi/core/tick.h"
+#include "mdi/core/timer.h"
+
+#ifndef PT32_CORE_CLOCK_HZ
+#define PT32_CORE_CLOCK_HZ 80000000U
+#endif
 
 typedef struct {
     volatile uint32_t IDR;
@@ -55,6 +62,21 @@ typedef struct {
     volatile uint32_t CLEAR;
 } pt32_fault_t;
 
+typedef struct {
+    uint8_t achData[64];
+    uint32_t wRead;
+    uint32_t wWrite;
+    uint32_t wCount;
+    bool bBusy;
+} pt32_stream_state_t;
+
+extern volatile mdi_tick_t g_qwPt32RawTick;
+
+MDI_INLINE mdi_tick_t pt32_GetSystemTicks(void)
+{
+    return g_qwPt32RawTick;
+}
+
 /* Board integration overrides these addresses before including instance.h. */
 #ifndef PT32_GPIOA_BASE
 #define PT32_GPIOA_BASE UINT32_C(0x40000000)
@@ -70,6 +92,9 @@ typedef struct {
 #endif
 #ifndef PT32_TIMER2_BASE
 #define PT32_TIMER2_BASE UINT32_C(0x40011000)
+#endif
+#ifndef PT32_TIMER3_BASE
+#define PT32_TIMER3_BASE UINT32_C(0x40012000)
 #endif
 #ifndef PT32_ADC1_BASE
 #define PT32_ADC1_BASE UINT32_C(0x40020000)
@@ -89,6 +114,7 @@ typedef struct {
 #define PT32_GPIOC ((pt32_gpio_t *)(uintptr_t)PT32_GPIOC_BASE)
 #define PT32_TIMER1 ((pt32_timer_t *)(uintptr_t)PT32_TIMER1_BASE)
 #define PT32_TIMER2 ((pt32_timer_t *)(uintptr_t)PT32_TIMER2_BASE)
+#define PT32_TIMER3 ((pt32_timer_t *)(uintptr_t)PT32_TIMER3_BASE)
 #define PT32_ADC1 ((pt32_adc_t *)(uintptr_t)PT32_ADC1_BASE)
 #define PT32_I2C0 ((pt32_bus_t *)(uintptr_t)PT32_I2C0_BASE)
 #define PT32_SPI0 ((pt32_bus_t *)(uintptr_t)PT32_SPI0_BASE)
@@ -203,6 +229,126 @@ typedef struct {
 #define MDI_PT32_IO_BIND(NAME, WIDTH, PORTS)                                     \
     MDI_PT32_IO_BIND_CAPS(NAME, WIDTH, PORTS,                                    \
                           MDI_IO_CAP_INPUT | MDI_IO_CAP_OUTPUT)
+
+/** Bind a generic timer resource to a board timer register model. */
+#define MDI_PT32_TIMER_BIND(NAME, TIMER, CLOCK_HZ)                    \
+    _Static_assert((CLOCK_HZ) > 0U, "timer clock must be nonzero");   \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _timer_SetFrequency)(          \
+        uint32_t wHz)                                                  \
+    {                                                                   \
+        uint32_t wPeriod;                                               \
+        if (wHz == 0U || wHz > (CLOCK_HZ)) { return MDI_RANGE; }       \
+        if (((TIMER)->CR1 & 1U) != 0U) { return MDI_BUSY; }             \
+        wPeriod = (CLOCK_HZ) / wHz;                                     \
+        if (wPeriod < 2U) { return MDI_RANGE; }                        \
+        (TIMER)->PSC = 0U;                                              \
+        (TIMER)->ARR = wPeriod - 1U;                                    \
+        (TIMER)->EGR = 1U;                                              \
+        return MDI_OK;                                                  \
+    }                                                                   \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _timer_Start)(void)            \
+    {                                                                   \
+        (TIMER)->CR1 |= 1U;                                             \
+        return MDI_OK;                                                  \
+    }                                                                   \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _timer_Stop)(void)             \
+    {                                                                   \
+        (TIMER)->CR1 &= ~1U;                                            \
+        return MDI_OK;                                                  \
+    }                                                                   \
+    MDI_INLINE bool MDI_OP(NAME, _timer_IsRunning)(void)                 \
+    {                                                                   \
+        return ((TIMER)->CR1 & 1U) != 0U;                              \
+    }
+
+/** Bind a board-owned raw tick counter without assigning time units. */
+#define MDI_PT32_TICK_BIND(NAME, NOW_FN)                                  \
+    MDI_INLINE mdi_tick_t MDI_OP(NAME, _tick_Now)(void)                    \
+    {                                                                       \
+        return (mdi_tick_t)(NOW_FN)();                                     \
+    }
+
+#define PT32_STREAM_CAPACITY 64U
+
+MDI_INLINE int32_t pt32_stream_Write(pt32_stream_state_t *ptState,
+                                     const uint8_t *pchData, uint32_t wLength)
+{
+    uint32_t wIndex;
+    uint32_t wWritable;
+
+    if (ptState == NULL || (wLength != 0U && pchData == NULL)) {
+        return -1;
+    }
+    wWritable = PT32_STREAM_CAPACITY - ptState->wCount;
+    if (wLength < wWritable) {
+        wWritable = wLength;
+    }
+    for (wIndex = 0U; wIndex < wWritable; ++wIndex) {
+        ptState->achData[ptState->wWrite] = pchData[wIndex];
+        ptState->wWrite = (ptState->wWrite + 1U) % PT32_STREAM_CAPACITY;
+    }
+    ptState->wCount += wWritable;
+    ptState->bBusy = wWritable != 0U;
+    return (int32_t)wWritable;
+}
+
+MDI_INLINE int32_t pt32_stream_Read(pt32_stream_state_t *ptState,
+                                    uint8_t *pchData, uint32_t wLength)
+{
+    uint32_t wIndex;
+    uint32_t wReadable;
+
+    if (ptState == NULL || (wLength != 0U && pchData == NULL)) {
+        return -1;
+    }
+    wReadable = ptState->wCount;
+    if (wLength < wReadable) {
+        wReadable = wLength;
+    }
+    for (wIndex = 0U; wIndex < wReadable; ++wIndex) {
+        pchData[wIndex] = ptState->achData[ptState->wRead];
+        ptState->wRead = (ptState->wRead + 1U) % PT32_STREAM_CAPACITY;
+    }
+    ptState->wCount -= wReadable;
+    return (int32_t)wReadable;
+}
+
+MDI_INLINE uint32_t pt32_stream_Available(const pt32_stream_state_t *ptState)
+{
+    return ptState == NULL ? 0U : ptState->wCount;
+}
+
+MDI_INLINE bool pt32_stream_IsBusy(const pt32_stream_state_t *ptState)
+{
+    return ptState != NULL && ptState->bBusy;
+}
+
+MDI_INLINE void pt32_stream_Clock(pt32_stream_state_t *ptState)
+{
+    if (ptState != NULL) {
+        ptState->bBusy = false;
+    }
+}
+
+#define MDI_PT32_STREAM_BIND(NAME, STATE)                                  \
+    MDI_INLINE int32_t MDI_OP(NAME, _stream_Write)(                         \
+        const uint8_t *pchData, uint32_t wLength)                           \
+    {                                                                        \
+        return pt32_stream_Write(&(STATE), pchData, wLength);               \
+    }                                                                        \
+    MDI_INLINE int32_t MDI_OP(NAME, _stream_Read)(                          \
+        uint8_t *pchData, uint32_t wLength)                                 \
+    {                                                                        \
+        return pt32_stream_Read(&(STATE), pchData, wLength);                \
+    }                                                                        \
+    MDI_INLINE uint32_t MDI_OP(NAME, _stream_Available)(void)                \
+    {                                                                        \
+        return pt32_stream_Available(&(STATE));                             \
+    }                                                                        \
+    MDI_INLINE bool MDI_OP(NAME, _stream_IsBusy)(void)                      \
+    {                                                                        \
+        return pt32_stream_IsBusy(&(STATE));                                \
+    }
 
 /* A compact reference PWM timing provider. Replace the divider algorithm with
  * the real timer's clock tree and update-event rules on a production target. */

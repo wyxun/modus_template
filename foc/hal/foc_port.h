@@ -33,6 +33,15 @@ foc_result_t foc_SampleCurrent(
 foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty);
 
 /**
+ * @brief Read a completed DC-bus voltage sample in millivolts.
+ * @param pwMillivolt Output DC-bus voltage.
+ * @return FOC_RESULT_OK or an unavailable/invalid sample status.
+ * @note This operation must not start or wait for an ADC conversion from an
+ *       high-frequency ISR. The target adapter owns sample timing and scale.
+ */
+foc_result_t foc_SampleDcBusMillivolt(uint32_t *pwMillivolt);
+
+/**
  * @brief Start the target ADC trigger used by the FOC sampling schedule.
  * @return None.
  * @note Initialization-only; never call this from the current loop.
@@ -74,6 +83,10 @@ foc_result_t foc_PwmClearFault(void);
 #endif
 #ifndef FOC_PORT_SET_DUTY
 #define FOC_PORT_SET_DUTY(P) foc_SetDuty(P)
+#endif
+#ifndef FOC_PORT_SAMPLE_DCBUS_MILLIVOLT
+#define FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(P) \
+    foc_SampleDcBusMillivolt(P)
 #endif
 #ifndef FOC_PORT_START_ADC_TRIGGER
 #define FOC_PORT_START_ADC_TRIGGER() foc_port_StartAdcTrigger()

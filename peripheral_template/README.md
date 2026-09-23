@@ -10,7 +10,12 @@ peripheral_template/
 ├── mdi/
 │   ├── backend.h       抽象 32 位寄存器模型和芯片后端绑定宏
 │   ├── instance.h      本芯片的多外设资源实例
-│   └── state.c         DMA 缓冲区和发布状态的实例存储
+│   ├── state.c         DMA、Tick 和 Stream 的实例存储
+│   └── service.c       mdi_Service/mdi_Clock 板级维护
+├── tests/
+│   ├── contract.c       Timer/Stream 编译期契约
+│   ├── runtime.c        Timer/Stream 主机运行检查
+│   └── service_runtime.c Board service 主机运行检查
 └── examples/
     ├── multi_peripheral_app.c
     └── multi_peripheral_app.h
@@ -24,7 +29,7 @@ peripheral_template/
 | --- | --- | --- |
 | `status_led`、`user_button` | GPIO 输入输出 | `MDI_IO_Read/Write` |
 | `dac_parallel` | 跨 GPIO 端口的并口数据 | `MDI_IO_Write`、`MDI_IO_WriteMasked` |
-| `adc1_dma` + `adc1_mean` | ADC/DMA 多通道块和按需均值 | `template_SetAdcSampleFrequency`、`template_AdcService` |
+| `adc1_dma` + `adc1_mean` | ADC/DMA 多通道块和按需均值 | `template_SetAdcSampleFrequency`、`mdi_Service` |
 | `phase_u`、`phase_v`、`bus_voltage` 等 | 同一采集组的通道视图 | `MDI_ADC_Read` |
 | `phase_current` | 同一采集组的三相一致帧视图 | `MDI_Sample_ReadCompleted` |
 | `bridge` | 三相中心对齐 PWM | `MDI_PWM_SetDuty/Commit` |
@@ -32,15 +37,17 @@ peripheral_template/
 | `encoder_i2c_hw` | 硬件 I2C 主机 | `MDI_I2C_Reg8_Read` |
 | `sensor_bus` + `encoder_i2c_sw` | 软件 I2C 主机 | `MDI_I2C_Reg8_Read` |
 | `config_eeprom` | SPI 25xx EEPROM | `MDI_SPI_EEPROM_Read/Write` |
+| `adc_service_timer` | 通用外设计时器示例 | `MDI_TIMER_SetFrequency/Start/Stop` |
+| `pt32_raw_tick` | 板级原始 Tick | `MDI_TICK_Now` |
+| `board_stream` | 静态环形字节流 | `MDI_STREAM_Write/Read` |
 
 硬件 I2C 和软件 I2C 是两个可替换 provider。实际产品只能让一个 provider 获得同一组
 SDA/SCL 资源的所有权；本例同时声明它们是为了展示替换关系。
 
 ADC/DMA 的完成中断只调用内部的 `MDI_ADC_DMA_Publish(adc1_dma)`，不做累加、均值或
-滤波。应用在自己的任务或控制循环中调用 `template_AdcService(current_tick)`：函数先
-检查 DMA 完成标志，有新 block 才在当前上下文执行均值或其他滤波；然后比较当前 tick
-与上次启动 tick，决定是否启动下一次 ADC。通道读取只读取已经发布的快照。没有及时
-读取时，内部可以检测 DMA 丢块；
+滤波。MODUS 0.6.1.2 将板级维护收敛到 `mdi_Service()`：它先尝试消费已发布 block，
+再比较当前 raw tick 与上次启动 tick，决定是否启动下一次 ADC。`modus_Run()` 会在对象 Run 回调前自动调用该服务。通道读取
+只读取已经发布的快照。没有及时读取时，内部可以检测 DMA 丢块；
 真实芯片需要用双缓冲、环形缓冲或暂停 DMA 保证正在处理的 block 不会被覆盖。
 
 ## ADC/DMA feature 用法
@@ -52,8 +59,8 @@ ADC/DMA 的完成中断只调用内部的 `MDI_ADC_DMA_Publish(adc1_dma)`，不�
 mdi_adc_value_t tBusVoltage = {0};
 mdi_adc_value_t tBusCurrent = {0};
 
-(void)template_SetAdcSampleFrequency(1000U, wSysTick);
-(void)template_AdcService(wSysTick);
+(void)template_SetAdcSampleFrequency(100U, qwRawTick);
+(void)modus_Run();  /* 内部自动调用 mdi_Service() */
 (void)MDI_ADC_Read(bus_voltage, &tBusVoltage);
 (void)MDI_ADC_Read(bus_current, &tBusCurrent);
 ```
@@ -64,16 +71,17 @@ mdi_adc_value_t tBusCurrent = {0};
 ```c
 uint32_t wBusVoltage = 0U;
 
-(void)template_SetAdcSampleFrequency(1000U, wSysTick);
-(void)template_AdcService(wSysTick);
+(void)template_SetAdcSampleFrequency(100U, qwRawTick);
+(void)modus_Run();
 (void)template_ReadBusVoltage(&wBusVoltage);
 ```
 
-`template_AdcService()` 只应在任务或控制上下文调用；DMA 中断入口
+旧的 `template_AdcService()` 保留为迁移包装，会更新模板 tick 后调用同一个板级服务；新
+代码不应在 `modus_Run()` 外重复调用它。DMA 中断入口
 `template_AdcDmaCompleteIrq()` 仍然只发布完成计数。`MDI_ADC_Read()` 不启动转换，也不
-做滤波；如果还没有完成一次服务处理，会返回 `MDI_BUSY`。模板用 SysTick 驱动示例，
-`template_SetAdcSampleFrequency()` 的第二个参数就是设置时刻的 SysTick，用来建立
-下一次触发的时间基准。需要高于 SysTick 的采样率时，应把同一
+做滤波；如果还没有完成一次服务处理，会返回 `MDI_BUSY`。模板以 `PT32_CORE_CLOCK_HZ`
+表示 raw tick 的频率，服务默认按 100 Hz 调度。`template_SetAdcSampleFrequency()`
+保留用于迁移旧调用，生产板应直接在板级服务中固定采样策略。需要高于前台服务频率的采样时，应把同一
 `MDI_ADC_Start(adc1_mean)` 绑定到硬件定时器触发，而不是提高 while 循环频率；那种
 后端可以直接使用公共的 `MDI_ADC_SetSampleFrequency()` 硬件触发接口。
 
@@ -87,6 +95,19 @@ uint32_t wBusVoltage = 0U;
 例如 `-DPT32_ADC_SAMPLE_COUNT=16`。它对该采集组的所有通道同时生效，并会改变 DMA
 缓冲区大小和均值循环次数。不同通道需要不同重复次数时，应拆成多个采集组或增加新的
 feature；不要把通道差异加入 core 契约。
+
+## Timer、Raw Tick 和 Stream
+
+`adc_service_timer` 使用独立的 TIMER3 资源，作为 Timer 契约示例。Timer provider 只负责频率、启停和运行状态，
+不注册 ISR 回调；真实芯片应在后端补齐时钟树、更新事件和中断向量配置。
+
+`pt32_raw_tick` 是板级无单位计数器，模板 provider 读取 `g_qwPt32RawTick`；真实板应像参考
+项目一样从单调硬件计数器读取。`mdi_Clock()` 只维护 Stream，不负责制造 raw tick。
+
+`board_stream` 是固定容量的静态环形字节流。写入返回实际写入字节数，读取返回实际读取
+字节数，参数错误返回负值；`MDI_STREAM_Available()` 返回当前可读字节数，
+`MDI_STREAM_IsBusy()` 只表示最近一次写入尚未完成的维护状态。`mdi_Clock()` 只清理该
+状态，不执行协议解析或阻塞操作。
 
 ## 与 MDI 框架规范的符合性
 
@@ -126,9 +147,23 @@ feature；不要把通道差异加入 core 契约。
 gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only                                 \
     -Imodus/src -Iperipheral_template                                            \
     peripheral_template/examples/multi_peripheral_app.c                          \
-    peripheral_template/mdi/state.c
+    peripheral_template/mdi/state.c                                               \
+    peripheral_template/mdi/service.c                                             \
+    peripheral_template/tests/contract.c
+```
+
+Timer、Stream 和板级服务的主机运行检查：
+
+```text
+gcc -std=c11 -Wall -Wextra -Werror -Imodus/src -Iperipheral_template \
+    peripheral_template/tests/runtime.c -o peripheral_template/tests/runtime.exe
+peripheral_template/tests/runtime.exe
+gcc -std=c11 -Wall -Wextra -Werror -Imodus/src -Iperipheral_template \
+    peripheral_template/tests/service_runtime.c -o peripheral_template/tests/service_runtime.exe
+peripheral_template/tests/service_runtime.exe
 ```
 
 应用层完整调用见 [multi_peripheral_app.c](examples/multi_peripheral_app.c)，公开包装
 声明见 [multi_peripheral_app.h](examples/multi_peripheral_app.h)，资源绑定见
-[instance.h](mdi/instance.h)，后端职责见 [backend.h](mdi/backend.h)。
+[instance.h](mdi/instance.h)，板级服务见 [service.c](mdi/service.c)，后端职责见
+[backend.h](mdi/backend.h)。

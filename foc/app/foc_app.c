@@ -7,6 +7,7 @@
 
 #include "foc_app.h"
 
+#include <ctype.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -37,22 +38,6 @@ static void foc_app_WaveformInit(foc_app_t *ptThis,
                                  uint32_t wPeriodNanoseconds);
 static void foc_app_WaveformStep(void);
 #define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
-#define FOC_WAVEFORM_SINE_POINTS    40U
-static const float s_afWaveSine[FOC_WAVEFORM_SINE_POINTS] = {
-    0.000000f, 0.156434f, 0.309017f, 0.453990f,
-    0.587785f, 0.707107f, 0.809017f, 0.891007f,
-    0.951057f, 0.987688f, 1.000000f, 0.987688f,
-    0.951057f, 0.891007f, 0.809017f, 0.707107f,
-    0.587785f, 0.453990f, 0.309017f, 0.156434f,
-    0.000000f, -0.156434f, -0.309017f, -0.453990f,
-    -0.587785f, -0.707107f, -0.809017f, -0.891007f,
-    -0.951057f, -0.987688f, -1.000000f, -0.987688f,
-    -0.951057f, -0.891007f, -0.809017f, -0.707107f,
-    -0.587785f, -0.453990f, -0.309017f, -0.156434f,
-};
-static float s_fWaveSine = 0.0f;
-static uint8_t s_chWaveSineIndex = 0U;
-static int16_t s_hwWaveSequence = 0;
 #endif
 
 static modus_base_cfg_t s_tFocAppBaseCfg = {
@@ -176,56 +161,53 @@ static foc_result_t foc_app_BindMotorConfig(
 static void foc_app_WaveformInit(foc_app_t *ptThis,
                                  uint32_t wPeriodNanoseconds)
 {
-    uint8_t chSine = FOC_WAVEFORM_CHANNEL_INVALID;
-    uint8_t chSequence = FOC_WAVEFORM_CHANNEL_INVALID;
-    uint8_t chSpeed = FOC_WAVEFORM_CHANNEL_INVALID;
-    uint8_t chSpeedRef = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chIu = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chId = FOC_WAVEFORM_CHANNEL_INVALID;
     uint8_t chIq = FOC_WAVEFORM_CHANNEL_INVALID;
-    uint8_t chIqRef = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chVdCmd = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chVd = FOC_WAVEFORM_CHANNEL_INVALID;
+    uint8_t chVq = FOC_WAVEFORM_CHANNEL_INVALID;
     uint32_t wActualRateHz = 0U;
-    uint32_t wActualSpeedRefHz = 0U;
-    uint32_t wActualIqRefHz = 0U;
     int nResult = MODUS_SUCCESS;
 
     if (ptThis == NULL) {
         return;
     }
-    s_fWaveSine = 0.0f;
-    s_chWaveSineIndex = 0U;
-    s_hwWaveSequence = 0;
     nResult = mwaveform.Init(NULL);
     if (nResult != MODUS_SUCCESS) {
         MLOGF(W, "FOC waveform init failed (%d)\r\n", nResult);
         return;
     }
-    chSine = mwaveform.AddVariable(
-        "Sine500", 1000.0f, (void *)&s_fWaveSine,
+    chIu = mwaveform.AddVariable(
+        "Iu", 1000.0f,
+        (void *)&ptThis->tMotor.tCurrentAbc.qU,
         MWAVEFORM_VAR_FLOAT);
-    chSequence = mwaveform.AddVariable(
-        "WaveSeq", 1.0f, (void *)&s_hwWaveSequence,
-        MWAVEFORM_VAR_RAW);
-    chSpeed = mwaveform.AddVariable(
-        "SpeedPU", 100.0f,
-        (void *)&ptThis->tMotor.tInput.qElectricalSpeedPu,
-        MWAVEFORM_VAR_FLOAT);
-    chSpeedRef = mwaveform.AddVariable(
-        "SpeedRefPU", 100.0f,
-        (void *)&ptThis->tMotor.tCommand.qSpeedReferencePu,
+    chId = mwaveform.AddVariable(
+        "Id", 1000.0f,
+        (void *)&ptThis->tMotor.tCore.tCurrent.qD,
         MWAVEFORM_VAR_FLOAT);
     chIq = mwaveform.AddVariable(
         "Iq", 1000.0f,
         (void *)&ptThis->tMotor.tCore.tCurrent.qQ,
         MWAVEFORM_VAR_FLOAT);
-    chIqRef = mwaveform.AddVariable(
-        "IqRef", 1000.0f,
-        (void *)&ptThis->tMotor.tCommand.tCurrentReference.qQ,
+    chVdCmd = mwaveform.AddVariable(
+        "VdCmd", 1000.0f,
+        (void *)&ptThis->tMotor.tCommand.tVoltageReference.qD,
         MWAVEFORM_VAR_FLOAT);
-    if (chSine == FOC_WAVEFORM_CHANNEL_INVALID ||
-        chSequence == FOC_WAVEFORM_CHANNEL_INVALID ||
-        chSpeed == FOC_WAVEFORM_CHANNEL_INVALID ||
-        chSpeedRef == FOC_WAVEFORM_CHANNEL_INVALID ||
+    chVd = mwaveform.AddVariable(
+        "Vd", 1000.0f,
+        (void *)&ptThis->tMotor.tCore.tVoltage.qD,
+        MWAVEFORM_VAR_FLOAT);
+    chVq = mwaveform.AddVariable(
+        "Vq", 1000.0f,
+        (void *)&ptThis->tMotor.tCore.tVoltage.qQ,
+        MWAVEFORM_VAR_FLOAT);
+    if (chIu == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chId == FOC_WAVEFORM_CHANNEL_INVALID ||
         chIq == FOC_WAVEFORM_CHANNEL_INVALID ||
-        chIqRef == FOC_WAVEFORM_CHANNEL_INVALID) {
+        chVdCmd == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chVd == FOC_WAVEFORM_CHANNEL_INVALID ||
+        chVq == FOC_WAVEFORM_CHANNEL_INVALID) {
         MLOGF(W, "%s\r\n", "FOC waveform channel registration failed");
         return;
     }
@@ -235,36 +217,18 @@ static void foc_app_WaveformInit(foc_app_t *ptThis,
         MLOGF(W, "%s\r\n", "FOC waveform 10 kHz stream unavailable");
         return;
     }
-    wActualSpeedRefHz = mwaveform.SetChannelRate(chSpeedRef, 1000U);
-    wActualIqRefHz = mwaveform.SetChannelRate(chIqRef, 1000U);
-    if (wActualSpeedRefHz != 1000U || wActualIqRefHz != 1000U) {
-        MLOGF(W, "%s\r\n", "FOC waveform reference rate unavailable");
-        return;
-    }
     mwaveform.Start();
-    MLOGF(I, "FOC waveform %lu Hz; refs 1000 Hz\r\n",
+    MLOGF(I, "FOC waveform %lu Hz\r\n",
           (unsigned long)wActualRateHz);
 }
 
 /**
- * @brief Update the reference sine and sequence before each 20 kHz sample.
+ * @brief Advance the waveform stream before each 20 kHz sample.
  * @param None.
  * @return None.
  */
 static void foc_app_WaveformStep(void)
 {
-    if (s_chWaveSineIndex >=
-        (uint8_t)(FOC_WAVEFORM_SINE_POINTS - 1U)) {
-        s_chWaveSineIndex = 0U;
-    } else {
-        s_chWaveSineIndex = (uint8_t)(s_chWaveSineIndex + 1U);
-    }
-    s_fWaveSine = s_afWaveSine[s_chWaveSineIndex];
-    if (s_hwWaveSequence >= 29999) {
-        s_hwWaveSequence = 0;
-    } else {
-        s_hwWaveSequence = (int16_t)(s_hwWaveSequence + 1);
-    }
     mwaveform.Step();
 }
 #endif
@@ -312,6 +276,11 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     if (eMotor != FOC_RESULT_OK) {
         return (int)eMotor;
     }
+    eResult = identify_Init(&ptThis->tIdentify);
+    if (eResult != FOC_RESULT_OK) {
+        motor_Stop(&ptThis->tMotor);
+        return (int)eResult;
+    }
     nBaseResult = mbase_Init(ptThis->ptBase, &s_tFocAppBaseCfg);
     if (nBaseResult != MODUS_SUCCESS) {
         motor_Stop(&ptThis->tMotor);
@@ -337,6 +306,9 @@ static int foc_app_Run(uintptr_t wObjectAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
     foc_result_t eResult = FOC_RESULT_OK;
+    foc_result_t eIdentify = FOC_RESULT_OK;
+    uint32_t wResistanceMilliohm = 0U;
+    identify_inductance_result_t tInductanceResult = {0};
 
     if (ptThis == NULL) {
         return MODUS_EFAIL;
@@ -354,6 +326,32 @@ static int foc_app_Run(uintptr_t wObjectAddr)
             !perfc_is_time_out_ms(100U,
                                   &ptThis->lBackoffTimestamp, false)) {
             continue;
+        }
+        eIdentify = identify_Run(&ptThis->tIdentify,
+                                 &ptThis->tMotor);
+        if (ptThis->tIdentify.eState == IDENTIFY_STATE_ERROR &&
+            ptThis->eLastIdentifyState != IDENTIFY_STATE_ERROR) {
+            MLOGF(W, "identify failed (%d)\r\n", (int)eIdentify);
+        }
+        ptThis->eLastIdentifyState = ptThis->tIdentify.eState;
+        if (eIdentify == FOC_RESULT_OK &&
+            identify_GetResistance(&ptThis->tIdentify,
+                                   &wResistanceMilliohm) == FOC_RESULT_OK) {
+            MLOGF(I, "identify R=%lu mOhm\r\n",
+                  (unsigned long)wResistanceMilliohm);
+        }
+        if (eIdentify == FOC_RESULT_OK &&
+            identify_GetInductance(&ptThis->tIdentify,
+                                   &tInductanceResult) == FOC_RESULT_OK) {
+            MLOGF(I, "identify Ld=%lu uH freq=%lu Hz v=%lu mV "
+                  "i=%ld mA samples=%u halves=%u\r\n",
+                  (unsigned long)
+                      tInductanceResult.wInductanceDMicroHenry,
+                  (unsigned long)tInductanceResult.wInjectionFrequencyHz,
+                  (unsigned long)tInductanceResult.wEffectiveVoltageMillivolt,
+                  (long)tInductanceResult.lMeanCurrentMilliamp,
+                  (unsigned)tInductanceResult.hwCaptureSampleCount,
+                  (unsigned)tInductanceResult.hwHalfCycleCount);
         }
         eResult = foc_encoder_Run(&ptThis->tEncoder);
         if (eResult != FOC_RESULT_OK) {
@@ -377,9 +375,41 @@ void foc_app_HighFrequencyISR(void)
     wNowTick = (uint32_t)lStartTicks;
     if (tFocApp.bReady) {
         motor_IsrStep(&tFocApp.tMotor, wNowTick);
+        switch (tFocApp.tIdentify.eOperation) {
+        case IDENTIFY_OPERATION_RESISTANCE: {
+            identify_isr_sample_t tIdentifySample = {
+                .qCurrentD = tFocApp.tMotor.tCore.tCurrent.qD,
+            };
+
+            identify_IsrStep(&tFocApp.tIdentify, &tFocApp.tMotor,
+                             &tIdentifySample);
+            break;
+        }
+        case IDENTIFY_OPERATION_INDUCTANCE: {
+            identify_isr_sample_t tIdentifySample = {
+                .qCurrentD = tFocApp.tMotor.tCore.tCurrent.qD,
+                .qCurrentQ = tFocApp.tMotor.tCore.tCurrent.qQ,
+                .qElectricalSpeedPu =
+                    tFocApp.tMotor.tInput.qElectricalSpeedPu,
+                .bMotorFault = tFocApp.tMotor.eState == MOTOR_STATE_FAULT,
+                .bAngleValid = tFocApp.tMotor.tInput.bAngleValid,
+                .bPwmSaturated = tFocApp.tMotor.tCore.bPwmSaturated,
+            };
+
+            tIdentifySample.bDcBusValid =
+                FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(
+                    &tIdentifySample.wDcBusMillivolt) == FOC_RESULT_OK;
+            identify_IsrStep(&tFocApp.tIdentify, &tFocApp.tMotor,
+                             &tIdentifySample);
+            break;
+        }
+        case IDENTIFY_OPERATION_NONE:
+        default:
+            break;
+        }
     }
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
-    //foc_app_WaveformStep();
+    foc_app_WaveformStep();
 #endif
     lElapsedTicks = get_system_ticks() - lStartTicks -
                     (int64_t)g_nOffset;
@@ -433,19 +463,24 @@ static void foc_app_ReportHfAverage(foc_app_t *ptThis)
 {
     uint32_t wAverageTicks = 0U;
     uint32_t wAverageMicroseconds = 0U;
+    uint32_t wDcBusMillivolt = 0U;
+    foc_result_t eDcBus = FOC_RESULT_DISABLED;
 
     if (!perfc_is_time_out_ms(1000U,
                               &ptThis->tHfStats.lReportTimestamp, true)) {
         return;
     }
+    eDcBus = FOC_PORT_SAMPLE_DCBUS_MILLIVOLT(&wDcBusMillivolt);
     if (!foc_app_GetHfAverage(ptThis, &wAverageTicks)) {
         return;
     }
     wAverageMicroseconds = (uint32_t)perfc_convert_ticks_to_us(
         (int64_t)wAverageTicks);
-    MLOGF(T, "FOC HF ISR avg=%lu cycles/%lu us\r\n",
+    MLOGF(T, "FOC HF ISR avg=%lu cycles/%lu us vbus=%lu mV%s\r\n",
           (unsigned long)wAverageTicks,
-          (unsigned long)wAverageMicroseconds);
+          (unsigned long)wAverageMicroseconds,
+          (unsigned long)wDcBusMillivolt,
+          eDcBus == FOC_RESULT_OK ? "" : " (invalid)");
 }
 
 #if MSHELL_ENABLE
@@ -463,9 +498,19 @@ static void foc_app_PrintStatus(const motor_t *ptMotor)
         MLOGF(E, "motor status unavailable (%d)\r\n", (int)eResult);
         return;
     }
-    MLOGF(I, "motor state=%u fault=0x%08X mode=%u pwm=%u\r\n",
+    MLOGF(I, "motor state=%u fault=0x%08X mode=%u pwm=%u "
+          "id=%.5f iq=%.5f vd_cmd=%.5f vd=%.5f vq=%.5f "
+          "zero=%u angle=%u\r\n",
           (unsigned)tStatus.eState, (unsigned)tStatus.wFaults,
-          (unsigned)tStatus.eMode, (unsigned)tStatus.bPwmEnabled);
+          (unsigned)tStatus.eMode, (unsigned)tStatus.bPwmEnabled,
+          (double)foc_to_float(ptMotor->tCore.tCurrent.qD),
+          (double)foc_to_float(ptMotor->tCore.tCurrent.qQ),
+          (double)foc_to_float(
+              ptMotor->tCommand.tVoltageReference.qD),
+          (double)foc_to_float(ptMotor->tCore.tVoltage.qD),
+          (double)foc_to_float(ptMotor->tCore.tVoltage.qQ),
+          (unsigned)tStatus.bElectricalZeroValid,
+          (unsigned)ptMotor->tInput.bAngleValid);
 }
 
 /**
@@ -507,7 +552,7 @@ static void foc_app_CmdMotor(const char *args)
         return;
     }
     if (strncmp(args, "stop", 4U) == 0) {
-        motor_Stop(&tFocApp.tMotor);
+        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
         return;
     } else if (strncmp(args, "clear", 5U) == 0) {
         eResult = motor_ClearFault(&tFocApp.tMotor);
@@ -573,6 +618,127 @@ static void foc_app_CmdMotor(const char *args)
 
 MODUS_SHELL_CMD(motor, foc_app_CmdMotor,
                 "FOC Motor: control/align/stop/clear/status/encoder");
+
+/**
+ * @brief Compare a shell argument with a complete keyword.
+ * @param pchArgs Shell argument string.
+ * @param pchKeyword Keyword to compare.
+ * @return true when the argument is exactly the keyword.
+ */
+static bool foc_app_IsKeyword(const char *pchArgs,
+                              const char *pchKeyword)
+{
+    size_t wLength = 0U;
+    const char *pchTail = NULL;
+
+    if (pchArgs == NULL || pchKeyword == NULL) {
+        return false;
+    }
+    wLength = strlen(pchKeyword);
+    if (strncmp(pchArgs, pchKeyword, wLength) != 0) {
+        return false;
+    }
+    pchTail = pchArgs + wLength;
+    while (isspace((unsigned char)*pchTail) != 0) {
+        pchTail++;
+    }
+    return *pchTail == '\0';
+}
+
+/**
+ * @brief Print the identification status.
+ * @param ptIdentify Identification object.
+ * @return None.
+ */
+static void foc_app_PrintIdentifyStatus(const identify_t *ptIdentify)
+{
+    identify_status_t tStatus = {0};
+    foc_result_t eResult = identify_GetStatus(ptIdentify, &tStatus);
+
+    if (eResult != FOC_RESULT_OK) {
+        MLOGF(E, "identify status unavailable (%d)\r\n", (int)eResult);
+        return;
+    }
+    MLOGF(I, "identify state=%u operation=%u result=%d\r\n",
+          (unsigned)tStatus.eState,
+          (unsigned)tStatus.eOperation,
+          (int)tStatus.eLastResult);
+}
+
+/**
+ * @brief Parse and start a fixed parameter-identification flow.
+ * @param args Command arguments after the identify command name.
+ * @return None.
+ */
+static void foc_app_CmdIdentify(const char *args)
+{
+    foc_result_t eResult = FOC_RESULT_OK;
+    bool bStartResistance = false;
+    bool bStartInductance = false;
+
+    if (args == NULL) {
+        return;
+    }
+    bStartResistance = foc_app_IsKeyword(args, "resistance");
+    bStartInductance = foc_app_IsKeyword(args, "inductance");
+    if (bStartResistance || bStartInductance) {
+        motor_status_t tMotorStatus = {0};
+
+        eResult = motor_GetStatus(&tFocApp.tMotor, &tMotorStatus);
+        if (eResult == FOC_RESULT_OK &&
+            (tMotorStatus.eState != MOTOR_STATE_IDLE ||
+             tMotorStatus.bPwmEnabled)) {
+            MLOGF(W, "identify requires motor idle after align\r\n");
+            eResult = FOC_RESULT_BUSY;
+        } else if (eResult == FOC_RESULT_OK &&
+                   !tMotorStatus.bElectricalZeroValid) {
+            MLOGF(W, "identify requires completed motor align\r\n");
+            eResult = FOC_RESULT_SAFETY;
+        } else if (eResult == FOC_RESULT_OK && bStartResistance) {
+            eResult = identify_StartResistance(&tFocApp.tIdentify);
+        } else if (eResult == FOC_RESULT_OK) {
+            identify_inductance_cfg_t tConfig = {
+                .wInjectionFrequencyHz = MOTOR_IDENTIFY_LD_FREQUENCY_HZ,
+                .hwCaptureDelayCycles = MOTOR_IDENTIFY_LD_CAPTURE_DELAY,
+                .hwCaptureSampleCount = MOTOR_IDENTIFY_LD_CAPTURE_SAMPLES,
+                .hwHalfCycleCount = MOTOR_IDENTIFY_LD_HALF_CYCLES,
+                .qModulationAmplitude =
+                    FOC_SCALAR(MOTOR_IDENTIFY_LD_MODULATION_PU),
+                .qMaxIdentificationCurrent =
+                    FOC_SCALAR(MOTOR_IDENTIFY_LD_MAX_CURRENT_PU),
+                .qMinCurrentDelta =
+                    FOC_SCALAR(MOTOR_IDENTIFY_LD_MIN_DELTA_PU),
+                .qMaxElectricalSpeedPu =
+                    FOC_SCALAR(MOTOR_IDENTIFY_LD_MAX_SPEED_PU),
+                .hwMotionFaultCycles = MOTOR_IDENTIFY_LD_MOTION_CYCLES,
+            };
+
+            eResult = identify_StartInductance(&tFocApp.tIdentify,
+                                               &tConfig);
+        } else {
+            /* Motor status failure is reported below. */
+        }
+    } else if (foc_app_IsKeyword(args, "status")) {
+        foc_app_PrintIdentifyStatus(&tFocApp.tIdentify);
+        return;
+    } else if (foc_app_IsKeyword(args, "stop")) {
+        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+        return;
+    } else if (foc_app_IsKeyword(args, "reset")) {
+        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+        eResult = identify_Reset(&tFocApp.tIdentify, &tFocApp.tMotor);
+    } else {
+        MLOGF(I, "usage: identify resistance | inductance | status | "
+              "stop | reset\r\n");
+        return;
+    }
+    if (eResult != FOC_RESULT_OK) {
+        MLOGF(W, "identify command rejected (%d)\r\n", (int)eResult);
+    }
+}
+
+MODUS_SHELL_CMD(identify, foc_app_CmdIdentify,
+                "FOC identification: resistance/inductance/status/stop/reset");
 #endif
 
 #if FOC_PORT_HAS_POSITION

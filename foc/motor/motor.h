@@ -71,6 +71,7 @@ typedef enum {
     MOTOR_FAULT_MATH = 1U << 3,
     MOTOR_FAULT_PWM = 1U << 4,
     MOTOR_FAULT_ALIGN = 1U << 5,
+    MOTOR_FAULT_IDENTIFICATION = 1U << 6,
 } motor_fault_e;
 
 typedef struct {
@@ -105,6 +106,7 @@ typedef struct {
     uint32_t wFaults;
     bool bPwmEnabled;
     bool bElectricalZeroValid;
+    foc_current_abc_t tCurrentAbc;
 } motor_t;
 
 typedef struct {
@@ -165,6 +167,27 @@ void motor_PollBreakFault(motor_t *ptMotor);
 foc_result_t motor_SetVoltageReference(motor_t *ptMotor,
                                        foc_scalar_t qD,
                                        foc_scalar_t qQ);
+
+/**
+ * @brief Submit a prevalidated identification voltage from the FOC ISR.
+ * @param ptMotor Running voltage-mode Motor.
+ * @param ptVoltageCommand D/Q modulation command.
+ * @return FOC_RESULT_OK or a state/safety error.
+ * @note This API is ISR-only and does not access the PWM port directly.
+ */
+foc_result_t motor_IdentificationApplyIsr(
+    motor_t *ptMotor,
+    const foc_dq_t *ptVoltageCommand);
+
+/**
+ * @brief Atomically stop a failed identification run in the FOC ISR.
+ * @param ptMotor Motor to stop.
+ * @param eFault Fault bit to latch.
+ * @return None.
+ */
+void motor_IdentificationAbortIsr(
+    motor_t *ptMotor,
+    motor_fault_e eFault);
 
 /**
  * @brief Set current references through the Motor API.

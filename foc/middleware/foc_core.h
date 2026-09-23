@@ -45,6 +45,7 @@ typedef struct {
     foc_dq_t       tVoltage;
     foc_ab_t       tVoltageAlphaBeta;
     foc_duty_abc_t tDuty;
+    bool bPwmSaturated;
 } foc_core_state_t;
 
 /**

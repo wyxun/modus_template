@@ -27,5 +27,7 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/observer/foc_observer.c \
               foc/observer/foc_smo.c \
               foc/identify/identify.c \
+              foc/identify/identify_resistance.c \
+              foc/identify/identify_inductance.c \
               foc/motor/motor.c \
               foc/app/foc_app.c

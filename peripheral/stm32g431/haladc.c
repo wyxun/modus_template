@@ -37,6 +37,32 @@ static void post_calib_delay(void)
     while (wait_loop_index != 0U) { wait_loop_index--; }
 }
 
+/* PB10 high turns Q48 on.  R58 is then placed in parallel with R30 and the
+ * divider becomes the 48 V range.  Keep the pin low during initialization so
+ * a 12 V board never starts with the high-range switch enabled. */
+void haladc_SetVbusRange48V(uint32_t bEnable)
+{
+    if (bEnable != 0U) {
+        LL_GPIO_SetOutputPin(GPIOB, LL_GPIO_PIN_10);
+    } else {
+        LL_GPIO_ResetOutputPin(GPIOB, LL_GPIO_PIN_10);
+    }
+}
+
+static void vbus_range_gpio_init(void)
+{
+    LL_GPIO_InitTypeDef GPIO_Init = {0};
+
+    GPIO_Init.Pin        = LL_GPIO_PIN_10;
+    GPIO_Init.Mode       = LL_GPIO_MODE_OUTPUT;
+    GPIO_Init.Speed      = LL_GPIO_SPEED_FREQ_LOW;
+    GPIO_Init.OutputType = LL_GPIO_OUTPUT_PUSHPULL;
+    GPIO_Init.Pull       = LL_GPIO_PULL_DOWN;
+    LL_GPIO_Init(GPIOB, &GPIO_Init);
+
+    haladc_SetVbusRange48V(HALADC_VBUS_RANGE_48V);
+}
+
 /*----------------------------------------------------------------------------*/
 /* ADC1                                                                       */
 /*----------------------------------------------------------------------------*/
@@ -55,6 +81,8 @@ static void MX_ADC1_Init(void)
     LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOA);
     LL_AHB2_GRP1_EnableClock(LL_AHB2_GRP1_PERIPH_GPIOB);
 
+    vbus_range_gpio_init();
+
     /* ---- Analog GPIO ---- */
     GPIO_Init.Pin  = LL_GPIO_PIN_0;         /* PA0 = ADC1_IN1 busV */
     GPIO_Init.Mode = LL_GPIO_MODE_ANALOG;
@@ -67,7 +95,8 @@ static void MX_ADC1_Init(void)
     GPIO_Init.Pin = LL_GPIO_PIN_14;         /* PB14 = ADC1_IN5 temp */
     LL_GPIO_Init(GPIOB, &GPIO_Init);
 
-    /* PA2 (ADC1_IN3, U) and PB1 (ADC1_IN12, W) set ANALOG by halopamp_Init */
+    /* PA2 (ADC1_IN3, U), PA0 (ADC1_IN1, VBUS) and PB1 (ADC1_IN12, W)
+     * are configured as analog inputs by the board initialization. */
 
     /* ---- Core config ---- */
     ADC_Init.Resolution    = LL_ADC_RESOLUTION_12B;
@@ -125,9 +154,10 @@ static void MX_ADC1_Init(void)
     LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_3, LL_ADC_SAMPLINGTIME_6CYCLES_5);
     LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_3, LL_ADC_SINGLE_ENDED);
 
-    LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_2, LL_ADC_CHANNEL_12);
-    LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_12, LL_ADC_SAMPLINGTIME_6CYCLES_5);
-    LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_12, LL_ADC_SINGLE_ENDED);
+    LL_ADC_INJ_SetSequencerRanks(ADC1, LL_ADC_INJ_RANK_2, LL_ADC_CHANNEL_1);
+    LL_ADC_SetChannelSamplingTime(ADC1, LL_ADC_CHANNEL_1,
+                                  LL_ADC_SAMPLINGTIME_47CYCLES_5);
+    LL_ADC_SetChannelSingleDiff(ADC1, LL_ADC_CHANNEL_1, LL_ADC_SINGLE_ENDED);
 
     /* ---- Calibration ---- */
     LL_ADC_StartCalibration(ADC1, LL_ADC_SINGLE_ENDED);

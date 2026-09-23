@@ -140,6 +140,8 @@ static void _motor_EnterFault(motor_t *ptMotor, motor_fault_e eFault)
             ptMotor->wFaults |= (uint32_t)MOTOR_FAULT_PWM;
         }
     }
+    ptMotor->tCommand.tVoltageReference =
+        (foc_dq_t){FOC_ZERO, FOC_ZERO};
     _motor_ResetObserver(ptMotor);
     ptMotor->bPwmEnabled = false;
     ptMotor->wFaults |= (uint32_t)eFault;
@@ -372,6 +374,7 @@ static void _motor_RunControlStep(motor_t *ptMotor, uint32_t wNowTick)
         _motor_EnterFault(ptMotor, MOTOR_FAULT_ADC_SAMPLE);
         return;
     }
+    ptMotor->tCurrentAbc = tCurrent;
     eResult = foc_clarke(tCurrent.qU, tCurrent.qV, tCurrent.qW,
                          &ptMotor->tInput.tCurrentAlphaBeta);
     if (eResult != FOC_RESULT_OK) {
@@ -423,6 +426,7 @@ static void _motor_AlignStep(motor_t *ptMotor, uint32_t wNowTick)
         _motor_EnterFault(ptMotor, MOTOR_FAULT_ADC_SAMPLE);
         return;
     }
+    ptMotor->tCurrentAbc = tCurrent;
     eResult = foc_clarke(tCurrent.qU, tCurrent.qV, tCurrent.qW,
                          &ptMotor->tInput.tCurrentAlphaBeta);
     if (eResult != FOC_RESULT_OK) {
@@ -580,6 +584,8 @@ void motor_Stop(motor_t *ptMotor)
     }
     tIrqState = perfc_port_disable_global_interrupt();
     (void)FOC_PORT_PWM_SAFE_STOP();
+    ptMotor->tCommand.tVoltageReference =
+        (foc_dq_t){FOC_ZERO, FOC_ZERO};
     ptMotor->bPwmEnabled = false;
     foc_pid_Reset(&ptMotor->tSpeedPi);
     _motor_ResetObserver(ptMotor);
@@ -702,6 +708,42 @@ foc_result_t motor_SetVoltageReference(motor_t *ptMotor,
     return _motor_SetDqReference(ptMotor, FOC_MODE_VOLTAGE,
                                 &ptMotor->tCommand.tVoltageReference,
                                 qD, qQ);
+}
+
+/**
+ * @brief Submit a prevalidated identification voltage from the FOC ISR.
+ * @param ptMotor Running voltage-mode Motor.
+ * @param ptVoltageCommand D/Q modulation command.
+ * @return FOC_RESULT_OK or a state/safety error.
+ * @note Identify calls this after motor_IsrStep(), so the command takes
+ *       effect on the following PWM update.
+ */
+foc_result_t motor_IdentificationApplyIsr(
+    motor_t *ptMotor,
+    const foc_dq_t *ptVoltageCommand)
+{
+    if (ptMotor == NULL || ptVoltageCommand == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    if (ptMotor->eState != MOTOR_STATE_RUNNING || !ptMotor->bPwmEnabled ||
+        ptMotor->tCommand.eMode != FOC_MODE_VOLTAGE) {
+        return FOC_RESULT_SAFETY;
+    }
+    ptMotor->tCommand.tVoltageReference = *ptVoltageCommand;
+    return FOC_RESULT_OK;
+}
+
+/**
+ * @brief Atomically stop a failed identification run in the FOC ISR.
+ * @param ptMotor Motor to stop.
+ * @param eFault Fault bit to latch.
+ * @return None.
+ */
+void motor_IdentificationAbortIsr(
+    motor_t *ptMotor,
+    motor_fault_e eFault)
+{
+    _motor_EnterFault(ptMotor, eFault);
 }
 
 foc_result_t motor_SetCurrentReference(motor_t *ptMotor,

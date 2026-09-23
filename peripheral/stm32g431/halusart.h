@@ -27,7 +27,7 @@
 #define USART2_GPIO_CLK_EN()    __HAL_RCC_GPIOB_CLK_ENABLE()
 #define USART2_BAUDRATE         115200UL
 
-/* USART3: PB10(TX) / PB11(RX) — AF7 */
+/* USART3 is not enabled in this target; PB10 is reserved for 48V_EN. */
 #define USART3_TX_PORT          GPIOB
 #define USART3_TX_PIN           GPIO_PIN_10
 #define USART3_RX_PORT          GPIOB
