@@ -57,9 +57,9 @@ typedef struct {
 
 /** @brief App-owned position state; the Observer is an optional child. */
 typedef struct {
-#if !defined(FOC_POSITION_STATIC_BINDING)
+    /* Keep layout identical even if the target binding macro becomes
+     * visible after this header in another translation unit. */
     motor_position_provider_t tSensor;
-#endif
     const void *pSensorState;
     foc_scalar_t qMechanicalToElectricalSpeedPuGain;
     foc_angle_t tElectricalZero;
@@ -78,6 +78,11 @@ foc_result_t motor_position_Step(
     motor_position_t *ptPosition, uint32_t wNowTick,
     const motor_position_sample_t *ptSample,
     motor_electrical_feedback_t *ptFeedback);
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+void motor_position_ObserverStep(
+    motor_position_t *ptPosition,
+    const motor_position_sample_t *ptSample);
+#endif
 foc_result_t motor_position_CaptureZero(motor_position_t *ptPosition,
                                         uint32_t wNowTick);
 void motor_position_InvalidateZero(motor_position_t *ptPosition);

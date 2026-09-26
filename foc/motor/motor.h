@@ -45,6 +45,7 @@ typedef struct {
     uint64_t ullSumW;
     uint16_t hwSampleCount;
     bool bIsCalibrated;
+    foc_current_sample_t tLatestSample;
 } motor_adc_calib_t;
 
 typedef struct {
@@ -107,6 +108,9 @@ typedef struct {
     bool bElectricalZeroValid;
     bool bControlPrepared;
     bool bAlignCapturePending;
+#if !defined(__NO_USE_LOG__)
+    foc_port_pwm_phase_t tPwmCommitPhase;
+#endif
 } motor_t;
 
 typedef enum {

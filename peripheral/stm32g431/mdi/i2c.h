@@ -3,9 +3,8 @@
  * @brief Bounded STM32G4 master-I2C transfer provider for MDI.
  * @author Codex
  * @date 2026-09-19
- * @note The transaction provider is compile-time bound. The G431 board
- *       backend also exposes an explicit I2C1 initialization entry so the
- *       peripheral clock, pins, timing and ownership have one owner.
+ * @note The transaction provider is compile-time bound. Board startup owns
+ *       the peripheral clock, pins and timing initialization.
  */
 #ifndef STM32G431_MDI_I2C_H
 #define STM32G431_MDI_I2C_H
@@ -60,49 +59,6 @@ MDI_INLINE uint32_t mdi_stm32_i2c_PollBudget(
         return wMaximum;
     }
     return (uint32_t)qwBudget;
-}
-
-/**
- * @brief Initialize the G431 encoder I2C1 resource owned by MDI.
- *
- * PB7/PB8 are I2C1 SDA/SCL, AF4, open-drain with the board pull-ups. The
- * timing value is for the existing 170 MHz PCLK1 / 400 kHz configuration.
- * This function deliberately does not call STM32 HAL; it is the chip MDI
- * backend's one-time ownership point.
- */
-MDI_INLINE mdi_status_t mdi_stm32_g431_i2c1_Init(void)
-{
-    const uint32_t wPins = (UINT32_C(1) << 7U) | (UINT32_C(1) << 8U);
-    const uint32_t wModeMask = (UINT32_C(3) << (7U * 2U)) |
-                               (UINT32_C(3) << (8U * 2U));
-
-    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
-    RCC->APB1ENR1 |= RCC_APB1ENR1_I2C1EN;
-    (void)RCC->AHB2ENR;
-    (void)RCC->APB1ENR1;
-
-    GPIOB->MODER &= ~wModeMask;
-    GPIOB->MODER |= (UINT32_C(2) << (7U * 2U)) |
-                    (UINT32_C(2) << (8U * 2U));
-    GPIOB->OTYPER |= wPins;
-    GPIOB->OSPEEDR &= ~wModeMask;
-    GPIOB->OSPEEDR |= (UINT32_C(3) << (7U * 2U)) |
-                      (UINT32_C(3) << (8U * 2U));
-    GPIOB->PUPDR &= ~wModeMask;
-    GPIOB->PUPDR |= (UINT32_C(1) << (7U * 2U)) |
-                    (UINT32_C(1) << (8U * 2U));
-    GPIOB->AFR[0] &= ~(UINT32_C(0xF) << (7U * 4U));
-    GPIOB->AFR[0] |= (UINT32_C(4) << (7U * 4U));
-    GPIOB->AFR[1] &= ~UINT32_C(0xF);
-    GPIOB->AFR[1] |= UINT32_C(4);
-
-    I2C1->CR1 = 0U;
-    I2C1->CR2 = 0U;
-    I2C1->TIMINGR = UINT32_C(0x30A02B38);
-    I2C1->ICR = I2C_ICR_NACKCF | I2C_ICR_STOPCF |
-                I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
-    I2C1->CR1 = I2C_CR1_PE;
-    return MDI_OK;
 }
 
 MDI_INLINE mdi_status_t mdi_stm32_i2c_wait(

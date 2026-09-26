@@ -3,7 +3,7 @@
 # Toolchain : LLVM Embedded Toolchain for Arm (Windows)
 # Usage     : make [BUILD=debug|release] [TARGET_CHIP=stm32g431] ...
 # ==============================================================================
-SW_ROOT ?= D:/0_software
+SW_ROOT ?= D:/software
 MSYS2_BIN = $(SW_ROOT)/msys64/mingw64/bin
 MAKE      = $(MSYS2_BIN)/mingw32-make.exe
 
@@ -148,8 +148,10 @@ endif
 
 # Motor-energizing experiments are opt-in for product builds.
 FOC_EXPERIMENTAL_NSD ?= 0
+FOC_ENABLE_SMO ?= 1
 FOC_ENABLE_HFI ?= 0
 C_DEFS += -DFOC_ENABLE_EXPERIMENTAL_NSD=$(FOC_EXPERIMENTAL_NSD)
+C_DEFS += -DFOC_ENABLE_SMO=$(FOC_ENABLE_SMO)
 C_DEFS += -DFOC_ENABLE_HFI=$(FOC_ENABLE_HFI)
 
 # ------------------------------------------------------------------------------
@@ -260,7 +262,8 @@ $(BUILD_DIR)/motor.o: CFLAGS += -O2
 # Triggers recompile whenever target, flags, or numeric backend changes
 # ------------------------------------------------------------------------------
 BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(FOC_NUMERIC)\
-                        -nsd_$(FOC_EXPERIMENTAL_NSD)-hfi_$(FOC_ENABLE_HFI)       \
+                        -nsd_$(FOC_EXPERIMENTAL_NSD)-smo_$(FOC_ENABLE_SMO)       \
+                        -hfi_$(FOC_ENABLE_HFI)                                  \
                         -mod_$(MODUS_ENABLE)
 
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp

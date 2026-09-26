@@ -122,14 +122,19 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
 
 static void test_RunCapture(identify_t *ptIdentify,
                             motor_t *ptMotor,
-                            foc_scalar_t qCurrentD)
+                            foc_scalar_t qCurrentD,
+                            foc_scalar_t qVoltageD)
 {
     uint32_t wIsr = 0U;
     uint32_t wTotalIsr = IDENTIFY_RESISTANCE_SAMPLE_COUNT *
                          IDENTIFY_RESISTANCE_ISR_PER_SAMPLE;
-    identify_isr_sample_t tSample = {.qCurrentD = FOC_ZERO};
+    identify_isr_sample_t tSample = {
+        .qCurrentD = FOC_ZERO,
+        .qVoltageD = FOC_ZERO,
+    };
 
     tSample.qCurrentD = qCurrentD;
+    tSample.qVoltageD = qVoltageD;
     for (wIsr = 0U; wIsr < wTotalIsr; wIsr++) {
         identify_IsrStep(ptIdentify, ptMotor, &tSample);
     }
@@ -148,7 +153,7 @@ int main(void)
     identify_t tIdentify = {0};
     motor_t tMotor = {0};
     identify_status_t tStatus = {0};
-    uint32_t wResistanceMilliohm = 0U;
+    identify_resistance_result_t tResistanceResult = {0};
 
     tMotor.tParams.wVoltageBaseMillivolt = 24000U;
     tMotor.wCurrentBaseMilliamp = 7000U;
@@ -157,45 +162,70 @@ int main(void)
 
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
-    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.10f);
+    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.02f);
     s_lNowTicks = 101;
     test_RunProgress(&tIdentify, &tMotor);
     identify_GetStatus(&tIdentify, &tStatus);
     assert(tIdentify.tResistance.eState ==
            IDENTIFY_RESISTANCE_STATE_CAPTURE);
-    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.10f));
+    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.02f),
+                    FOC_SCALAR(0.02f));
     identify_GetStatus(&tIdentify, &tStatus);
     assert(tIdentify.tResistance.hwCaptureSampleCount ==
            IDENTIFY_RESISTANCE_SAMPLE_COUNT);
     assert(identify_GetResistance(&tIdentify,
-                                  &wResistanceMilliohm) ==
+                                  &tResistanceResult) ==
            FOC_RESULT_BUSY);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
 
     s_lNowTicks = 202;
     test_RunProgress(&tIdentify, &tMotor);
-    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.20f);
+    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.04f);
     s_lNowTicks = 302;
     test_RunProgress(&tIdentify, &tMotor);
     s_lNowTicks = 403;
     test_RunProgress(&tIdentify, &tMotor);
-    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.20f));
+    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.04f),
+                    FOC_SCALAR(0.04f));
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
     assert(identify_GetResistance(&tIdentify,
-                                  &wResistanceMilliohm) == FOC_RESULT_OK);
+                                  &tResistanceResult) == FOC_RESULT_OK);
     /* Verify both captured current averages before checking the result. */
     assert(fabsf(foc_to_float(tIdentify.tResistance.aqAverageCurrent[0U]) -
-                 0.10f) < 0.001f);
+                 0.02f) < 0.001f);
     assert(fabsf(foc_to_float(tIdentify.tResistance.aqAverageCurrent[1U]) -
-                 0.20f) < 0.001f);
-    assert(wResistanceMilliohm > 5100U);
-    assert(wResistanceMilliohm < 5200U);
+                 0.04f) < 0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqAverageCurrentPu[0U]) - 0.02f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqAverageCurrentPu[1U]) - 0.04f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqVoltageLevelPu[0U]) - 0.02f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqVoltageLevelPu[1U]) - 0.04f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqAverageVoltageDPu[0U]) - 0.02f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.aqAverageVoltageDPu[1U]) - 0.04f) <
+           0.001f);
+    assert(fabsf(foc_to_float(
+                     tResistanceResult.qDeltaCurrentPu) - 0.02f) <
+           0.001f);
+    assert(tResistanceResult.wVoltageBaseMillivolt == 24000U);
+    assert(tResistanceResult.wCurrentBaseMilliamp == 7000U);
+    assert(tResistanceResult.wResistanceMilliohm > 3400U);
+    assert(tResistanceResult.wResistanceMilliohm < 3450U);
     assert(identify_GetResistance(&tIdentify,
-                                  &wResistanceMilliohm) ==
+                                  &tResistanceResult) ==
            FOC_RESULT_BUSY);
 
     assert(identify_StartResistance(&tIdentify) == FOC_RESULT_OK);

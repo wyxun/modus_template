@@ -103,7 +103,8 @@ static void MX_ADC1_Init(void)
 
     /* ---- Core config ---- */
     ADC_Init.Resolution    = LL_ADC_RESOLUTION_12B;
-    ADC_Init.DataAlignment  = LL_ADC_DATA_ALIGN_LEFT;
+    /* JOVSE forces right-aligned results. Use the same format for DR/JDR. */
+    ADC_Init.DataAlignment  = LL_ADC_DATA_ALIGN_RIGHT;
     ADC_Init.LowPowerMode   = LL_ADC_LP_MODE_NONE;
     LL_ADC_Init(ADC1, &ADC_Init);
 
@@ -117,7 +118,11 @@ static void MX_ADC1_Init(void)
     LL_ADC_REG_Init(ADC1, &ADC_REG_Init);
 
     LL_ADC_SetGainCompensation(ADC1, 0);
-    LL_ADC_SetOverSamplingScope(ADC1, LL_ADC_OVS_DISABLE);
+    /* Four conversions per injected rank, averaged back to 12-bit codes.
+     * Regular VBUS/temperature/pot conversions remain un-oversampled. */
+    LL_ADC_ConfigOverSamplingRatioShift(
+        ADC1, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_RIGHT_2);
+    LL_ADC_SetOverSamplingScope(ADC1, LL_ADC_OVS_GRP_INJECTED);
 
     /* ---- Common config ---- */
     ADC_Common.CommonClock = LL_ADC_CLOCK_ASYNC_DIV1;
@@ -191,7 +196,7 @@ static void MX_ADC2_Init(void)
 
     /* ---- Core config ---- */
     ADC_Init.Resolution    = LL_ADC_RESOLUTION_12B;
-    ADC_Init.DataAlignment  = LL_ADC_DATA_ALIGN_LEFT;
+    ADC_Init.DataAlignment  = LL_ADC_DATA_ALIGN_RIGHT;
     ADC_Init.LowPowerMode   = LL_ADC_LP_MODE_NONE;
     LL_ADC_Init(ADC2, &ADC_Init);
 
@@ -204,7 +209,9 @@ static void MX_ADC2_Init(void)
     LL_ADC_REG_Init(ADC2, &ADC_REG_Init);
 
     LL_ADC_SetGainCompensation(ADC2, 0);
-    LL_ADC_SetOverSamplingScope(ADC2, LL_ADC_OVS_DISABLE);
+    LL_ADC_ConfigOverSamplingRatioShift(
+        ADC2, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_RIGHT_2);
+    LL_ADC_SetOverSamplingScope(ADC2, LL_ADC_OVS_GRP_INJECTED);
 
     /* ---- Injected group ---- */
     ADC_INJ_Init.TriggerSource    = LL_ADC_INJ_TRIG_EXT_TIM1_CH4;

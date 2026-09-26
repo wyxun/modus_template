@@ -16,8 +16,8 @@
 /* Motor nameplate and identified electrical parameters. */
 #define MOTOR_CONFIG_POLE_PAIRS                            7U
 #define MOTOR_CONFIG_RESISTANCE_MILLIOHM                   2740U
-#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               1000U
-#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               1000U
+#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               800U
+#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               800U
 
 /* Drive bases. HF frequency itself is supplied by the selected target. */
 #define MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT                12000U
@@ -48,9 +48,9 @@
 #define MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MIN_PU            -0.10f
 #define MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MAX_PU            0.10f
 #define MOTOR_CONFIG_ADC_CALIBRATION_TIMEOUT_SECONDS       0.1f
-#define MOTOR_CONFIG_ALIGN_TIME_SECONDS                    1.5f
+#define MOTOR_CONFIG_ALIGN_TIME_SECONDS                    1.5f 
 #define MOTOR_CONFIG_SPEED_LOOP_FREQUENCY_HZ               1000U
-#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.1f
+#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.005f
 
 /* Position sensor setup; used only when FOC_PORT_HAS_POSITION is enabled. */
 #define MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA            0.25f
@@ -58,8 +58,8 @@
 #define MOTOR_CONFIG_ENCODER_DIRECTION_INVERT              false
 
 /* Optional observer tuning. */
-#define MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND    10000U
-#define MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT            3500U
+#define MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND    4000U
+#define MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT            5000U
 #define MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU         1.0f
 
 /* Debug identification routine settings. */
@@ -68,8 +68,8 @@
 #define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_SAMPLES           4U
 #define MOTOR_CONFIG_IDENTIFY_LD_HALF_CYCLES               4U
 #define MOTOR_CONFIG_IDENTIFY_LD_MODULATION_PU             0.10f
-#define MOTOR_CONFIG_IDENTIFY_LD_MAX_CURRENT_PU            0.15f
-#define MOTOR_CONFIG_IDENTIFY_LD_MIN_DELTA_PU              0.01f
+#define MOTOR_CONFIG_IDENTIFY_LD_MAX_CURRENT_PU            0.02f
+#define MOTOR_CONFIG_IDENTIFY_LD_MIN_DELTA_PU              0.001f
 #define MOTOR_CONFIG_IDENTIFY_LD_MAX_SPEED_PU              0.01f
 #define MOTOR_CONFIG_IDENTIFY_LD_MOTION_CYCLES             1U
 

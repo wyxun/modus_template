@@ -12,7 +12,8 @@
 foc_result_t _identify_resistance_Start(identify_t *ptThis);
 
 void _identify_resistance_IsrStep(identify_t *ptThis,
-                                  foc_scalar_t qCurrentD);
+                                  foc_scalar_t qCurrentD,
+                                  foc_scalar_t qVoltageD);
 
 fsm_rt_t _identify_resistance_RunPt(identify_t *ptThis,
                                      motor_t *ptMotor);

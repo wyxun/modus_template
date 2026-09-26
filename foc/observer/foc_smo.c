@@ -9,6 +9,9 @@
 
 #include <limits.h>
 #include <stddef.h>
+#if defined(FOC_NUMERIC_FLOAT)
+#include <math.h>
+#endif
 
 #include "foc_math.h"
 #include "internal/foc_units.h"
@@ -23,6 +26,7 @@
     ((float)FOC_NANOSECONDS_PER_SECOND)
 #define SMO_MILLI_PER_UNIT         1000.0f
 #define SMO_MICRO_PER_UNIT         1000000.0f
+#define SMO_RADIANS_TO_TURNS_F     0.15915494309189533577f
 #endif
 
 #if defined(FOC_NUMERIC_FIXED)
@@ -285,11 +289,12 @@ static void smo_AxisStep(const foc_smo_exec_t *ptExec,
     foc_scalar_t qError = FOC_ZERO;
     foc_scalar_t qSwitch = FOC_ZERO;
 
-    /* The back-EMF term is estimated internally from current error. */
+    /* Use prior sliding voltage for current correction; filter for angle. */
     qInput = foc_sub_sat(qInput, foc_mul_wide(
         ptExec->qResistanceGain, ptAxis->qCurrentEstimate));
     qInput = foc_sub_sat(qInput, foc_mul_wide(
-        ptExec->qVoltageCurrentGain, ptAxis->qBemf));
+        ptExec->qVoltageCurrentGain,
+        ptAxis->qPreviousSlidingVoltage));
     if (ptAxis->bIntegratorFrozen) {
         if (foc_mul_wide(qInput, ptAxis->qCurrentEstimate) <
                 FOC_ZERO ||
@@ -445,9 +450,15 @@ foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
         *ptOutput = (foc_smo_output_t){0};
         return FOC_RESULT_OK;
     }
+#if defined(FOC_NUMERIC_FLOAT)
+    tElectricalAngle = foc_angle_from_turns(
+        atan2f(FOC_ZERO - ptSmo->tAxis[0].qBemf,
+               ptSmo->tAxis[1].qBemf) * SMO_RADIANS_TO_TURNS_F);
+#else
     tElectricalAngle = foc_angle_atan2(
         FOC_ZERO - ptSmo->tAxis[0].qBemf,
         ptSmo->tAxis[1].qBemf);
+#endif
     ptOutput->qElectricalSpeedTurnsPerSecond = FOC_ZERO;
     if (ptSmo->bHasPreviousElectricalAngle) {
         qAngleDelta = foc_angle_diff(

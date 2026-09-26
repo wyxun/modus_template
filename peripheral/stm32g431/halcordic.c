@@ -4,6 +4,8 @@
 
 #if defined(FOC_NUMERIC_FLOAT)
 #include <math.h>
+/* Largest float below 2^31; 2147483647.0f rounds up to 2^31. */
+static const float s_fCordicFloatQ31Scale = 2147483520.0f;
 #endif
 
 static foc_scalar_t cordic_q31_to_scalar(int32_t nValue)
@@ -114,8 +116,8 @@ foc_scalar_t hal_cordic_Atan2(foc_scalar_t qY, foc_scalar_t qX)
     }
     
     /* 归一化输入，防止 CORDIC Q1.31 溢出 */
-    int32_t q31X = (int32_t)((qX / fMax) * 2147483647.0f);
-    int32_t q31Y = (int32_t)((qY / fMax) * 2147483647.0f);
+    int32_t q31X = (int32_t)((qX / fMax) * s_fCordicFloatQ31Scale);
+    int32_t q31Y = (int32_t)((qY / fMax) * s_fCordicFloatQ31Scale);
 
     /* 配置 CSR：Phase (atan2), NARGS=1 (双参数，X+Y), NRES=0 (单结果) */
     CORDIC->CSR = (6U << CORDIC_CSR_PRECISION_Pos) | 

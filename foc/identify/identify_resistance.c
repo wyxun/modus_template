@@ -41,6 +41,7 @@ static void _identify_resistance_ClearCapture(identify_t *ptThis)
     ptResistance->hwIsrDivider = 0U;
     ptResistance->hwCaptureSampleCount = 0U;
     ptResistance->qCurrentSum = FOC_ZERO;
+    ptResistance->qVoltageSum = FOC_ZERO;
     ptResistance->bBatchReady = false;
     perfc_port_resume_global_interrupt(tIrqState);
 }
@@ -72,13 +73,17 @@ static foc_result_t _identify_resistance_ProcessLevel(identify_t *ptThis)
     identify_resistance_t *ptResistance = &ptThis->tResistance;
     perfc_global_interrupt_status_t tIrqState = 0U;
     foc_scalar_t qCurrentSum = FOC_ZERO;
+    foc_scalar_t qVoltageSum = FOC_ZERO;
     uint16_t hwSampleCount = 0U;
     foc_scalar_t qSampleCount = FOC_ZERO;
+    foc_result_t eResult = FOC_RESULT_OK;
 
     tIrqState = perfc_port_disable_global_interrupt();
     qCurrentSum = ptResistance->qCurrentSum;
+    qVoltageSum = ptResistance->qVoltageSum;
     hwSampleCount = ptResistance->hwCaptureSampleCount;
     ptResistance->qCurrentSum = FOC_ZERO;
+    ptResistance->qVoltageSum = FOC_ZERO;
     ptResistance->hwCaptureSampleCount = 0U;
     ptResistance->hwIsrDivider = 0U;
     ptResistance->bBatchReady = false;
@@ -89,13 +94,19 @@ static foc_result_t _identify_resistance_ProcessLevel(identify_t *ptThis)
     }
     qSampleCount = foc_from_float(
         (float)IDENTIFY_RESISTANCE_SAMPLE_COUNT);
-    return foc_div_checked(qCurrentSum, qSampleCount,
-                           &ptResistance->aqAverageCurrent[
+    eResult = foc_div_checked(qCurrentSum, qSampleCount,
+                              &ptResistance->aqAverageCurrent[
+                                  ptResistance->chVoltageLevel]);
+    if (eResult != FOC_RESULT_OK) {
+        return eResult;
+    }
+    return foc_div_checked(qVoltageSum, qSampleCount,
+                           &ptResistance->aqAverageVoltageD[
                                ptResistance->chVoltageLevel]);
 }
 
 static foc_result_t _identify_resistance_Calculate(
-    const identify_t *ptThis,
+    identify_t *ptThis,
     const motor_t *ptMotor,
     uint32_t *pwResistance)
 {
@@ -118,6 +129,11 @@ static foc_result_t _identify_resistance_Calculate(
     if (foc_abs(qDeltaCurrent) <= IDENTIFY_RESISTANCE_MIN_CURRENT_PU) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
+    ptThis->tResistance.qDeltaCurrent = qDeltaCurrent;
+    ptThis->tResistance.wVoltageBaseMillivolt =
+        ptMotor->tParams.wVoltageBaseMillivolt;
+    ptThis->tResistance.wCurrentBaseMilliamp =
+        ptMotor->wCurrentBaseMilliamp;
 
 #if defined(FOC_NUMERIC_FLOAT)
     {
@@ -189,8 +205,7 @@ static foc_result_t _identify_resistance_ApplyVoltage(identify_t *ptThis,
     }
     eResult = motor_SetVoltageReference(
         ptMotor, _identify_resistance_VoltageForLevel(
-            ptResistance->chVoltageLevel),
-        FOC_ZERO);
+            ptResistance->chVoltageLevel), FOC_ZERO);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
@@ -233,7 +248,8 @@ foc_result_t _identify_resistance_Start(identify_t *ptThis)
  * @return None.
  */
 void _identify_resistance_IsrStep(identify_t *ptThis,
-                                  foc_scalar_t qCurrentD)
+                                  foc_scalar_t qCurrentD,
+                                  foc_scalar_t qVoltageD)
 {
     identify_resistance_t *ptResistance = NULL;
 
@@ -252,6 +268,7 @@ void _identify_resistance_IsrStep(identify_t *ptThis,
     ptResistance->hwIsrDivider = 0U;
     /* 100 samples of a [-1, 1] pu current fit in the scalar accumulator. */
     ptResistance->qCurrentSum += qCurrentD;
+    ptResistance->qVoltageSum += qVoltageD;
     ptResistance->hwCaptureSampleCount++;
     if (ptResistance->hwCaptureSampleCount >=
         IDENTIFY_RESISTANCE_SAMPLE_COUNT) {
@@ -413,15 +430,15 @@ void _identify_resistance_Reset(identify_t *ptThis)
 /**
  * @brief Copy and consume a completed resistance result.
  * @param ptThis Identification object.
- * @param pwResistanceMilliohm Output resistance in milliohms.
+ * @param ptResult Output measurement and scaling diagnostics.
  * @return FOC_RESULT_OK, FOC_RESULT_BUSY, or an argument error.
  */
 foc_result_t identify_GetResistance(identify_t *ptThis,
-                                    uint32_t *pwResistanceMilliohm)
+                                    identify_resistance_result_t *ptResult)
 {
     perfc_global_interrupt_status_t tIrqState = 0U;
 
-    if (ptThis == NULL || pwResistanceMilliohm == NULL) {
+    if (ptThis == NULL || ptResult == NULL) {
         return FOC_RESULT_NULL;
     }
     tIrqState = perfc_port_disable_global_interrupt();
@@ -429,7 +446,25 @@ foc_result_t identify_GetResistance(identify_t *ptThis,
         perfc_port_resume_global_interrupt(tIrqState);
         return FOC_RESULT_BUSY;
     }
-    *pwResistanceMilliohm = ptThis->tResistance.wResistanceMilliohm;
+    ptResult->aqVoltageLevelPu[0U] =
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU;
+    ptResult->aqVoltageLevelPu[1U] =
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU;
+    ptResult->aqAverageVoltageDPu[0U] =
+        ptThis->tResistance.aqAverageVoltageD[0U];
+    ptResult->aqAverageVoltageDPu[1U] =
+        ptThis->tResistance.aqAverageVoltageD[1U];
+    ptResult->aqAverageCurrentPu[0U] =
+        ptThis->tResistance.aqAverageCurrent[0U];
+    ptResult->aqAverageCurrentPu[1U] =
+        ptThis->tResistance.aqAverageCurrent[1U];
+    ptResult->qDeltaCurrentPu = ptThis->tResistance.qDeltaCurrent;
+    ptResult->wVoltageBaseMillivolt =
+        ptThis->tResistance.wVoltageBaseMillivolt;
+    ptResult->wCurrentBaseMilliamp =
+        ptThis->tResistance.wCurrentBaseMilliamp;
+    ptResult->wResistanceMilliohm =
+        ptThis->tResistance.wResistanceMilliohm;
     ptThis->tResistance.bResultPending = false;
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;

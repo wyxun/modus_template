@@ -9,7 +9,8 @@
  * The commands below are available when MSHELL_ENABLE is enabled:
  *
  *   motor speed <pu>       Start speed control with a per-unit reference.
- *   motor current <d> <q>  Start current control with d/q references.
+ *   motor current <d> <q>  Start current control, or update live refs.
+ *   motor step <q> <ms>    Apply a bounded q-current pulse, then stop PWM.
  *   motor voltage <d> <q>  Start voltage control with d/q references.
  *   motor align             Request electrical position calibration.
  *   motor stop              Stop the motor and identification operation.
@@ -27,6 +28,13 @@
 #define FOC_DEBUG_H
 
 #include "foc_app.h"
+
+/**
+ * @brief Advance the foreground-timed current pulse test, if active.
+ * @param ptApp FOC application object owning the pulse state.
+ * @return None.
+ */
+void foc_debug_CurrentStepRun(foc_app_t *ptApp);
 
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 void foc_debug_WaveformInit(foc_app_t *ptApp,

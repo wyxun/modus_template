@@ -85,19 +85,6 @@ foc_result_t motor_position_Step(
         motor_position_ResetObserver(ptPosition);
         ptPosition->wLastRunGeneration = ptSample->wRunGeneration;
     }
-#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    {
-        foc_observer_input_t tObserverInput = {
-            .ptCurrentAlphaBeta = &ptSample->tCurrentAlphaBeta,
-            .ptVoltageModelAlphaBeta = &ptSample->tVoltageModelAlphaBeta,
-        };
-        eResult = foc_observer_Step(&ptPosition->tObserver,
-                                     &tObserverInput);
-        if (eResult != FOC_RESULT_OK) {
-            ptPosition->tObserver.tOutput.bValid = false;
-        }
-    }
-#endif
     if (ptPosition->eSource == MOTOR_POSITION_SOURCE_HARD_DRAG) {
         if (!ptSample->tHardDragCandidate.bValid) {
             return FOC_RESULT_SAFETY;
@@ -120,6 +107,28 @@ foc_result_t motor_position_Step(
     ptFeedback->bValid = true;
     return FOC_RESULT_OK;
 }
+
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+void motor_position_ObserverStep(
+    motor_position_t *ptPosition,
+    const motor_position_sample_t *ptSample)
+{
+    foc_observer_input_t tObserverInput = {0};
+    foc_result_t eResult = FOC_RESULT_OK;
+
+    if (ptPosition == NULL || ptSample == NULL) {
+        return;
+    }
+    tObserverInput.ptCurrentAlphaBeta = &ptSample->tCurrentAlphaBeta;
+    tObserverInput.ptVoltageModelAlphaBeta =
+        &ptSample->tVoltageModelAlphaBeta;
+    eResult = foc_observer_Step(&ptPosition->tObserver,
+                                 &tObserverInput);
+    if (eResult != FOC_RESULT_OK) {
+        ptPosition->tObserver.tOutput.bValid = false;
+    }
+}
+#endif
 
 foc_result_t motor_position_CaptureZero(motor_position_t *ptPosition,
                                         uint32_t wNowTick)

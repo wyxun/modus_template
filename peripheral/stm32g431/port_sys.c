@@ -17,6 +17,46 @@
 #include "halledgpio.h"
 #include "halcordic.h"
 
+/**
+ * @brief Initialize the board-owned encoder I2C1 peripheral.
+ * @param None.
+ * @return None.
+ * @note PB7/PB8 use I2C1 alternate function 4 with 400 kHz timing.
+ */
+static void port_i2c1_Init(void)
+{
+    const uint32_t wPins = (UINT32_C(1) << 7U) | (UINT32_C(1) << 8U);
+    const uint32_t wModeMask = (UINT32_C(3) << (7U * 2U)) |
+                               (UINT32_C(3) << (8U * 2U));
+
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
+    RCC->APB1ENR1 |= RCC_APB1ENR1_I2C1EN;
+    (void)RCC->AHB2ENR;
+    (void)RCC->APB1ENR1;
+
+    GPIOB->MODER &= ~wModeMask;
+    GPIOB->MODER |= (UINT32_C(2) << (7U * 2U)) |
+                    (UINT32_C(2) << (8U * 2U));
+    GPIOB->OTYPER |= wPins;
+    GPIOB->OSPEEDR &= ~wModeMask;
+    GPIOB->OSPEEDR |= (UINT32_C(3) << (7U * 2U)) |
+                      (UINT32_C(3) << (8U * 2U));
+    GPIOB->PUPDR &= ~wModeMask;
+    GPIOB->PUPDR |= (UINT32_C(1) << (7U * 2U)) |
+                    (UINT32_C(1) << (8U * 2U));
+    GPIOB->AFR[0] &= ~(UINT32_C(0xF) << (7U * 4U));
+    GPIOB->AFR[0] |= (UINT32_C(4) << (7U * 4U));
+    GPIOB->AFR[1] &= ~UINT32_C(0xF);
+    GPIOB->AFR[1] |= UINT32_C(4);
+
+    I2C1->CR1 = 0U;
+    I2C1->CR2 = 0U;
+    I2C1->TIMINGR = UINT32_C(0x30A02B38);
+    I2C1->ICR = I2C_ICR_NACKCF | I2C_ICR_STOPCF |
+                I2C_ICR_BERRCF | I2C_ICR_ARLOCF | I2C_ICR_OVRCF;
+    I2C1->CR1 = I2C_CR1_PE;
+}
+
 /* --------------------------------------------------------------------------
  *  系统时钟配置：HSI 16 MHz → PLL → 170 MHz
  *    HSI 16 MHz / 4 (PLLM) = 4 MHz  VCO 输入
@@ -85,6 +125,8 @@ void peripheral_Init(void)
     halcomp_Init();
     haltim1_Init();
 
+    /* Keep encoder I2C ready before MODUS object initialization. */
+    port_i2c1_Init();
     haladc_EnableISR();
     haltim1_EnableISR();
 }

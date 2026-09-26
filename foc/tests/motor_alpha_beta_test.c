@@ -13,6 +13,7 @@
 
 static foc_core_input_t s_tLastCoreInput = {0};
 static foc_current_abc_t s_tSample = {0};
+static foc_current_sample_t s_tLastRawSample = {0};
 static uint32_t s_wClarkeCalls = 0U;
 static uint32_t s_wCoreCalls = 0U;
 static bool s_bPwmEnabled = false;
@@ -118,6 +119,7 @@ foc_result_t foc_SampleCurrent(foc_current_sample_t *ptSample)
     }
     if (s_bCalibrationSample) {
         *ptSample = (foc_current_sample_t){2048U, 2048U, 2048U};
+        s_tLastRawSample = *ptSample;
         s_bCalibrationSample = false;
         return FOC_RESULT_OK;
     }
@@ -130,6 +132,7 @@ foc_result_t foc_SampleCurrent(foc_current_sample_t *ptSample)
     ptSample->wU = (uint32_t)nRawU;
     ptSample->wV = (uint32_t)nRawV;
     ptSample->wW = (uint32_t)nRawW;
+    s_tLastRawSample = *ptSample;
     return FOC_RESULT_OK;
 }
 
@@ -232,6 +235,9 @@ int main(void)
     assert(eResult == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CONTROL_READY);
+    assert(tMotor.tCalib.tLatestSample.wU == s_tLastRawSample.wU);
+    assert(tMotor.tCalib.tLatestSample.wV == s_tLastRawSample.wV);
+    assert(tMotor.tCalib.tLatestSample.wW == s_tLastRawSample.wW);
     assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     motor_IsrControlStep(&tMotor, &tFeedback);
@@ -261,6 +267,9 @@ int main(void)
     assert(eResult == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CAPTURE_ZERO);
+    assert(tMotor.tCalib.tLatestSample.wU == s_tLastRawSample.wU);
+    assert(tMotor.tCalib.tLatestSample.wV == s_tLastRawSample.wV);
+    assert(tMotor.tCalib.tLatestSample.wW == s_tLastRawSample.wW);
     assert(motor_position_CaptureZero(&tPosition, 3U) == FOC_RESULT_OK);
     motor_CompleteAlignIsr(&tMotor, FOC_RESULT_OK);
 

@@ -21,9 +21,9 @@
     FOC_SCALAR(0.001f)
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU       \
-    FOC_SCALAR(0.15f)
+    FOC_SCALAR(0.05f)
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU       \
-    FOC_SCALAR(0.3f)
+    FOC_SCALAR(0.1f)
 
 #if (IDENTIFY_RESISTANCE_SAMPLE_HZ == 0U) || \
     (FOC_HF_ISR_HZ == 0U) || \
@@ -65,6 +65,7 @@ typedef enum {
 /** @brief Synchronous motor snapshot consumed by identification ISR code. */
 typedef struct {
     foc_scalar_t qCurrentD;
+    foc_scalar_t qVoltageD;
     foc_scalar_t qCurrentQ;
     foc_scalar_t qElectricalSpeedPu;
     uint32_t wDcBusMillivolt;
@@ -97,9 +98,54 @@ typedef struct {
     uint16_t hwHalfCycleCount;
 } identify_inductance_result_t;
 
+/** @brief Why one polarity did not yield a valid inductance estimate. */
+typedef enum {
+    IDENTIFY_INDUCTANCE_FAILURE_NONE = 0,
+    IDENTIFY_INDUCTANCE_FAILURE_INSUFFICIENT_SAMPLES,
+    IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL,
+    IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE,
+    IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN,
+    IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE,
+} identify_inductance_failure_t;
+
+/** @brief Captured values used to diagnose one injection polarity. */
+typedef struct {
+    identify_inductance_failure_t eFailure;
+    foc_scalar_t qDeltaCurrentPu;
+    int32_t lDeltaCurrentAdcCodeEq;
+    uint32_t wAverageBusMillivolt;
+    int32_t lCommandVoltageMillivolt;
+    int32_t lNetVoltageMillivolt;
+    int32_t lAverageCurrentMilliamp;
+} identify_inductance_polarity_diagnostic_t;
+
+/** @brief Last complete inductance calculation, including rejected data. */
+typedef struct {
+    bool bValid;
+    uint32_t wResistanceMilliohm;
+    foc_scalar_t qMinimumDeltaPu;
+    identify_inductance_polarity_diagnostic_t tPositive;
+    identify_inductance_polarity_diagnostic_t tNegative;
+} identify_inductance_diagnostic_t;
+
+/** @brief Diagnostic values captured by one resistance identification run. */
+typedef struct {
+    foc_scalar_t aqVoltageLevelPu[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+    foc_scalar_t aqAverageVoltageDPu[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+    foc_scalar_t aqAverageCurrentPu[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+    foc_scalar_t qDeltaCurrentPu;
+    uint32_t wVoltageBaseMillivolt;
+    uint32_t wCurrentBaseMilliamp;
+    uint32_t wResistanceMilliohm;
+} identify_resistance_result_t;
+
 /** @brief Caller-owned state for the Phase 1 Ld child PT. */
 typedef struct {
     identify_inductance_result_t tResult;
+    identify_inductance_diagnostic_t tDiagnostic;
     uint32_t wHalfPeriodCycles;
     uint32_t wCaptureStartCycle;
     uint32_t wTimeoutMs;
@@ -165,8 +211,14 @@ typedef struct {
     volatile uint16_t hwIsrDivider;
     volatile uint16_t hwCaptureSampleCount;
     volatile foc_scalar_t qCurrentSum;
+    volatile foc_scalar_t qVoltageSum;
     foc_scalar_t aqAverageCurrent[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+    foc_scalar_t aqAverageVoltageD[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+    foc_scalar_t qDeltaCurrent;
+    uint32_t wVoltageBaseMillivolt;
+    uint32_t wCurrentBaseMilliamp;
     uint32_t wResistanceMilliohm;
     int64_t lStateTimestamp;
     bool bMotorStarted;
@@ -229,11 +281,11 @@ foc_result_t identify_Run(identify_t *ptThis, motor_t *ptMotor);
 /**
  * @brief Copy and consume a completed resistance result.
  * @param ptThis Identification object.
- * @param pwResistanceMilliohm Output resistance in milliohms.
+ * @param ptResult Output measurement and scaling diagnostics.
  * @return FOC_RESULT_OK, FOC_RESULT_BUSY, or an argument error.
  */
 foc_result_t identify_GetResistance(identify_t *ptThis,
-                                    uint32_t *pwResistanceMilliohm);
+                                    identify_resistance_result_t *ptResult);
 
 /**
  * @brief Copy and consume a completed Ld result.
@@ -244,6 +296,16 @@ foc_result_t identify_GetResistance(identify_t *ptThis,
 foc_result_t identify_GetInductance(
     identify_t *ptThis,
     identify_inductance_result_t *ptResult);
+
+/**
+ * @brief Copy the most recent inductance calculation diagnostics.
+ * @param ptThis Identification object.
+ * @param ptDiagnostic Destination diagnostic snapshot.
+ * @return FOC_RESULT_OK when a calculation was captured, otherwise BUSY.
+ */
+foc_result_t identify_GetInductanceDiagnostic(
+    const identify_t *ptThis,
+    identify_inductance_diagnostic_t *ptDiagnostic);
 
 /**
  * @brief Stop identification and the controlled Motor.

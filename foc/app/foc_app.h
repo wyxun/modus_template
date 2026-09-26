@@ -35,12 +35,42 @@ typedef struct {
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
 } foc_app_cfg_t;
 
+#if 0 /* Temporary HF/CCR/SMO periodic diagnostic collection. */
 /** @brief ISR-owned cycle window consumed by the foreground reporter. */
 typedef struct {
     volatile uint32_t wCycleTotal;
     volatile uint32_t wSampleCount;
+#if !defined(__NO_USE_LOG__)
+    volatile uint32_t wCcrLatencyTicksTotal;
+    volatile uint32_t wCcrLatencySampleCount;
+    volatile uint32_t wCcrLatencyMaxTicks;
+    volatile uint32_t wCcrAfterBottomCount;
+    volatile uint32_t wCcrLatencyInvalidCount;
+    volatile uint32_t wCcrMinimumBottomMarginTicks;
+#endif
+#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
+#if !defined(__NO_USE_LOG__)
+    volatile uint32_t wSmoDiagnosticSampleCount;
+    volatile uint32_t wSmoLargeAngleErrorCount;
+    volatile float fBemfSquareTotal;
+    volatile float fCurrentErrorSquareTotal;
+    volatile float fSmoBadBemfSquareTotal;
+    volatile float fSmoBadCurrentSquareTotal;
+    volatile uint32_t awSmoBinSampleCount[4];
+    volatile uint32_t awSmoBinBadCount[4];
+    volatile uint32_t awSmoSectorBadCount[8];
+    volatile uint32_t awSmoSectorLowCount[8];
+#endif
+#endif
     int64_t lReportTimestamp;
 } foc_app_hf_stats_t;
+#endif
+
+typedef enum {
+    FOC_APP_CURRENT_STEP_IDLE = 0,
+    FOC_APP_CURRENT_STEP_PULSE,
+    FOC_APP_CURRENT_STEP_ZERO_TAIL,
+} foc_app_current_step_state_e;
 
 typedef struct {
     modus_base_t *ptBase;
@@ -49,10 +79,15 @@ typedef struct {
     identify_t tIdentify;
     identify_state_t eLastIdentifyState;
     foc_encoder_t tEncoder;
+#if 0 /* Temporary HF/CCR/SMO periodic diagnostic state. */
     foc_app_hf_stats_t tHfStats;
+#endif
     uint8_t chRunPt;
+    foc_app_current_step_state_e eCurrentStepState;
     int64_t lForegroundTimestamp;
-    int64_t lBackoffTimestamp;
+    int64_t lCurrentStepTimestamp;
+    int64_t lCurrentStepDurationTicks;
+    bool bEncoderEnabled;
     bool bReady;
 } foc_app_t;
 

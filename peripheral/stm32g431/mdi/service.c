@@ -18,8 +18,9 @@ static bool s_bAdcPrimed;
  * @brief Initialize one-time MDI acquisition configuration.
  * @param None.
  * @return None.
- * @note The queue is initialized before the UART IRQ is enabled. MDI-owned
- *       UART and I2C registers are initialized here after HAL startup.
+ * @note The queue is initialized before the UART IRQ is enabled. I2C1 is
+ *       initialized by peripheral_Init before MODUS objects are created;
+ *       this hook owns the UART and ADC service state.
  */
 void mdi_Init(void)
 {
@@ -27,7 +28,6 @@ void mdi_Init(void)
         g_tG431Stream, g_achG431StreamTx, G431_STREAM_BUFFER_SIZE,
         g_achG431StreamRx, G431_STREAM_BUFFER_SIZE);
     (void)MDI_G431_UART_INIT(USART2, HAL_RCC_GetPCLK1Freq());
-    (void)mdi_stm32_g431_i2c1_Init();
 
     s_bAdcPrimed = false;
     g_eG431AdcStatus = MDI_ADC_SetSampleFrequency(

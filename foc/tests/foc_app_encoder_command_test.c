@@ -44,6 +44,7 @@ static int test_WaveInit(const mwaveform_protocol_t *ptProtocol)
 {
     (void)ptProtocol;
     s_wWaveInitCount++;
+    s_chWaveCount = 0U;
     return MODUS_SUCCESS;
 }
 
@@ -152,7 +153,7 @@ static uint32_t s_wPositionCallCount = 0U;
 static const foc_encoder_t *s_ptReadEncoder = NULL;
 static uint32_t s_wReadTick = 0U;
 static foc_result_t s_ePositionResult = FOC_RESULT_OK;
-static char s_chLog[160] = {0};
+static char s_chLog[512] = {0};
 static int64_t s_lSystemTick = 1234;
 static int64_t s_lTickStep = 0;
 static uint32_t s_wShortTimeoutBudget = 0U;
@@ -160,6 +161,12 @@ static bool s_bReportTimeout = false;
 static uint32_t s_wMotorStepCount = 0U;
 static uint32_t s_wEncoderInitCount = 0U;
 static motor_cfg_t s_tCapturedMotorConfig = {0};
+static motor_status_t s_tMotorStatus = {0};
+static uint32_t s_wMotorStartCount = 0U;
+static uint32_t s_wCurrentReferenceCount = 0U;
+static uint32_t s_wMotorStopCount = 0U;
+static foc_scalar_t s_qCurrentReferenceD = FOC_ZERO;
+static foc_scalar_t s_qCurrentReferenceQ = FOC_ZERO;
 
 uint8_t g_chGLogMask = MLOG_MASK_ALL;
 volatile int32_t g_nOffset = 0;
@@ -353,7 +360,12 @@ void util_debug_Printf(const char *pchFormat, ...)
     int nLength = 0;
 
     va_start(tArgs, pchFormat);
-    nLength = vsnprintf(s_chLog, sizeof(s_chLog), pchFormat, tArgs);
+    size_t wCurrent = strlen(s_chLog);
+    if (wCurrent < sizeof(s_chLog) - 1U) {
+        nLength = vsnprintf(s_chLog + wCurrent,
+                            sizeof(s_chLog) - wCurrent,
+                            pchFormat, tArgs);
+    }
     va_end(tArgs);
     assert(nLength >= 0);
 }
@@ -390,7 +402,10 @@ foc_result_t foc_encoder_GetPosition(const void *pEncoder,
 foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
 {
     (void)ptMotor;
-    (void)eMode;
+    s_wMotorStartCount++;
+    s_tMotorStatus.eState = MOTOR_STATE_RUNNING;
+    s_tMotorStatus.eMode = eMode;
+    s_tMotorStatus.bPwmEnabled = true;
     return FOC_RESULT_OK;
 }
 
@@ -402,6 +417,9 @@ foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
 void motor_Stop(motor_t *ptMotor)
 {
     (void)ptMotor;
+    s_wMotorStopCount++;
+    s_tMotorStatus.eState = MOTOR_STATE_IDLE;
+    s_tMotorStatus.bPwmEnabled = false;
 }
 
 /**
@@ -444,8 +462,9 @@ foc_result_t motor_SetCurrentReference(motor_t *ptMotor,
                                        foc_scalar_t qQ)
 {
     (void)ptMotor;
-    (void)qD;
-    (void)qQ;
+    s_wCurrentReferenceCount++;
+    s_qCurrentReferenceD = qD;
+    s_qCurrentReferenceQ = qQ;
     return FOC_RESULT_OK;
 }
 
@@ -484,7 +503,7 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
                              motor_status_t *ptStatus)
 {
     (void)ptMotor;
-    *ptStatus = (motor_status_t){0};
+    *ptStatus = s_tMotorStatus;
     return FOC_RESULT_OK;
 }
 
@@ -510,6 +529,63 @@ int main(void)
     assert(s_wPositionCallCount == 2U);
     assert(strstr(s_chLog, "encoder data unavailable") != NULL);
     assert(strstr(s_chLog, "mech=") == NULL);
+
+    s_tMotorStatus = (motor_status_t){0};
+    s_tMotorStatus.eState = MOTOR_STATE_IDLE;
+    s_wMotorStartCount = 0U;
+    s_wCurrentReferenceCount = 0U;
+    foc_debug_CmdMotor("current 0 0");
+    assert(s_wMotorStartCount == 1U);
+    assert(s_wCurrentReferenceCount == 1U);
+    assert(s_tMotorStatus.eMode == FOC_MODE_CURRENT);
+    foc_debug_CmdMotor("current 0 0.05");
+    assert(s_wMotorStartCount == 1U);
+    assert(s_wCurrentReferenceCount == 2U);
+    assert(fabsf(foc_to_float(s_qCurrentReferenceQ) - 0.05f) < 0.0001f);
+
+    s_tMotorStatus = (motor_status_t){0};
+    s_tMotorStatus.eState = MOTOR_STATE_RUNNING;
+    s_tMotorStatus.eMode = FOC_MODE_CURRENT;
+    s_tMotorStatus.bPwmEnabled = true;
+    s_wMotorStartCount = 0U;
+    s_wCurrentReferenceCount = 0U;
+    s_wMotorStopCount = 0U;
+    tFocApp.eCurrentStepState = FOC_APP_CURRENT_STEP_IDLE;
+    tFocApp.bEncoderEnabled = true;
+    tFocApp.tMotor.tInput.bAngleValid = true;
+    s_lSystemTick = 10000;
+    s_lTickStep = 0;
+    s_tMotorStatus.bElectricalZeroValid = true;
+    foc_debug_CmdMotor("step 0.05 100");
+    assert(s_wMotorStartCount == 0U);
+    assert(s_wCurrentReferenceCount == 1U);
+    assert(fabsf(foc_to_float(s_qCurrentReferenceQ) - 0.05f) < 0.0001f);
+    assert(tFocApp.eCurrentStepState == FOC_APP_CURRENT_STEP_PULSE);
+    s_lSystemTick = 109999;
+    foc_debug_CurrentStepRun(&tFocApp);
+    assert(s_wMotorStopCount == 0U);
+    s_lSystemTick = 110000;
+    foc_debug_CurrentStepRun(&tFocApp);
+    assert(s_wCurrentReferenceCount == 2U);
+    assert(fabsf(foc_to_float(s_qCurrentReferenceQ)) < 0.0001f);
+    assert(tFocApp.eCurrentStepState ==
+           FOC_APP_CURRENT_STEP_ZERO_TAIL);
+    assert(s_wMotorStopCount == 0U);
+    s_lSystemTick = 114999;
+    foc_debug_CurrentStepRun(&tFocApp);
+    assert(s_wMotorStopCount == 0U);
+    s_lSystemTick = 115000;
+    foc_debug_CurrentStepRun(&tFocApp);
+    assert(s_wMotorStopCount == 1U);
+    assert(s_tMotorStatus.eState == MOTOR_STATE_IDLE);
+    assert(tFocApp.eCurrentStepState == FOC_APP_CURRENT_STEP_IDLE);
+
+    s_tMotorStatus.eMode = FOC_MODE_SPEED;
+    s_tMotorStatus.eState = MOTOR_STATE_RUNNING;
+    s_tMotorStatus.bPwmEnabled = true;
+    foc_debug_CmdMotor("current 0 0.02");
+    assert(s_wMotorStartCount == 0U);
+    assert(s_wCurrentReferenceCount == 2U);
 
     tFocApp.bReady = true;
     s_lSystemTick = 1000;
@@ -578,20 +654,15 @@ int main(void)
                    &s_tCapturedMotorConfig.tSpeedPiParams.tKiTs,
                    FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
-        assert(s_chWaveCount == 8U);
-        assert(strcmp(s_achWaveNames[0], "Ialpha") == 0);
-        assert(strcmp(s_achWaveNames[1], "Ibeta") == 0);
-        assert(strcmp(s_achWaveNames[2], "UmodelAlpha") == 0);
-        assert(strcmp(s_achWaveNames[3], "UmodelBeta") == 0);
-        assert(strcmp(s_achWaveNames[4], "eAlpha") == 0);
-        assert(strcmp(s_achWaveNames[5], "eBeta") == 0);
-        assert(strcmp(s_achWaveNames[6], "EncoderElec") == 0);
-        assert(strcmp(s_achWaveNames[7], "SmoAngle") == 0);
-        for (uint32_t wIndex = 0U; wIndex < 8U; wIndex++) {
-            assert(s_afWaveScales[wIndex] == 1000.0f);
+        assert(s_chWaveCount == 2U);
+        assert(strcmp(s_achWaveNames[0], "IqRef") == 0);
+        assert(strcmp(s_achWaveNames[1], "Iq") == 0);
+        for (uint32_t wIndex = 0U; wIndex < 2U; wIndex++) {
             assert(s_achWaveTypes[wIndex] == MWAVEFORM_VAR_FLOAT);
             assert(s_apvWaveValues[wIndex] != NULL);
         }
+        assert(s_afWaveScales[0] == 1000.0f);
+        assert(s_afWaveScales[1] == 1000.0f);
         assert(s_wWaveDecimation == 0U);
         assert(s_wWaveIsrPeriodNs == 50000U);
         assert(s_wWaveTargetHz == 10000U);
@@ -602,6 +673,12 @@ int main(void)
             (foc_ab_t){FOC_SCALAR(0.1f), FOC_SCALAR(0.2f)};
         tFocApp.tMotor.tCore.tVoltageAlphaBeta =
             (foc_ab_t){FOC_SCALAR(0.3f), FOC_SCALAR(-0.4f)};
+        tFocApp.tMotor.tCommand.tCurrentReference =
+            (foc_dq_t){FOC_SCALAR(0.1f), FOC_SCALAR(0.2f)};
+        tFocApp.tMotor.tCore.tCurrent =
+            (foc_dq_t){FOC_SCALAR(0.3f), FOC_SCALAR(0.4f)};
+        tFocApp.tMotor.tCore.tVoltage =
+            (foc_dq_t){FOC_SCALAR(0.5f), FOC_SCALAR(0.6f)};
         tFocApp.tMotor.tInput.tElectricalAngle.wBam32 = 0x20000000U;
         tFocApp.tMotor.tInput.bAngleValid = true;
         tFocApp.tPosition.tObserver.tSmo.tAxis[0].qBemf =
@@ -613,14 +690,80 @@ int main(void)
         tFocApp.tPosition.tObserver.tOutput.bValid = true;
         foc_debug_WaveformStep();
         assert(s_afWaveScales[0] == 1000.0f);
-        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.1f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.2f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[2] - 0.3f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[3] + 0.4f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[4] - 0.5f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[5] - 0.6f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[6] - 0.125f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[7] - 0.375f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.2f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.4f) < 0.001f);
+#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
+    !defined(__NO_USE_LOG__)
+        {
+            motor_position_sample_t tSample = {0};
+
+            tFocApp.tMotor.eState = MOTOR_STATE_RUNNING;
+            tFocApp.tMotor.tInput.bAngleValid = true;
+            tFocApp.tMotor.tInput.tElectricalAngle =
+                foc_angle_from_turns(0.1f);
+            tFocApp.tPosition.tObserver.tOutput.bValid = true;
+            tFocApp.tPosition.tObserver.tOutput.tElectricalAngle =
+                foc_angle_from_turns(0.2f);
+            tSample.tCurrentAlphaBeta.qAlpha = FOC_SCALAR(0.1f);
+            tSample.tCurrentAlphaBeta.qBeta = FOC_SCALAR(-0.2f);
+            tSample.tVoltageModelAlphaBeta.qAlpha =
+                FOC_SCALAR(0.1f);
+            tSample.tVoltageModelAlphaBeta.qBeta =
+                FOC_SCALAR(0.2f);
+            tSample.wRunGeneration = 1U;
+            tFocApp.tPosition.tObserver.tSmo.tExec
+                .qVoltageCurrentGain = FOC_SCALAR(0.2f);
+            tFocApp.tPosition.tObserver.tSmo.tAxis[0]
+                .qCurrentEstimate = FOC_SCALAR(0.2f);
+            tFocApp.tPosition.tObserver.tSmo.tAxis[1]
+                .qCurrentEstimate = FOC_SCALAR(-0.1f);
+            tFocApp.tPosition.tObserver.tSmo.tAxis[0].qBemf =
+                FOC_SCALAR(0.3f);
+            tFocApp.tPosition.tObserver.tSmo.tAxis[1].qBemf =
+                FOC_SCALAR(0.4f);
+            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
+            tFocApp.tPosition.tObserver.tOutput.tElectricalAngle =
+                foc_angle_from_turns(0.4f);
+            tSample.tVoltageModelAlphaBeta.qAlpha =
+                FOC_SCALAR(0.3f);
+            tSample.tVoltageModelAlphaBeta.qBeta = FOC_ZERO;
+            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
+            tFocApp.tPosition.tObserver.tOutput.bValid = false;
+            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
+            assert(tFocApp.tHfStats.wSmoDiagnosticSampleCount == 2U);
+            assert(tFocApp.tHfStats.wSmoLargeAngleErrorCount == 1U);
+            assert(fabsf(tFocApp.tHfStats.fBemfSquareTotal - 0.5f)
+                   < 0.001f);
+            assert(fabsf(tFocApp.tHfStats.fCurrentErrorSquareTotal - 0.04f)
+                   < 0.001f);
+            assert(fabsf(tFocApp.tHfStats.fSmoBadBemfSquareTotal -
+                         0.25f) < 0.001f);
+            assert(fabsf(tFocApp.tHfStats.fSmoBadCurrentSquareTotal -
+                         0.02f) < 0.001f);
+            assert(tFocApp.tHfStats.awSmoBinSampleCount[3] == 2U);
+            assert(tFocApp.tHfStats.awSmoBinBadCount[3] == 1U);
+            assert(tFocApp.tHfStats.awSmoSectorBadCount[0] == 1U);
+            assert(tFocApp.tHfStats.awSmoSectorLowCount[0] == 0U);
+            s_chLog[0] = '\0';
+            foc_app_ReportSmoRms(&tFocApp);
+            assert(strstr(s_chLog,
+                          "SMO cond x1e4 eBad=5000 eGood=5000 ") !=
+                   NULL);
+            assert(strstr(s_chLog, "iBad=1414 iGood=1414") != NULL);
+            assert(strstr(s_chLog,
+                          "SMO bin bad/tot [0]=0/0 [1]=0/0 "
+                          "[2]=0/0 [3]=1/2") != NULL);
+            assert(strstr(s_chLog,
+                          "SMO sec err/low s0=1/0 s1=0/0 s2=0/0 s3=0/0 ") !=
+                   NULL);
+            assert(tFocApp.tHfStats.wSmoDiagnosticSampleCount == 0U);
+            assert(tFocApp.tHfStats.fSmoBadBemfSquareTotal == 0.0f);
+            assert(tFocApp.tHfStats.fSmoBadCurrentSquareTotal == 0.0f);
+            assert(tFocApp.tHfStats.awSmoBinSampleCount[3] == 0U);
+            assert(tFocApp.tHfStats.awSmoBinBadCount[3] == 0U);
+            assert(tFocApp.tHfStats.awSmoSectorBadCount[0] == 0U);
+        }
+#endif
         s_wWaveStepCount = 0U;
         assert(s_wEncoderInitCount == 1U);
         tConfig.ePositionSource = MOTOR_POSITION_SOURCE_HARD_DRAG;
@@ -632,7 +775,7 @@ int main(void)
                MOTOR_POSITION_SOURCE_HARD_DRAG);
         assert(s_wEncoderInitCount == 1U);
         assert(s_tCapturedMotorConfig.wControlFrequencyHz == 20000U);
-        assert(s_wWaveStartCount == 1U);
+        assert(s_wWaveStartCount == 2U);
 
         s_wWaveStepCount = 0U;
         for (uint32_t wIndex = 0U; wIndex < 40U; wIndex++) {

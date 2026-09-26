@@ -76,20 +76,21 @@ static inline mdi_status_t mdi_g431_adc_start(void)
 
 MDI_ADC_TRIGGER_FN_BIND(adc_mean, mdi_g431_adc_start)
 MDI_ADC_CHANNEL_VIEW_BIND(adc_bus_voltage, g_awG431AdcMean[0],
-                          0x0FFFU, 4U, g_wG431AdcSequence,
+                          0x0FFFU, 0U, g_wG431AdcSequence,
                           g_bG431AdcMeanValid)
 MDI_ADC_CHANNEL_VIEW_BIND(adc_temperature, g_awG431AdcMean[1],
-                          0x0FFFU, 4U, g_wG431AdcSequence,
+                          0x0FFFU, 0U, g_wG431AdcSequence,
                           g_bG431AdcMeanValid)
 MDI_ADC_CHANNEL_VIEW_BIND(adc_potentiometer, g_awG431AdcMean[2],
-                          0x0FFFU, 4U, g_wG431AdcSequence,
+                          0x0FFFU, 0U, g_wG431AdcSequence,
                           g_bG431AdcMeanValid)
 
-/* Preserve the existing G431 mapping and low-16-bit raw result format. */
-#define G431_CURRENT_CHANNELS(X)                                                  \
-    X(u, ADC1->JDR1, 0xFFFFU, 0)                                                \
-    X(v, ADC2->JDR2, 0xFFFFU, 0)                                                \
-    X(w, ADC2->JDR1, 0xFFFFU, 0)
+/* DR and JDR are right-aligned 12-bit counts. Injected 4x oversampling
+ * uses a 2-bit right shift in hardware, preserving the count scale. */
+#define G431_CURRENT_CHANNELS(X) \
+    X(u, ADC1->JDR1, 0x0FFFU, 0) \
+    X(v, ADC2->JDR2, 0x0FFFU, 0) \
+    X(w, ADC2->JDR1, 0x0FFFU, 0)
 #define G431_PHASE_CURRENT_READY (ADC1->ISR & ADC_ISR_JEOS)
 #define G431_PHASE_CURRENT_CLEAR (ADC1->ISR = ADC_ISR_JEOS)
 MDI_SAMPLE_READY_BIND(phase_current_completed, G431_CURRENT_CHANNELS,

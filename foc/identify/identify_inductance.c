@@ -299,12 +299,18 @@ static foc_result_t _identify_inductance_CalculatePolarity(
     const identify_inductance_polarity_t *ptPolarity,
     const identify_inductance_t *ptInductance,
     bool bPositive,
-    identify_inductance_calculated_t *ptResult)
+    identify_inductance_calculated_t *ptResult,
+    identify_inductance_polarity_diagnostic_t *ptDiagnostic)
 {
     uint32_t wSamplesPerPolarity = 0U;
 
     if (ptPolarity == NULL || ptInductance == NULL || ptResult == NULL ||
-        ptPolarity->hwHalfCount < 2U ||
+        ptDiagnostic == NULL) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    ptDiagnostic->eFailure =
+        IDENTIFY_INDUCTANCE_FAILURE_INSUFFICIENT_SAMPLES;
+    if (ptPolarity->hwHalfCount < 2U ||
         ptInductance->hwCaptureTarget == 0U) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
@@ -325,15 +331,43 @@ static foc_result_t _identify_inductance_CalculatePolarity(
                       (float)ptInductance->wResistanceMilliohm *
                       fMeanCurrent / 1000.0f;
         float fSlope = fDelta * ptInductance->fSlopeScale;
-        if (fabsf(fDelta) < foc_to_float(ptInductance->qMinDelta) ||
-            fNet * fSlope <= 0.0f || fSlope == 0.0f) {
+        ptDiagnostic->qDeltaCurrentPu = foc_from_float(fDelta);
+        ptDiagnostic->lDeltaCurrentAdcCodeEq = (int32_t)(
+            fDelta * (float)FOC_CURRENT_COUNTS_PER_BASE +
+            (fDelta >= 0.0f ? 0.5f : -0.5f));
+        ptDiagnostic->wAverageBusMillivolt = (uint32_t)(
+            (float)ptPolarity->ullVoltageSumMillivolt /
+            (float)wSamplesPerPolarity + 0.5f);
+        ptDiagnostic->lCommandVoltageMillivolt = (int32_t)(
+            (bPositive ? fVoltage : -fVoltage) +
+            (bPositive ? 0.5f : -0.5f));
+        ptDiagnostic->lNetVoltageMillivolt = (int32_t)(
+            fNet + (fNet >= 0.0f ? 0.5f : -0.5f));
+        ptDiagnostic->lAverageCurrentMilliamp = (int32_t)(
+            fMeanCurrent + (fMeanCurrent >= 0.0f ? 0.5f : -0.5f));
+        if (fabsf(fDelta) < foc_to_float(ptInductance->qMinDelta)) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL;
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        if (fSlope == 0.0f) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE;
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        if (fNet * fSlope <= 0.0f) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN;
             return FOC_RESULT_OUT_OF_RANGE;
         }
         fNet = fNet * 1000000.0f / fSlope;
         if (!isfinite(fNet) || fNet <= 0.0f ||
             fNet > (float)INT64_MAX) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE;
             return FOC_RESULT_OUT_OF_RANGE;
         }
+        ptDiagnostic->eFailure = IDENTIFY_INDUCTANCE_FAILURE_NONE;
         ptResult->lInductanceMicroHenry = (int64_t)(fNet + 0.5f);
         ptResult->lVoltageMillivolt = (int64_t)(fVoltage + 0.5f);
         ptResult->lCurrentMilliamp = (int64_t)(fMeanCurrent +
@@ -363,15 +397,37 @@ static foc_result_t _identify_inductance_CalculatePolarity(
                           FOC_HF_ISR_HZ /
                           (FOC_Q_SCALE *
                            (ptInductance->hwCaptureTarget - 1U));
-        if ((lDelta < 0 ? -lDelta : lDelta) < ptInductance->qMinDelta ||
-            lSlope == 0 ||
-            (lNet > 0) != (lSlope > 0)) {
+        ptDiagnostic->qDeltaCurrentPu = (foc_scalar_t)lDelta;
+        ptDiagnostic->lDeltaCurrentAdcCodeEq = (int32_t)(
+            lDelta * FOC_CURRENT_COUNTS_PER_BASE / FOC_Q_SCALE);
+        ptDiagnostic->wAverageBusMillivolt = (uint32_t)lBus;
+        ptDiagnostic->lCommandVoltageMillivolt = (int32_t)(
+            bPositive ? lVoltage : -lVoltage);
+        ptDiagnostic->lNetVoltageMillivolt = (int32_t)lNet;
+        ptDiagnostic->lAverageCurrentMilliamp = (int32_t)lMeanCurrent;
+        if ((lDelta < 0 ? -lDelta : lDelta) <
+            ptInductance->qMinDelta) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL;
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        if (lSlope == 0) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE;
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        if ((lNet > 0) != (lSlope > 0)) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN;
             return FOC_RESULT_OUT_OF_RANGE;
         }
         lNet = lNet * 1000000 / lSlope;
         if (lNet <= 0) {
+            ptDiagnostic->eFailure =
+                IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE;
             return FOC_RESULT_OUT_OF_RANGE;
         }
+        ptDiagnostic->eFailure = IDENTIFY_INDUCTANCE_FAILURE_NONE;
         ptResult->lInductanceMicroHenry = lNet;
         ptResult->lVoltageMillivolt = lVoltage;
         ptResult->lCurrentMilliamp = lMeanCurrent;
@@ -388,14 +444,26 @@ static foc_result_t _identify_inductance_Calculate(
     identify_inductance_polarity_t tNegative = {0};
     identify_inductance_calculated_t tPositiveResult = {0};
     identify_inductance_calculated_t tNegativeResult = {0};
-    const identify_inductance_t *ptInductance = &ptThis->tInductance;
+    identify_inductance_t *ptInductance = &ptThis->tInductance;
+    foc_result_t ePositive = FOC_RESULT_OK;
+    foc_result_t eNegative = FOC_RESULT_OK;
 
     if (ptOutput == NULL || !_identify_inductance_CopyBatch(
-            ptThis, &tPositive, &tNegative) ||
-        _identify_inductance_CalculatePolarity(
-            &tPositive, ptInductance, true, &tPositiveResult) != FOC_RESULT_OK ||
-        _identify_inductance_CalculatePolarity(
-            &tNegative, ptInductance, false, &tNegativeResult) != FOC_RESULT_OK) {
+            ptThis, &tPositive, &tNegative)) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
+    ptInductance->tDiagnostic = (identify_inductance_diagnostic_t){
+        .bValid = true,
+        .wResistanceMilliohm = ptInductance->wResistanceMilliohm,
+        .qMinimumDeltaPu = ptInductance->qMinDelta,
+    };
+    ePositive = _identify_inductance_CalculatePolarity(
+        &tPositive, ptInductance, true, &tPositiveResult,
+        &ptInductance->tDiagnostic.tPositive);
+    eNegative = _identify_inductance_CalculatePolarity(
+        &tNegative, ptInductance, false, &tNegativeResult,
+        &ptInductance->tDiagnostic.tNegative);
+    if (ePositive != FOC_RESULT_OK || eNegative != FOC_RESULT_OK) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     if (tPositiveResult.lInductanceMicroHenry <= 0 ||
@@ -644,5 +712,19 @@ foc_result_t identify_GetInductance(
     *ptResult = ptThis->tInductance.tResult;
     ptThis->tInductance.bResultPending = false;
     perfc_port_resume_global_interrupt(tIrqState);
+    return FOC_RESULT_OK;
+}
+
+foc_result_t identify_GetInductanceDiagnostic(
+    const identify_t *ptThis,
+    identify_inductance_diagnostic_t *ptDiagnostic)
+{
+    if (ptThis == NULL || ptDiagnostic == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    if (!ptThis->tInductance.tDiagnostic.bValid) {
+        return FOC_RESULT_BUSY;
+    }
+    *ptDiagnostic = ptThis->tInductance.tDiagnostic;
     return FOC_RESULT_OK;
 }

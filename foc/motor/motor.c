@@ -63,7 +63,7 @@ static foc_scalar_t _motor_NormalizeCurrent(uint32_t wRaw,
 #endif
 }
 
-static foc_result_t _motor_ReadCurrent(const motor_t *ptMotor,
+static foc_result_t _motor_ReadCurrent(motor_t *ptMotor,
                                        foc_current_abc_t *ptCurrent)
 {
     foc_current_sample_t tSample = {0};
@@ -79,6 +79,7 @@ static foc_result_t _motor_ReadCurrent(const motor_t *ptMotor,
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
+    ptMotor->tCalib.tLatestSample = tSample;
     ptCurrent->qU = _motor_NormalizeCurrent(tSample.wU,                         \
         ptMotor->tCalib.wOffsetU);
     ptCurrent->qV = _motor_NormalizeCurrent(tSample.wV,                         \
@@ -800,7 +801,13 @@ void motor_IsrControlStep(
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return;
     }
+#if !defined(__NO_USE_LOG__)
+    ptMotor->tPwmCommitPhase.bValid = false;
+    eResult = FOC_PORT_SET_DUTY_CAPTURE(
+        &ptMotor->tCore.tDuty, &ptMotor->tPwmCommitPhase);
+#else
     eResult = FOC_PORT_SET_DUTY(&ptMotor->tCore.tDuty);
+#endif
     if (eResult != FOC_RESULT_OK) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_PWM);
     }
