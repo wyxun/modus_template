@@ -79,13 +79,21 @@ static modus_base_t s_tFocAppBase;
 extern foc_app_t tFocApp;
 static int foc_app_Clock(uintptr_t wObjectAddr);
 static int foc_app_Run(uintptr_t wObjectAddr);
-#if 0 /* Optional periodic HF ISR utilization report. */
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
 static bool foc_app_GetHfAverage(foc_app_t *ptThis,
                                  uint32_t *pwAverageTicks);
 static void foc_app_ReportHfAverage(foc_app_t *ptThis);
 #endif
+#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
+     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
+      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
+    !defined(__NO_USE_LOG__)
+static void foc_app_ReportDiagnostics(foc_app_t *ptThis);
+#endif
 
-#if 0 /* Optional SMO quality bins/sector statistics; foreground report. */
+#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
+    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
+    !defined(__NO_USE_LOG__)
 /**
  * @brief Accumulate same-cycle SMO signal and tracking quality.
  * @param ptThis Application object owning the ISR statistics.
@@ -407,6 +415,7 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
  * @param ptResult Completed resistance identification result.
  * @return None.
  */
+#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
 static void foc_app_ReportResistance(
     const identify_resistance_result_t *ptResult)
 {
@@ -461,7 +470,9 @@ static void foc_app_ReportResistance(
           (double)afVoltageOutputMillivolt[0U],
           (double)afVoltageOutputMillivolt[1U]);
 }
+#endif
 
+#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
 static const char *foc_app_InductanceFailureName(
     identify_inductance_failure_t eFailure)
 {
@@ -518,6 +529,43 @@ static void foc_app_ReportInductanceDiagnostic(
           (long)ptNegative->lAverageCurrentMilliamp,
           foc_app_InductanceFailureName(ptNegative->eFailure));
 }
+#endif
+
+#if FOC_APP_LOG_ADC_OFFSETS && !defined(__NO_USE_LOG__)
+/**
+ * @brief Print the calibrated three-phase ADC offsets once.
+ * @param ptThis FOC App object.
+ * @return None.
+ * @note Runs in the foreground after calibration; snapshots with IRQs masked.
+ */
+static void foc_app_ReportAdcOffsets(foc_app_t *ptThis)
+{
+    uint32_t wOffsetU = 0U;
+    uint32_t wOffsetV = 0U;
+    uint32_t wOffsetW = 0U;
+    bool bCalibrated = false;
+    perfc_global_interrupt_status_t tIrqState = 0U;
+
+    if (ptThis->bAdcOffsetReported) {
+        return;
+    }
+    tIrqState = perfc_port_disable_global_interrupt();
+    bCalibrated = ptThis->tMotor.tCalib.bIsCalibrated;
+    if (bCalibrated) {
+        wOffsetU = ptThis->tMotor.tCalib.wOffsetU;
+        wOffsetV = ptThis->tMotor.tCalib.wOffsetV;
+        wOffsetW = ptThis->tMotor.tCalib.wOffsetW;
+        ptThis->bAdcOffsetReported = true;
+    }
+    perfc_port_resume_global_interrupt(tIrqState);
+    if (!bCalibrated) {
+        return;
+    }
+    MLOGF(I, "FOC ADC offset U/V/W=%lu/%lu/%lu counts\r\n",
+          (unsigned long)wOffsetU, (unsigned long)wOffsetV,
+          (unsigned long)wOffsetW);
+}
+#endif
 
 static int foc_app_Run(uintptr_t wObjectAddr)
 {
@@ -534,8 +582,14 @@ static int foc_app_Run(uintptr_t wObjectAddr)
     while (true) {
         PERFC_PT_WAIT_UNTIL(perfc_is_time_out_us(
             1000U, &ptThis->lForegroundTimestamp, true))
-#if 0 /* Optional once-per-second HF/CCR/SMO timing diagnostics. */
-        foc_app_ReportHfAverage(ptThis);
+#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
+     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
+      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
+    !defined(__NO_USE_LOG__)
+        foc_app_ReportDiagnostics(ptThis);
+#endif
+#if FOC_APP_LOG_ADC_OFFSETS && !defined(__NO_USE_LOG__)
+        foc_app_ReportAdcOffsets(ptThis);
 #endif
         motor_PollBreakFault(&ptThis->tMotor);
         foc_debug_CurrentStepRun(ptThis);
@@ -553,17 +607,22 @@ static int foc_app_Run(uintptr_t wObjectAddr)
         if (ptThis->tIdentify.eState == IDENTIFY_STATE_ERROR &&
             ptThis->eLastIdentifyState != IDENTIFY_STATE_ERROR) {
             MLOGF(W, "identify failed (%d)\r\n", (int)eIdentify);
+#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
             foc_app_ReportInductanceDiagnostic(&ptThis->tIdentify);
+#endif
         }
         ptThis->eLastIdentifyState = ptThis->tIdentify.eState;
         if (eIdentify == FOC_RESULT_OK &&
             identify_GetResistance(&ptThis->tIdentify,
                                    &tResistanceResult) == FOC_RESULT_OK) {
+#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
             foc_app_ReportResistance(&tResistanceResult);
+#endif
         }
         if (eIdentify == FOC_RESULT_OK &&
             identify_GetInductance(&ptThis->tIdentify,
                                    &tInductanceResult) == FOC_RESULT_OK) {
+#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
             foc_app_ReportInductanceDiagnostic(&ptThis->tIdentify);
             MLOGF(I, "identify Ld=%lu uH freq=%lu Hz v=%lu mV "
                   "i=%ld mA samples=%u halves=%u\r\n",
@@ -574,13 +633,14 @@ static int foc_app_Run(uintptr_t wObjectAddr)
                   (long)tInductanceResult.lMeanCurrentMilliamp,
                   (unsigned)tInductanceResult.hwCaptureSampleCount,
                   (unsigned)tInductanceResult.hwHalfCycleCount);
+#endif
         }
     }
     PERFC_PT_END()
     return MODUS_SUCCESS;
 }
 
-#if 0 /* Optional ADC-trigger to PWM-CCR latency statistics. */
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
 /**
  * @brief Accumulate trigger-to-CCR latency and direct PWM bottom crossing.
  * @param ptThis Application owning Motor and timing statistics.
@@ -631,8 +691,8 @@ static void foc_app_RecordCcrTiming(foc_app_t *ptThis)
 void foc_app_HighFrequencyISR(void)
 {
     uint32_t wNowTick = 0U;
-#if 0 /* Optional ISR duration sampling used by periodic diagnostics. */
-    int64_t lStartTicks = get_system_ticks();
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
+    int64_t lStartTicks = 0;
     int64_t lElapsedTicks = 0;
     uint32_t wElapsedTicks = 0U;
 #endif
@@ -641,10 +701,9 @@ void foc_app_HighFrequencyISR(void)
     motor_isr_phase_t ePhase = MOTOR_ISR_NO_CONTROL;
     foc_result_t ePosition = FOC_RESULT_OK;
 
-#if 0 /* Optional ISR start timestamp; normal control uses one timestamp. */
-    wNowTick = (uint32_t)lStartTicks;
-#else
     wNowTick = (uint32_t)get_system_ticks();
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
+    lStartTicks = (int64_t)wNowTick;
 #endif
     if (tFocApp.bReady) {
         if (tFocApp.tMotor.eState == MOTOR_STATE_ALIGN) {
@@ -657,7 +716,7 @@ void foc_app_HighFrequencyISR(void)
                                           &tFeedback);
             motor_IsrControlStep(&tFocApp.tMotor,
                 ePosition == FOC_RESULT_OK ? &tFeedback : NULL);
-#if 0 /* Optional CCR timing capture; not needed by the control loop. */
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
             if (ePosition == FOC_RESULT_OK &&
                 tFocApp.tMotor.eState == MOTOR_STATE_RUNNING &&
                 tFocApp.tMotor.bPwmEnabled) {
@@ -668,7 +727,9 @@ void foc_app_HighFrequencyISR(void)
             if (ePosition == FOC_RESULT_OK) {
                 motor_position_ObserverStep(&tFocApp.tPosition,
                                              &tSample);
-#if 0 /* Optional SMO diagnostics; observer calculation remains enabled. */
+#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
+    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
+    !defined(__NO_USE_LOG__)
                 foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
 #endif
             }
@@ -711,7 +772,7 @@ void foc_app_HighFrequencyISR(void)
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     foc_debug_WaveformStep();
 #endif
-#if 0 /* Optional ISR duration accumulator for periodic HF diagnostics. */
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
     lElapsedTicks = get_system_ticks() - lStartTicks - (int64_t)g_nOffset;
     if (lElapsedTicks > 0) {
         wElapsedTicks = (uint32_t)lElapsedTicks;
@@ -725,7 +786,7 @@ void foc_app_HighFrequencyISR(void)
 #endif
 }
 
-#if 0 /* Optional periodic HF average, CCR timing, and SMO quality reports. */
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
 /**
  * @brief Copy and reset the high-frequency cycle window.
  * @param ptThis FOC App object.
@@ -756,7 +817,6 @@ static bool foc_app_GetHfAverage(foc_app_t *ptThis,
     return true;
 }
 
-#if !defined(__NO_USE_LOG__)
 /**
  * @brief Report ADC trigger to PWM commit timing and bottom crossings.
  * @param ptThis FOC App object owning the ISR statistics.
@@ -817,9 +877,10 @@ static void foc_app_ReportCcrLatency(foc_app_t *ptThis)
           (unsigned long)wMinimumMarginTicks,
           (unsigned long)wInvalidCount);
 }
-#endif
+#endif /* FOC_APP_LOG_TIMING_DIAGNOSTICS */
 
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
+#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
+    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
     !defined(__NO_USE_LOG__)
 /**
  * @brief Report SMO amplitude binning and electrical sector distributions.
@@ -966,6 +1027,7 @@ static void foc_app_ReportSmoRms(foc_app_t *ptThis)
 }
 #endif
 
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
 /**
  * @brief Report the average ISR cycles once per second from foreground.
  * @param ptThis FOC App object.
@@ -978,10 +1040,6 @@ static void foc_app_ReportHfAverage(foc_app_t *ptThis)
     uint32_t wDcBusMillivolt = 0U;
     foc_result_t eDcBus = FOC_RESULT_DISABLED;
 
-    if (!perfc_is_time_out_ms(1000U,
-                              &ptThis->tHfStats.lReportTimestamp, true)) {
-        return;
-    }
     eDcBus = foc_app_SampleDcBusMillivolt(&wDcBusMillivolt);
     if (!foc_app_GetHfAverage(ptThis, &wAverageTicks)) {
         return;
@@ -993,11 +1051,30 @@ static void foc_app_ReportHfAverage(foc_app_t *ptThis)
           (unsigned long)wAverageMicroseconds,
           (unsigned long)wDcBusMillivolt,
           eDcBus == FOC_RESULT_OK ? "" : " (invalid)");
-#if !defined(__NO_USE_LOG__)
     foc_app_ReportCcrLatency(ptThis);
+}
 #endif
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
+
+#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
+     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
+      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
     !defined(__NO_USE_LOG__)
+/**
+ * @brief Emit enabled periodic diagnostic groups once per second.
+ * @param ptThis FOC App object owning diagnostic statistics.
+ * @return None.
+ */
+static void foc_app_ReportDiagnostics(foc_app_t *ptThis)
+{
+    if (ptThis == NULL || !perfc_is_time_out_ms(
+            1000U, &ptThis->tHfStats.lReportTimestamp, true)) {
+        return;
+    }
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS
+    foc_app_ReportHfAverage(ptThis);
+#endif
+#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
+    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
     foc_app_ReportSmoRms(ptThis);
 #endif
 }

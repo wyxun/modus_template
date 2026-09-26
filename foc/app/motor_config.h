@@ -21,7 +21,7 @@
 
 /* Drive bases. HF frequency itself is supplied by the selected target. */
 #define MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT                12000U
-#define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    100.0f
+#define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    200.0f
 
 /* Position source: SENSOR or HARD_DRAG. Hard drag is disabled at zero Hz. */
 #define MOTOR_CONFIG_POSITION_SOURCE                       \
@@ -29,7 +29,7 @@
 #define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
 
 /* Operating limits and current/speed controller tuning. */
-#define MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU                100.0f
+#define MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU                200.0f
 #define MOTOR_CONFIG_MAX_PHASE_CURRENT_PU                  1.0f
 #define MOTOR_CONFIG_MAX_MODULATION_PU                     0.5773502692f
 #define MOTOR_CONFIG_PI_GAIN_INTEGER                       0

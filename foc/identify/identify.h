@@ -9,6 +9,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "foc_log_config.h"
 #include "motor.h"
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT      (2U)
@@ -91,13 +92,16 @@ typedef struct {
 /** @brief Result from one Phase 1 Ld measurement. */
 typedef struct {
     uint32_t wInductanceDMicroHenry;
+#if FOC_APP_LOG_INDUCTANCE_ID
     uint32_t wInjectionFrequencyHz;
     uint32_t wEffectiveVoltageMillivolt;
     int32_t lMeanCurrentMilliamp;
     uint16_t hwCaptureSampleCount;
     uint16_t hwHalfCycleCount;
+#endif
 } identify_inductance_result_t;
 
+#if FOC_APP_LOG_INDUCTANCE_ID
 /** @brief Why one polarity did not yield a valid inductance estimate. */
 typedef enum {
     IDENTIFY_INDUCTANCE_FAILURE_NONE = 0,
@@ -127,9 +131,11 @@ typedef struct {
     identify_inductance_polarity_diagnostic_t tPositive;
     identify_inductance_polarity_diagnostic_t tNegative;
 } identify_inductance_diagnostic_t;
+#endif
 
 /** @brief Diagnostic values captured by one resistance identification run. */
 typedef struct {
+#if FOC_APP_LOG_RESISTANCE_ID
     foc_scalar_t aqVoltageLevelPu[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
     foc_scalar_t aqAverageVoltageDPu[
@@ -139,13 +145,16 @@ typedef struct {
     foc_scalar_t qDeltaCurrentPu;
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;
+#endif
     uint32_t wResistanceMilliohm;
 } identify_resistance_result_t;
 
 /** @brief Caller-owned state for the Phase 1 Ld child PT. */
 typedef struct {
     identify_inductance_result_t tResult;
+#if FOC_APP_LOG_INDUCTANCE_ID
     identify_inductance_diagnostic_t tDiagnostic;
+#endif
     uint32_t wHalfPeriodCycles;
     uint32_t wCaptureStartCycle;
     uint32_t wTimeoutMs;
@@ -216,9 +225,11 @@ typedef struct {
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
     foc_scalar_t aqAverageVoltageD[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+#if FOC_APP_LOG_RESISTANCE_ID
     foc_scalar_t qDeltaCurrent;
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;
+#endif
     uint32_t wResistanceMilliohm;
     int64_t lStateTimestamp;
     bool bMotorStarted;
@@ -297,6 +308,7 @@ foc_result_t identify_GetInductance(
     identify_t *ptThis,
     identify_inductance_result_t *ptResult);
 
+#if FOC_APP_LOG_INDUCTANCE_ID
 /**
  * @brief Copy the most recent inductance calculation diagnostics.
  * @param ptThis Identification object.
@@ -306,6 +318,7 @@ foc_result_t identify_GetInductance(
 foc_result_t identify_GetInductanceDiagnostic(
     const identify_t *ptThis,
     identify_inductance_diagnostic_t *ptDiagnostic);
+#endif
 
 /**
  * @brief Stop identification and the controlled Motor.

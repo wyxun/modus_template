@@ -11,6 +11,7 @@
 #include <string.h>
 
 #include "../hal/foc_port.h"
+#include "../motor/motor.h"
 #include "../observer/foc_encoder.h"
 
 const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface = {0};
@@ -609,6 +610,35 @@ int main(void)
     s_chLog[0] = '\0';
     (void)foc_app_Run((uintptr_t)&tFocApp);
     assert(s_chLog[0] == '\0');
+
+#if FOC_APP_LOG_ADC_OFFSETS
+    tFocApp.chRunPt = 0U;
+    tFocApp.bReady = false;
+    tFocApp.bAdcOffsetReported = false;
+    tFocApp.tMotor.tCalib.bIsCalibrated = false;
+    s_bReportTimeout = true;
+    s_wShortTimeoutBudget = 1U;
+    s_chLog[0] = '\0';
+    (void)foc_app_Run((uintptr_t)&tFocApp);
+    assert(strstr(s_chLog, "ADC offset U/V/W=") == NULL);
+
+    tFocApp.chRunPt = 0U;
+    tFocApp.tMotor.tCalib.bIsCalibrated = true;
+    tFocApp.tMotor.tCalib.wOffsetU = 1987U;
+    tFocApp.tMotor.tCalib.wOffsetV = 2011U;
+    tFocApp.tMotor.tCalib.wOffsetW = 1994U;
+    s_bReportTimeout = true;
+    s_wShortTimeoutBudget = 1U;
+    (void)foc_app_Run((uintptr_t)&tFocApp);
+    assert(strstr(s_chLog, "ADC offset U/V/W=1987/2011/1994") != NULL);
+
+    tFocApp.chRunPt = 0U;
+    s_bReportTimeout = true;
+    s_wShortTimeoutBudget = 1U;
+    s_chLog[0] = '\0';
+    (void)foc_app_Run((uintptr_t)&tFocApp);
+    assert(s_chLog[0] == '\0');
+#endif
 
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     {

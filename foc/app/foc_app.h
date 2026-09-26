@@ -13,6 +13,7 @@
 
 #include "modus.h"
 #include "foc_config.h"
+#include "foc_log_config.h"
 #include "motor_config.h"
 #include "foc_encoder.h"
 #include "identify.h"
@@ -35,12 +36,15 @@ typedef struct {
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
 } foc_app_cfg_t;
 
-#if 0 /* Temporary HF/CCR/SMO periodic diagnostic collection. */
+#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
+     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
+      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
+    !defined(__NO_USE_LOG__)
 /** @brief ISR-owned cycle window consumed by the foreground reporter. */
 typedef struct {
+#if FOC_APP_LOG_TIMING_DIAGNOSTICS
     volatile uint32_t wCycleTotal;
     volatile uint32_t wSampleCount;
-#if !defined(__NO_USE_LOG__)
     volatile uint32_t wCcrLatencyTicksTotal;
     volatile uint32_t wCcrLatencySampleCount;
     volatile uint32_t wCcrLatencyMaxTicks;
@@ -48,8 +52,8 @@ typedef struct {
     volatile uint32_t wCcrLatencyInvalidCount;
     volatile uint32_t wCcrMinimumBottomMarginTicks;
 #endif
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
-#if !defined(__NO_USE_LOG__)
+#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
+    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
     volatile uint32_t wSmoDiagnosticSampleCount;
     volatile uint32_t wSmoLargeAngleErrorCount;
     volatile float fBemfSquareTotal;
@@ -60,7 +64,6 @@ typedef struct {
     volatile uint32_t awSmoBinBadCount[4];
     volatile uint32_t awSmoSectorBadCount[8];
     volatile uint32_t awSmoSectorLowCount[8];
-#endif
 #endif
     int64_t lReportTimestamp;
 } foc_app_hf_stats_t;
@@ -79,7 +82,10 @@ typedef struct {
     identify_t tIdentify;
     identify_state_t eLastIdentifyState;
     foc_encoder_t tEncoder;
-#if 0 /* Temporary HF/CCR/SMO periodic diagnostic state. */
+#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
+     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
+      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
+    !defined(__NO_USE_LOG__)
     foc_app_hf_stats_t tHfStats;
 #endif
     uint8_t chRunPt;
@@ -89,6 +95,9 @@ typedef struct {
     int64_t lCurrentStepDurationTicks;
     bool bEncoderEnabled;
     bool bReady;
+#if FOC_APP_LOG_ADC_OFFSETS
+    bool bAdcOffsetReported;
+#endif
 } foc_app_t;
 
 /* User-profile initializer; time values are seconds and loop rate is hertz. */

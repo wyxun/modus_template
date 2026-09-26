@@ -169,7 +169,7 @@ int main(void)
     assert(tIdentify.tResistance.eState ==
            IDENTIFY_RESISTANCE_STATE_CAPTURE);
     test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.02f),
-                    FOC_SCALAR(0.02f));
+                    IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU);
     identify_GetStatus(&tIdentify, &tStatus);
     assert(tIdentify.tResistance.hwCaptureSampleCount ==
            IDENTIFY_RESISTANCE_SAMPLE_COUNT);
@@ -181,13 +181,13 @@ int main(void)
 
     s_lNowTicks = 202;
     test_RunProgress(&tIdentify, &tMotor);
-    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.04f);
+    tMotor.tCore.tCurrent.qD = FOC_SCALAR(0.07f);
     s_lNowTicks = 302;
     test_RunProgress(&tIdentify, &tMotor);
     s_lNowTicks = 403;
     test_RunProgress(&tIdentify, &tMotor);
-    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.04f),
-                    FOC_SCALAR(0.04f));
+    test_RunCapture(&tIdentify, &tMotor, FOC_SCALAR(0.07f),
+                    IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
     test_RunProgress(&tIdentify, &tMotor);
@@ -198,27 +198,35 @@ int main(void)
     assert(fabsf(foc_to_float(tIdentify.tResistance.aqAverageCurrent[0U]) -
                  0.02f) < 0.001f);
     assert(fabsf(foc_to_float(tIdentify.tResistance.aqAverageCurrent[1U]) -
-                 0.04f) < 0.001f);
+                 0.07f) < 0.001f);
     assert(fabsf(foc_to_float(
                      tResistanceResult.aqAverageCurrentPu[0U]) - 0.02f) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.aqAverageCurrentPu[1U]) - 0.04f) <
+                     tResistanceResult.aqAverageCurrentPu[1U]) - 0.07f) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.aqVoltageLevelPu[0U]) - 0.02f) <
+                     tResistanceResult.aqVoltageLevelPu[0U]) -
+                 foc_to_float(
+                     IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU)) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.aqVoltageLevelPu[1U]) - 0.04f) <
+                     tResistanceResult.aqVoltageLevelPu[1U]) -
+                 foc_to_float(
+                     IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU)) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.aqAverageVoltageDPu[0U]) - 0.02f) <
+                     tResistanceResult.aqAverageVoltageDPu[0U]) -
+                 foc_to_float(
+                     IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU)) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.aqAverageVoltageDPu[1U]) - 0.04f) <
+                     tResistanceResult.aqAverageVoltageDPu[1U]) -
+                 foc_to_float(
+                     IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU)) <
            0.001f);
     assert(fabsf(foc_to_float(
-                     tResistanceResult.qDeltaCurrentPu) - 0.02f) <
+                     tResistanceResult.qDeltaCurrentPu) - 0.05f) <
            0.001f);
     assert(tResistanceResult.wVoltageBaseMillivolt == 24000U);
     assert(tResistanceResult.wCurrentBaseMilliamp == 7000U);

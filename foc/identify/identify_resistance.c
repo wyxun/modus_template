@@ -129,11 +129,13 @@ static foc_result_t _identify_resistance_Calculate(
     if (foc_abs(qDeltaCurrent) <= IDENTIFY_RESISTANCE_MIN_CURRENT_PU) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
+#if FOC_APP_LOG_RESISTANCE_ID
     ptThis->tResistance.qDeltaCurrent = qDeltaCurrent;
     ptThis->tResistance.wVoltageBaseMillivolt =
         ptMotor->tParams.wVoltageBaseMillivolt;
     ptThis->tResistance.wCurrentBaseMilliamp =
         ptMotor->wCurrentBaseMilliamp;
+#endif
 
 #if defined(FOC_NUMERIC_FLOAT)
     {
@@ -446,6 +448,7 @@ foc_result_t identify_GetResistance(identify_t *ptThis,
         perfc_port_resume_global_interrupt(tIrqState);
         return FOC_RESULT_BUSY;
     }
+#if FOC_APP_LOG_RESISTANCE_ID
     ptResult->aqVoltageLevelPu[0U] =
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU;
     ptResult->aqVoltageLevelPu[1U] =
@@ -463,6 +466,7 @@ foc_result_t identify_GetResistance(identify_t *ptThis,
         ptThis->tResistance.wVoltageBaseMillivolt;
     ptResult->wCurrentBaseMilliamp =
         ptThis->tResistance.wCurrentBaseMilliamp;
+#endif
     ptResult->wResistanceMilliohm =
         ptThis->tResistance.wResistanceMilliohm;
     ptThis->tResistance.bResultPending = false;
