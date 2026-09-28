@@ -19,6 +19,7 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_break_fault_test.c"),
     (Join-Path $repoRoot "foc/tests/motor_realtime_test_port.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
     (Join-Path $repoRoot "foc/control/foc_pid.c"),

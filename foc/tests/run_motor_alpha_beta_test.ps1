@@ -3,6 +3,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_alpha_beta_test.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/motor/motor_position.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),

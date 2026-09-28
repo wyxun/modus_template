@@ -43,15 +43,38 @@ typedef enum {
     MOTOR_POSITION_SOURCE_HARD_DRAG,
 } motor_position_source_t;
 
+typedef enum {
+    MOTOR_POSITION_EVENT_NONE = 0,
+    MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
+    MOTOR_POSITION_EVENT_OBSERVER_LOST,
+} motor_position_event_t;
+
+typedef enum {
+    MOTOR_POSITION_FEEDBACK_PRIMARY = 0,
+    MOTOR_POSITION_FEEDBACK_BLEND,
+    MOTOR_POSITION_FEEDBACK_OBSERVER,
+    MOTOR_POSITION_FEEDBACK_FAILED,
+} motor_position_feedback_state_t;
+
 /** @brief Initialization boundary; all conversion gains are stored at Init. */
 typedef struct {
     motor_position_provider_t tSensor;
     motor_position_source_t eSource;
     uint8_t chPolePairs;
+    uint32_t wControlFrequencyHz;
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     const struct motor_params_t *ptMotorParams;
     foc_observer_cfg_t tObserverCfg;
+    bool bObserverTakeover;
+    bool bAutoTakeover;
+    uint32_t wQualificationSteps;
+    uint32_t wBlendSteps;
+    uint32_t wMaxForcedSteps;
+    foc_scalar_t qMinimumBemfPu;
+    foc_scalar_t qMinimumSpeedPu;
+    foc_scalar_t qMaximumSpeedErrorRatio;
+    foc_scalar_t qMaximumAngleErrorTurns;
 #endif
 } motor_position_cfg_t;
 
@@ -69,6 +92,30 @@ typedef struct {
     bool bElectricalZeroValid;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_t tObserver;
+    foc_scalar_t qObserverSpeedGain;
+    uint32_t wAngleLeadAtOnePuBam32;
+    uint32_t wMaxBlendCorrectionBam32;
+    foc_scalar_t qObserverSpeedFilteredPu;
+    foc_scalar_t qMinimumBemfPu;
+    foc_scalar_t qMinimumSpeedPu;
+    foc_scalar_t qMaximumSpeedErrorRatio;
+    foc_scalar_t qMaximumAngleErrorTurns;
+    foc_scalar_t qBlendWeight;
+    foc_scalar_t qBlendWeightStep;
+    foc_angle_t tPreviousObserverAngle;
+    uint32_t wQualificationSteps;
+    uint32_t wBlendSteps;
+    uint32_t wMaxForcedSteps;
+    uint32_t wQualifiedCount;
+    uint32_t wForcedCount;
+    uint32_t wBlendCount;
+    int32_t nBlendCorrectionBam32;
+    motor_position_feedback_state_t eFeedbackState;
+    motor_position_event_t ePendingEvent;
+    bool bObserverTakeover;
+    bool bAutoTakeover;
+    bool bPreviousObserverValid;
+    bool bObserverSpeedReady;
 #endif
 } motor_position_t;
 
@@ -88,6 +135,8 @@ foc_result_t motor_position_CaptureZero(motor_position_t *ptPosition,
 void motor_position_InvalidateZero(motor_position_t *ptPosition);
 bool motor_position_ZeroValid(const motor_position_t *ptPosition);
 void motor_position_ResetObserver(motor_position_t *ptPosition);
+motor_position_event_t motor_position_TakeEvent(
+    motor_position_t *ptPosition);
 
 /* Target adapters may replace only the raw mechanical sensor binding. */
 #ifndef FOC_SENSOR_POSITION_GET

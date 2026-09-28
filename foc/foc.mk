@@ -30,6 +30,7 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/identify/identify_resistance.c \
               foc/identify/identify_inductance.c \
               foc/motor/motor_position.c \
+              foc/motor/motor_startup.c \
               foc/motor/motor.c \
               foc/app/foc_debug.c \
               foc/app/foc_app.c

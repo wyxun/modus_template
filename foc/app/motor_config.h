@@ -28,6 +28,22 @@
     MOTOR_POSITION_SOURCE_SENSOR
 #define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
 
+/* Sensorless capability is opt-in. Keep automatic handoff disabled until
+ * repeated bench data establishes reliable thresholds for this motor. */
+#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     0U
+#define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  60000U
+#define MOTOR_CONFIG_STARTUP_IQ_PU                          0.02f
+#define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.001f
+#define MOTOR_CONFIG_OBSERVER_TAKEOVER                      false
+#define MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER                 false
+#define MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS           4000U
+#define MOTOR_CONFIG_OBSERVER_BLEND_STEPS                   400U
+#define MOTOR_CONFIG_OBSERVER_MAX_FORCED_STEPS              60000U
+#define MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU                   0.13f
+#define MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU                  0.15f
+#define MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO         0.10f
+#define MOTOR_CONFIG_OBSERVER_MAX_ANGLE_ERROR_TURNS         0.125f
+
 /* Operating limits and current/speed controller tuning. */
 #define MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU                200.0f
 #define MOTOR_CONFIG_MAX_PHASE_CURRENT_PU                  1.0f

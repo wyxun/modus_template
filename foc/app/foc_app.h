@@ -30,6 +30,15 @@ typedef struct {
     foc_encoder_cfg_t tEncoderCfg;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_cfg_t tObserverCfg;
+    bool bObserverTakeover;
+    bool bObserverAutoTakeover;
+    uint32_t wObserverQualificationSteps;
+    uint32_t wObserverBlendSteps;
+    uint32_t wObserverMaxForcedSteps;
+    foc_scalar_t qObserverMinBemfPu;
+    foc_scalar_t qObserverMinSpeedPu;
+    foc_scalar_t qObserverMaxSpeedErrorRatio;
+    foc_scalar_t qObserverMaxAngleErrorTurns;
 #endif
     uint32_t wVoltageBaseMillivolt;
     uint32_t wHighFrequencyIsrHz;
@@ -111,6 +120,11 @@ typedef struct {
         },                                                                    \
         .nHardDragElectricalMilliHz =                                         \
             MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ,                        \
+        .wStartupRampSteps = MOTOR_CONFIG_STARTUP_RAMP_STEPS,                \
+        .wStartupMaxRunSteps = MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS,          \
+        .qStartupIqPu = FOC_SCALAR(MOTOR_CONFIG_STARTUP_IQ_PU),             \
+        .qStartupClosedLoopSpeedStepPu = FOC_SCALAR(                         \
+            MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU),                      \
         .tLimits = {                                                          \
             .qMaxSpeedReference =                                             \
                 FOC_SCALAR(MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU),              \

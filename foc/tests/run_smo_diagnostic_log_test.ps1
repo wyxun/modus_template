@@ -21,7 +21,7 @@ foreach ($stale in @(
         throw "Stale SMO diagnostic remains: $stale"
     }
 }
-if ($source -notmatch 'perfc_is_time_out_ms\(1000U') {
+if ($source -notmatch 'perfc_is_time_out_ms\(\s*1000U') {
     throw "SMO diagnostic output must remain foreground and rate-limited"
 }
 

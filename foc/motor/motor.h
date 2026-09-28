@@ -15,6 +15,7 @@
 #include "foc_core.h"
 #include "foc_port.h"
 #include "motor_position.h"
+#include "motor_startup.h"
 
 /**
  * @brief Physical motor metadata owned by Motor.
@@ -59,6 +60,10 @@ typedef struct {
     foc_scalar_t qAlignCurrent;
     foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
     int32_t nHardDragElectricalMilliHz; /**< Zero disables the candidate. */
+    uint32_t wStartupRampSteps; /**< Zero disables sensorless startup. */
+    uint32_t wStartupMaxRunSteps;
+    foc_scalar_t qStartupIqPu;
+    foc_scalar_t qStartupClosedLoopSpeedStepPu;
     uint32_t wControlFrequencyHz;         /**< High-frequency ISR rate. */
 } motor_cfg_t;
 
@@ -91,14 +96,20 @@ typedef struct {
     uint8_t chSpeedLoopDiv;
     foc_core_state_t tCore;
     foc_pid_t tSpeedPi;
+    motor_startup_t tStartup;
     motor_adc_calib_t tCalib;
     uint32_t wCurrentBaseMilliamp;
     foc_core_command_t tCommand;
     foc_core_input_t tInput;
     uint32_t wRunGeneration;
+    uint32_t wSensorlessRunSteps;
+    uint32_t wStartupMaxRunSteps;
     uint32_t wHardDragAngleStepBam32;
     foc_angle_t tHardDragAngle;
     foc_scalar_t qHardDragSpeedPu;
+    foc_scalar_t qStartupIqPu;
+    foc_scalar_t qStartupTargetSpeedPu;
+    foc_scalar_t qStartupClosedLoopSpeedStepPu;
     uint32_t wCalibrationSteps;
     uint32_t wAlignStepCount;
     uint8_t chSpeedLoopCount;
@@ -108,6 +119,7 @@ typedef struct {
     bool bElectricalZeroValid;
     bool bControlPrepared;
     bool bAlignCapturePending;
+    bool bSensorlessStart;
 #if !defined(__NO_USE_LOG__)
     foc_port_pwm_phase_t tPwmCommitPhase;
 #endif
@@ -142,6 +154,8 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig);
  * @return FOC_RESULT_OK or a state/safety error.
  */
 foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode);
+foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
+                                        foc_scalar_t qTargetSpeedPu);
 
 /**
  * @brief Stop the power stage and return to IDLE when safe.
@@ -241,6 +255,8 @@ void motor_IsrControlStep(
 
 /** @brief Finish an ALIGN capture requested by motor_IsrPrepare. */
 void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture);
+void motor_ApplyPositionEventIsr(motor_t *ptMotor,
+    motor_position_event_t eEvent, foc_scalar_t qObservedSpeedPu);
 
 /**
  * @brief Copy a safe status snapshot.

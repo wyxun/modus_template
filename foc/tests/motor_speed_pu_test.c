@@ -208,5 +208,55 @@ int main(void)
            tMotor.wHardDragAngleStepBam32);
     motor_IsrControlStep(&tMotor, &tFeedback);
     motor_Stop(&tMotor);
+
+    tConfig.nHardDragElectricalMilliHz = 0;
+    tConfig.wStartupRampSteps = 20U;
+    tConfig.wStartupMaxRunSteps = 40U;
+    tConfig.qStartupIqPu = FOC_SCALAR(0.02f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
+    assert(motor_StartSensorlessSpeed(&tMotor,
+        FOC_SCALAR(0.2f)) == FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_ALIGN);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.eState == MOTOR_STATE_RUNNING);
+    assert(tMotor.bPwmEnabled);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(tSample.tHardDragCandidate.bValid);
+    assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 == 0U);
+    motor_ApplyPositionEventIsr(&tMotor,
+        MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
+        FOC_SCALAR(0.2f));
+    assert(tMotor.tCommand.eMode == FOC_MODE_SPEED);
+    tFeedback = (motor_electrical_feedback_t){
+        .tElectricalAngle = {0U},
+        .qElectricalSpeedPu = FOC_SCALAR(0.2f),
+        .bValid = true,
+    };
+    motor_IsrControlStep(&tMotor, &tFeedback);
+    test_AssertNear(s_tLastCommand.tCurrentReference.qQ, 0.02f);
+    motor_ApplyPositionEventIsr(&tMotor,
+        MOTOR_POSITION_EVENT_OBSERVER_LOST,
+        FOC_ZERO);
+    assert(tMotor.eState == MOTOR_STATE_FAULT);
+    assert(!tMotor.bPwmEnabled);
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(motor_StartSensorlessSpeed(&tMotor,
+        FOC_SCALAR(0.2f)) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
+    for (uint32_t wIndex = 0U; wIndex < 40U; wIndex++) {
+        assert(motor_IsrPrepare(&tMotor, &tSample) ==
+               MOTOR_ISR_CONTROL_READY);
+        motor_IsrControlStep(&tMotor,
+            &tSample.tHardDragCandidate);
+    }
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.eState == MOTOR_STATE_FAULT);
+    assert(!tMotor.bPwmEnabled);
     return 0;
 }

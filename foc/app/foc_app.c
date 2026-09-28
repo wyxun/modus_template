@@ -10,6 +10,11 @@
 
 #include "foc_port.h"
 
+#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_NONE && \
+    MOTOR_CONFIG_OBSERVER_TAKEOVER
+#error "Observer takeover requires an observer backend"
+#endif
+
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
 #define FOC_APP_INIT_OBSERVER_CONFIG                         \
     .tObserverCfg = {                                                       \
@@ -21,7 +26,21 @@
             .qCurrentEstimateLimit = FOC_SCALAR(                            \
                 MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU),                \
         },                                                                  \
-    },
+    },                                                                    \
+    .bObserverTakeover = MOTOR_CONFIG_OBSERVER_TAKEOVER,                    \
+    .bObserverAutoTakeover = MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER,          \
+    .wObserverQualificationSteps =                                         \
+        MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS,                          \
+    .wObserverBlendSteps = MOTOR_CONFIG_OBSERVER_BLEND_STEPS,              \
+    .wObserverMaxForcedSteps = MOTOR_CONFIG_OBSERVER_MAX_FORCED_STEPS,      \
+    .qObserverMinBemfPu = FOC_SCALAR(                                       \
+        MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU),                                  \
+    .qObserverMinSpeedPu = FOC_SCALAR(                                      \
+        MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU),                                 \
+    .qObserverMaxSpeedErrorRatio = FOC_SCALAR(                              \
+        MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO),                        \
+    .qObserverMaxAngleErrorTurns = FOC_SCALAR(                              \
+        MOTOR_CONFIG_OBSERVER_MAX_ANGLE_ERROR_TURNS),
 #else
 #define FOC_APP_INIT_OBSERVER_CONFIG
 #endif
@@ -348,6 +367,26 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     if (eResult != FOC_RESULT_OK) {
         return (int)eResult;
     }
+    if (tMotorConfig.wStartupRampSteps != 0U &&
+        ptConfig->ePositionSource !=
+            MOTOR_POSITION_SOURCE_HARD_DRAG) {
+        return (int)FOC_RESULT_INVALID_ARGUMENT;
+    }
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    if (ptConfig->bObserverTakeover &&
+        (tMotorConfig.wStartupRampSteps == 0U ||
+         ptConfig->wObserverMaxForcedSteps <=
+             tMotorConfig.wStartupRampSteps ||
+         ptConfig->wObserverMaxForcedSteps -
+             tMotorConfig.wStartupRampSteps <=
+             ptConfig->wObserverQualificationSteps ||
+         ptConfig->wObserverMaxForcedSteps -
+             tMotorConfig.wStartupRampSteps -
+             ptConfig->wObserverQualificationSteps <=
+             ptConfig->wObserverBlendSteps)) {
+        return (int)FOC_RESULT_INVALID_ARGUMENT;
+    }
+#endif
     eMotor = motor_Init(&ptThis->tMotor, &tMotorConfig);
     if (eMotor != FOC_RESULT_OK) {
         return (int)eMotor;
@@ -362,14 +401,32 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     tPositionConfig.eSource = ptConfig->ePositionSource;
     tPositionConfig.qElectricalSpeedBaseTurnsPerSecond =
         ptConfig->qElectricalSpeedBaseTurnsPerSecond;
+    tPositionConfig.wControlFrequencyHz =
+        ptConfig->wHighFrequencyIsrHz;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     tPositionConfig.ptMotorParams = &ptThis->tMotor.tParams;
     tPositionConfig.tObserverCfg = ptConfig->tObserverCfg;
     tPositionConfig.tObserverCfg.tSmo.wSampleFrequencyHz =
         ptConfig->wHighFrequencyIsrHz;
+    tPositionConfig.bObserverTakeover = ptConfig->bObserverTakeover;
+    tPositionConfig.bAutoTakeover = ptConfig->bObserverAutoTakeover;
+    tPositionConfig.wQualificationSteps =
+        ptConfig->wObserverQualificationSteps;
+    tPositionConfig.wBlendSteps = ptConfig->wObserverBlendSteps;
+    tPositionConfig.wMaxForcedSteps =
+        ptConfig->wObserverMaxForcedSteps;
+    tPositionConfig.qMinimumBemfPu =
+        ptConfig->qObserverMinBemfPu;
+    tPositionConfig.qMinimumSpeedPu =
+        ptConfig->qObserverMinSpeedPu;
+    tPositionConfig.qMaximumSpeedErrorRatio =
+        ptConfig->qObserverMaxSpeedErrorRatio;
+    tPositionConfig.qMaximumAngleErrorTurns =
+        ptConfig->qObserverMaxAngleErrorTurns;
 #endif
     if (ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_HARD_DRAG &&
-        tMotorConfig.nHardDragElectricalMilliHz == 0) {
+        tMotorConfig.nHardDragElectricalMilliHz == 0 &&
+        tMotorConfig.wStartupRampSteps == 0U) {
         motor_Stop(&ptThis->tMotor);
         return (int)FOC_RESULT_INVALID_ARGUMENT;
     }
@@ -393,7 +450,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         return nBaseResult;
     }
     ptThis->bReady = eEncoder == FOC_RESULT_OK ||
-                     ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_HARD_DRAG;
+        ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_HARD_DRAG;
     ptThis->bEncoderEnabled = eEncoder == FOC_RESULT_OK;
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     foc_debug_WaveformInit(
@@ -714,6 +771,9 @@ void foc_app_HighFrequencyISR(void)
             ePosition = FOC_POSITION_GET(&tFocApp.tPosition,
                                           wNowTick, &tSample,
                                           &tFeedback);
+            motor_ApplyPositionEventIsr(&tFocApp.tMotor,
+                motor_position_TakeEvent(&tFocApp.tPosition),
+                tFeedback.qElectricalSpeedPu);
             motor_IsrControlStep(&tFocApp.tMotor,
                 ePosition == FOC_RESULT_OK ? &tFeedback : NULL);
 #if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)

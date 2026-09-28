@@ -23,6 +23,7 @@ typedef struct {
 typedef struct {
     foc_angle_t tElectricalAngle;
     foc_scalar_t qElectricalSpeedTurnsPerSecond;
+    foc_scalar_t qSignalStrengthPu;
     bool bValid;
 } foc_observer_output_t;
 

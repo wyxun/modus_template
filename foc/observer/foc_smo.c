@@ -469,6 +469,9 @@ foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
     ptSmo->tPreviousElectricalAngle = tElectricalAngle;
     ptSmo->bHasPreviousElectricalAngle = true;
     ptOutput->tElectricalAngle = tElectricalAngle;
+    ptOutput->qSignalStrengthPu = foc_add_sat(
+        foc_abs(ptSmo->tAxis[0].qBemf),
+        foc_abs(ptSmo->tAxis[1].qBemf));
     ptOutput->bValid = true;
     return FOC_RESULT_OK;
 }

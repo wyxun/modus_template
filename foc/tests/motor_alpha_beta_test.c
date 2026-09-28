@@ -241,6 +241,7 @@ int main(void)
     assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     motor_IsrControlStep(&tMotor, &tFeedback);
+    motor_position_ObserverStep(&tPosition, &tSample);
 
     assert(s_wClarkeCalls == 1U);
     assert(s_wCoreCalls == 1U);
@@ -254,6 +255,7 @@ int main(void)
     assert(FOC_POSITION_GET(&tPosition, 2U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     motor_IsrControlStep(&tMotor, &tFeedback);
+    motor_position_ObserverStep(&tPosition, &tSample);
     assert(s_wClarkeCalls == 2U);
     assert(s_wCoreCalls == 2U);
     assert(foc_to_float(tPosition.tObserver.tSmo.tAxis[0].qCurrentEstimate) >

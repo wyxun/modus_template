@@ -10,7 +10,8 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/modulation/foc_modulation.c")
 )
 $includePaths = @(
-    "foc", "foc/math", "foc/middleware", "foc/control", "foc/modulation"
+    "foc", "foc/math", "foc/hal", "foc/middleware", "foc/control",
+    "foc/modulation"
 )
 $includeArgs = @($includePaths | ForEach-Object {
     "-I$(Join-Path $repoRoot $_)"

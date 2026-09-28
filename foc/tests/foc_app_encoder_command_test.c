@@ -249,6 +249,14 @@ void motor_IsrControlStep(
     (void)ptFeedback;
 }
 
+void motor_ApplyPositionEventIsr(motor_t *ptMotor,
+    motor_position_event_t eEvent, foc_scalar_t qObservedSpeedPu)
+{
+    (void)ptMotor;
+    (void)eEvent;
+    (void)qObservedSpeedPu;
+}
+
 void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture)
 {
     (void)ptMotor;
@@ -408,6 +416,14 @@ foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
     s_tMotorStatus.eMode = eMode;
     s_tMotorStatus.bPwmEnabled = true;
     return FOC_RESULT_OK;
+}
+
+foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
+                                        foc_scalar_t qTargetSpeedPu)
+{
+    (void)ptMotor;
+    (void)qTargetSpeedPu;
+    return FOC_RESULT_DISABLED;
 }
 
 /**
@@ -684,10 +700,12 @@ int main(void)
                    &s_tCapturedMotorConfig.tSpeedPiParams.tKiTs,
                    FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
-        assert(s_chWaveCount == 2U);
-        assert(strcmp(s_achWaveNames[0], "IqRef") == 0);
-        assert(strcmp(s_achWaveNames[1], "Iq") == 0);
-        for (uint32_t wIndex = 0U; wIndex < 2U; wIndex++) {
+        assert(s_chWaveCount == 4U);
+        assert(strcmp(s_achWaveNames[0], "Enc_mT") == 0);
+        assert(strcmp(s_achWaveNames[1], "SMO_mT") == 0);
+        assert(strcmp(s_achWaveNames[2], "Err_mT") == 0);
+        assert(strcmp(s_achWaveNames[3], "Iq_mpu") == 0);
+        for (uint32_t wIndex = 0U; wIndex < 4U; wIndex++) {
             assert(s_achWaveTypes[wIndex] == MWAVEFORM_VAR_FLOAT);
             assert(s_apvWaveValues[wIndex] != NULL);
         }
@@ -720,8 +738,10 @@ int main(void)
         tFocApp.tPosition.tObserver.tOutput.bValid = true;
         foc_debug_WaveformStep();
         assert(s_afWaveScales[0] == 1000.0f);
-        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.2f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.4f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.125f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.375f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[2] - 0.25f) < 0.001f);
+        assert(fabsf(*(float *)s_apvWaveValues[3] - 0.4f) < 0.001f);
 #if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
     !defined(__NO_USE_LOG__)
         {
@@ -812,6 +832,32 @@ int main(void)
             foc_app_HighFrequencyISR();
         }
         assert(s_wWaveStepCount == 40U);
+
+        tConfig.tMotorCfg.nHardDragElectricalMilliHz = 0;
+        tConfig.tMotorCfg.wStartupRampSteps = 20U;
+        tConfig.tMotorCfg.wStartupMaxRunSteps = 40U;
+        tConfig.tMotorCfg.qStartupIqPu = FOC_SCALAR(0.02f);
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+        tConfig.bObserverTakeover = true;
+        tConfig.bObserverAutoTakeover = false;
+        tConfig.wObserverQualificationSteps = 3U;
+        tConfig.wObserverBlendSteps = 4U;
+        tConfig.wObserverMaxForcedSteps = 40U;
+        tConfig.qObserverMinBemfPu = FOC_SCALAR(0.13f);
+        tConfig.qObserverMinSpeedPu = FOC_SCALAR(0.1f);
+        tConfig.qObserverMaxSpeedErrorRatio = FOC_SCALAR(0.1f);
+        tConfig.qObserverMaxAngleErrorTurns = FOC_SCALAR(0.125f);
+#endif
+        assert(foc_app_Init((uintptr_t)&tFocApp,
+                            (uintptr_t)&tConfig) == MODUS_SUCCESS);
+        assert(tFocApp.bReady);
+        assert(!tFocApp.bEncoderEnabled);
+        assert(s_wEncoderInitCount == 1U);
+        assert(strcmp(s_achWaveNames[0], "Ctrl_mT") == 0);
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+        assert(tFocApp.tPosition.bObserverTakeover);
+        assert(!tFocApp.tPosition.bAutoTakeover);
+#endif
     }
 #endif
     return 0;
