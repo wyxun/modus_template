@@ -24,7 +24,6 @@ static void _motor_position_ResetHandoff(motor_position_t *ptPosition)
     ptPosition->tHandoff.eFeedbackState = MOTOR_POSITION_FEEDBACK_PRIMARY;
     ptPosition->tHandoff.ePendingEvent = MOTOR_POSITION_EVENT_NONE;
     ptPosition->tHandoff.wQualifiedCount = 0U;
-    ptPosition->tHandoff.wForcedCount = 0U;
     ptPosition->tHandoff.wBlendCount = 0U;
     ptPosition->tHandoff.nBlendCorrectionBam32 = 0;
     ptPosition->tHandoff.qBlendWeight = FOC_ZERO;
@@ -238,8 +237,8 @@ static foc_result_t _motor_position_SelectSmo(
     if (!ptForced->bValid) {
         return FOC_RESULT_SAFETY;
     }
-    bQualified = _motor_position_SmoQualified(
-        ptPosition, ptForced, &tObserved);
+    bQualified = !ptSample->bControlLimited &&
+        _motor_position_SmoQualified(ptPosition, ptForced, &tObserved);
     if (ptPosition->tHandoff.eFeedbackState ==
             MOTOR_POSITION_FEEDBACK_BLEND && !bQualified) {
         ptPosition->tHandoff.eFeedbackState =
@@ -247,9 +246,6 @@ static foc_result_t _motor_position_SelectSmo(
         ptPosition->tHandoff.ePendingEvent =
             MOTOR_POSITION_EVENT_OBSERVER_LOST;
         return FOC_RESULT_SAFETY;
-    }
-    if (ptPosition->tHandoff.wForcedCount < UINT32_MAX) {
-        ptPosition->tHandoff.wForcedCount++;
     }
     if (!bQualified) {
         ptPosition->tHandoff.wQualifiedCount = 0U;
@@ -274,15 +270,17 @@ static foc_result_t _motor_position_SelectSmo(
                                &tObserved, ptFeedback);
         ptPosition->tHandoff.tPreviousObserverAngle =
             tObserved.tElectricalAngle;
+        if (ptPosition->tHandoff.eFeedbackState ==
+                MOTOR_POSITION_FEEDBACK_BLEND &&
+            ptPosition->tHandoff.wBlendCount >=
+                ptPosition->tHandoff.wMaxBlendSteps) {
+            ptPosition->tHandoff.eFeedbackState =
+                MOTOR_POSITION_FEEDBACK_FAILED;
+            ptPosition->tHandoff.ePendingEvent =
+                MOTOR_POSITION_EVENT_OBSERVER_LOST;
+            return FOC_RESULT_SAFETY;
+        }
         return FOC_RESULT_OK;
-    }
-    if (ptPosition->tHandoff.wForcedCount >=
-        ptPosition->tHandoff.wMaxForcedSteps) {
-        ptPosition->tHandoff.eFeedbackState =
-            MOTOR_POSITION_FEEDBACK_FAILED;
-        ptPosition->tHandoff.ePendingEvent =
-            MOTOR_POSITION_EVENT_OBSERVER_LOST;
-        return FOC_RESULT_SAFETY;
     }
     *ptFeedback = *ptForced;
     return FOC_RESULT_OK;
@@ -302,11 +300,6 @@ static foc_result_t _motor_position_ConfigureTakeover(
             (float)ptConfig->wControlFrequencyHz / 2.0f ||
         ptConfig->wQualificationSteps == 0U ||
         ptConfig->wBlendSteps == 0U ||
-        ptConfig->wMaxForcedSteps <=
-            ptConfig->wQualificationSteps ||
-        ptConfig->wMaxForcedSteps -
-            ptConfig->wQualificationSteps <=
-            ptConfig->wBlendSteps ||
         !foc_scalar_is_finite(ptConfig->qMinimumBemfPu) ||
         !foc_scalar_is_finite(ptConfig->qMinimumSpeedPu) ||
         !foc_scalar_is_finite(
@@ -331,7 +324,20 @@ static foc_result_t _motor_position_ConfigureTakeover(
     ptPosition->tHandoff.wQualificationSteps =
         ptConfig->wQualificationSteps;
     ptPosition->tHandoff.wBlendSteps = ptConfig->wBlendSteps;
-    ptPosition->tHandoff.wMaxForcedSteps = ptConfig->wMaxForcedSteps;
+    /* Maximum initial phase error / 0.5 electrical degree per step. */
+    {
+        uint64_t ullAngle = foc_angle_from_scalar(
+            ptConfig->qMaximumAngleErrorTurns).wBam32;
+        uint64_t ullCorrectionSteps =
+            (ullAngle + ptPosition->tHandoff.wMaxBlendCorrectionBam32 - 1U) /
+            ptPosition->tHandoff.wMaxBlendCorrectionBam32;
+
+        if (ullCorrectionSteps > UINT32_MAX - ptConfig->wBlendSteps) {
+            return FOC_RESULT_OUT_OF_RANGE;
+        }
+        ptPosition->tHandoff.wMaxBlendSteps = ptConfig->wBlendSteps +
+            (uint32_t)ullCorrectionSteps;
+    }
     ptPosition->tSmo.qMinimumBemfPu = ptConfig->qMinimumBemfPu;
     ptPosition->tSmo.qMinimumSpeedPu = ptConfig->qMinimumSpeedPu;
     ptPosition->tSmo.qMaximumSpeedErrorRatio =
@@ -520,6 +526,12 @@ void motor_position_InvalidateZero(motor_position_t *ptPosition)
 bool motor_position_ZeroValid(const motor_position_t *ptPosition)
 {
     return ptPosition != NULL && ptPosition->bElectricalZeroValid;
+}
+
+bool motor_position_UsesHardDrag(const motor_position_t *ptPosition)
+{
+    return ptPosition != NULL &&
+           ptPosition->eSource == MOTOR_POSITION_SOURCE_HARD_DRAG;
 }
 
 void motor_position_ResetObserver(motor_position_t *ptPosition)

@@ -32,7 +32,6 @@
     .wObserverQualificationSteps =                                         \
         MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS,                          \
     .wObserverBlendSteps = MOTOR_CONFIG_OBSERVER_BLEND_STEPS,              \
-    .wObserverMaxForcedSteps = MOTOR_CONFIG_OBSERVER_MAX_FORCED_STEPS,      \
     .qObserverMinBemfPu = FOC_SCALAR(                                       \
         MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU),                                  \
     .qObserverMinSpeedPu = FOC_SCALAR(                                      \
@@ -373,21 +372,6 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
             MOTOR_POSITION_SOURCE_HARD_DRAG) {
         return (int)FOC_RESULT_INVALID_ARGUMENT;
     }
-#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    if (ptConfig->bObserverTakeover &&
-        (tMotorConfig.wStartupRampSteps == 0U ||
-         ptConfig->wObserverMaxForcedSteps <=
-             tMotorConfig.wStartupRampSteps ||
-         ptConfig->wObserverMaxForcedSteps -
-             tMotorConfig.wStartupRampSteps <=
-             ptConfig->wObserverQualificationSteps ||
-         ptConfig->wObserverMaxForcedSteps -
-             tMotorConfig.wStartupRampSteps -
-             ptConfig->wObserverQualificationSteps <=
-             ptConfig->wObserverBlendSteps)) {
-        return (int)FOC_RESULT_INVALID_ARGUMENT;
-    }
-#endif
     eMotor = motor_Init(&ptThis->tMotor, &tMotorConfig);
     if (eMotor != FOC_RESULT_OK) {
         return (int)eMotor;
@@ -414,8 +398,6 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     tPositionConfig.wQualificationSteps =
         ptConfig->wObserverQualificationSteps;
     tPositionConfig.wBlendSteps = ptConfig->wObserverBlendSteps;
-    tPositionConfig.wMaxForcedSteps =
-        ptConfig->wObserverMaxForcedSteps;
     tPositionConfig.qMinimumBemfPu =
         ptConfig->qObserverMinBemfPu;
     tPositionConfig.qMinimumSpeedPu =
@@ -440,6 +422,22 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
             return (int)eResult;
         }
     }
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    if (ptConfig->bObserverTakeover &&
+        (tMotorConfig.wStartupRampSteps == 0U ||
+         tMotorConfig.wStartupMaxRunSteps <=
+             tMotorConfig.wStartupRampSteps ||
+         tMotorConfig.wStartupMaxRunSteps -
+             tMotorConfig.wStartupRampSteps <=
+             ptConfig->wObserverQualificationSteps ||
+         tMotorConfig.wStartupMaxRunSteps -
+             tMotorConfig.wStartupRampSteps -
+             ptConfig->wObserverQualificationSteps <=
+             ptThis->tPosition.tHandoff.wMaxBlendSteps)) {
+        motor_Stop(&ptThis->tMotor);
+        return (int)FOC_RESULT_INVALID_ARGUMENT;
+    }
+#endif
     eResult = identify_Init(&ptThis->tIdentify);
     if (eResult != FOC_RESULT_OK) {
         motor_Stop(&ptThis->tMotor);

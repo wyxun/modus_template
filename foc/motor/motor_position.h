@@ -36,6 +36,7 @@ typedef struct {
     foc_ab_t tVoltageModelAlphaBeta;
     motor_electrical_feedback_t tHardDragCandidate;
     uint32_t wRunGeneration;
+    bool bControlLimited; /**< Previous control interval hit a limit. */
 } motor_position_sample_t;
 
 typedef enum {
@@ -70,7 +71,6 @@ typedef struct {
     bool bAutoTakeover;
     uint32_t wQualificationSteps;
     uint32_t wBlendSteps;
-    uint32_t wMaxForcedSteps;
     foc_scalar_t qMinimumBemfPu;
     foc_scalar_t qMinimumSpeedPu;
     foc_scalar_t qMaximumSpeedErrorRatio;
@@ -99,9 +99,8 @@ typedef struct {
     foc_angle_t tPreviousObserverAngle;
     uint32_t wQualificationSteps;
     uint32_t wBlendSteps;
-    uint32_t wMaxForcedSteps;
+    uint32_t wMaxBlendSteps;
     uint32_t wQualifiedCount;
-    uint32_t wForcedCount;
     uint32_t wBlendCount;
     int32_t nBlendCorrectionBam32;
     motor_position_feedback_state_t eFeedbackState;
@@ -145,6 +144,7 @@ foc_result_t motor_position_CaptureZero(motor_position_t *ptPosition,
                                         uint32_t wNowTick);
 void motor_position_InvalidateZero(motor_position_t *ptPosition);
 bool motor_position_ZeroValid(const motor_position_t *ptPosition);
+bool motor_position_UsesHardDrag(const motor_position_t *ptPosition);
 void motor_position_ResetObserver(motor_position_t *ptPosition);
 motor_position_event_t motor_position_TakeEvent(
     motor_position_t *ptPosition);

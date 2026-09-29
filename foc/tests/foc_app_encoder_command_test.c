@@ -836,14 +836,13 @@ int main(void)
 
         tConfig.tMotorCfg.nHardDragElectricalMilliHz = 0;
         tConfig.tMotorCfg.wStartupRampSteps = 20U;
-        tConfig.tMotorCfg.wStartupMaxRunSteps = 40U;
+        tConfig.tMotorCfg.wStartupMaxRunSteps = 120U;
         tConfig.tMotorCfg.qStartupIqPu = FOC_SCALAR(0.02f);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
         tConfig.bObserverTakeover = true;
         tConfig.bObserverAutoTakeover = false;
         tConfig.wObserverQualificationSteps = 3U;
         tConfig.wObserverBlendSteps = 4U;
-        tConfig.wObserverMaxForcedSteps = 40U;
         tConfig.qObserverMinBemfPu = FOC_SCALAR(0.13f);
         tConfig.qObserverMinSpeedPu = FOC_SCALAR(0.1f);
         tConfig.qObserverMaxSpeedErrorRatio = FOC_SCALAR(0.1f);

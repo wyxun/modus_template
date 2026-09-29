@@ -301,6 +301,35 @@ static void _motor_SpeedLoopStep(motor_t *ptMotor)
  * @param ptSample Synchronized sample output.
  * @return Whether the control half may run.
  */
+static bool _motor_ControlLimited(const motor_t *ptMotor)
+{
+    const foc_core_state_t *ptCore = &ptMotor->tCore;
+    foc_scalar_t qIqLimit = ptMotor->tLimits.qMaxPhaseCurrent;
+    foc_scalar_t qVoltageSquared = FOC_ZERO;
+
+    if (ptMotor->tLimits.qMaxIq > FOC_ZERO &&
+        ptMotor->tLimits.qMaxIq < qIqLimit) {
+        qIqLimit = ptMotor->tLimits.qMaxIq;
+    }
+    qVoltageSquared = foc_add_sat(
+        foc_mul_pu(ptCore->tVoltage.qD, ptCore->tVoltage.qD),
+        foc_mul_pu(ptCore->tVoltage.qQ, ptCore->tVoltage.qQ));
+    return foc_abs(ptMotor->tCommand.tCurrentReference.qD) >=
+               ptMotor->tLimits.qMaxPhaseCurrent ||
+           foc_abs(ptMotor->tCommand.tCurrentReference.qQ) >= qIqLimit ||
+           ptCore->tVoltage.qD <=
+               ptCore->tIdPi.tParams.qOutputMinimum ||
+           ptCore->tVoltage.qD >=
+               ptCore->tIdPi.tParams.qOutputMaximum ||
+           ptCore->tVoltage.qQ <=
+               ptCore->tIqPi.tParams.qOutputMinimum ||
+           ptCore->tVoltage.qQ >=
+               ptCore->tIqPi.tParams.qOutputMaximum ||
+           qVoltageSquared >= foc_mul_pu(
+               ptMotor->tLimits.qMaxModulation,
+               ptMotor->tLimits.qMaxModulation);
+}
+
 static motor_isr_phase_t _motor_PrepareRun(
     motor_t *ptMotor, motor_position_sample_t *ptSample)
 {
@@ -311,8 +340,7 @@ static motor_isr_phase_t _motor_PrepareRun(
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return MOTOR_ISR_NO_CONTROL;
     }
-    if (ptMotor->bSensorlessStart &&
-        ptMotor->tCommand.eMode == FOC_MODE_CURRENT) {
+    if (ptMotor->bSensorlessStart && !ptMotor->bObserverActive) {
         if (ptMotor->wSensorlessRunSteps >=
             ptMotor->wStartupMaxRunSteps) {
             _motor_EnterFault(ptMotor, MOTOR_FAULT_POSITION);
@@ -333,6 +361,7 @@ static motor_isr_phase_t _motor_PrepareRun(
     }
     ptSample->tCurrentAlphaBeta = ptMotor->tInput.tCurrentAlphaBeta;
     ptSample->tVoltageModelAlphaBeta = ptMotor->tCore.tVoltageAlphaBeta;
+    ptSample->bControlLimited = _motor_ControlLimited(ptMotor);
     if (ptMotor->bObserverActive) {
         ptSample->tHardDragCandidate = (motor_electrical_feedback_t){0};
     } else if (ptMotor->bSensorlessStart) {
@@ -630,6 +659,12 @@ foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
     }
     perfc_port_resume_global_interrupt(tIrqState);
     return eResult;
+}
+
+bool motor_SensorlessStartConfigured(const motor_t *ptMotor)
+{
+    return ptMotor != NULL &&
+           motor_startup_IsConfigured(&ptMotor->tStartup);
 }
 
 void motor_Stop(motor_t *ptMotor)

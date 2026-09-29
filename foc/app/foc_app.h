@@ -34,7 +34,6 @@ typedef struct {
     bool bObserverAutoTakeover;
     uint32_t wObserverQualificationSteps;
     uint32_t wObserverBlendSteps;
-    uint32_t wObserverMaxForcedSteps;
     foc_scalar_t qObserverMinBemfPu;
     foc_scalar_t qObserverMinSpeedPu;
     foc_scalar_t qObserverMaxSpeedErrorRatio;

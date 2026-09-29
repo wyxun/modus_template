@@ -45,7 +45,6 @@ int main(void)
     tCfg.bAutoTakeover = true;
     tCfg.wQualificationSteps = 3U;
     tCfg.wBlendSteps = 4U;
-    tCfg.wMaxForcedSteps = 100U;
     tCfg.qMinimumBemfPu = FOC_SCALAR(0.13f);
     tCfg.qMinimumSpeedPu = FOC_SCALAR(0.1f);
     tCfg.qMaximumSpeedErrorRatio = FOC_SCALAR(0.1f);
@@ -163,7 +162,6 @@ int main(void)
                      0xF8000000U) < 0x10000000);
 
     tCfg.bAutoTakeover = false;
-    tCfg.wMaxForcedSteps = 8U;
     assert(motor_position_Init(&tPosition, &tCfg) == FOC_RESULT_OK);
     tSample.wRunGeneration = 3U;
     s_tEstimate.bValid = true;
@@ -174,8 +172,6 @@ int main(void)
     }
     motor_position_ObserverStep(&tPosition, &tSample);
     assert(motor_position_Step(&tPosition, 0U, &tSample,
-                               &tControl) == FOC_RESULT_SAFETY);
-    assert(motor_position_TakeEvent(&tPosition) ==
-           MOTOR_POSITION_EVENT_OBSERVER_LOST);
+                               &tControl) == FOC_RESULT_OK);
     return 0;
 }

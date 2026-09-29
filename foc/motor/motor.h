@@ -157,6 +157,7 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig);
 foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode);
 foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
                                         foc_scalar_t qTargetSpeedPu);
+bool motor_SensorlessStartConfigured(const motor_t *ptMotor);
 
 /**
  * @brief Stop the power stage and return to IDLE when safe.
