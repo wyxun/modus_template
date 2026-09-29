@@ -21,19 +21,16 @@ static foc_angle_t _motor_position_ToElectrical(
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
 static void _motor_position_ResetHandoff(motor_position_t *ptPosition)
 {
-    ptPosition->eFeedbackState = MOTOR_POSITION_FEEDBACK_PRIMARY;
-    ptPosition->ePendingEvent = MOTOR_POSITION_EVENT_NONE;
-    ptPosition->wQualifiedCount = 0U;
-    ptPosition->wForcedCount = 0U;
-    ptPosition->wBlendCount = 0U;
-    ptPosition->nBlendCorrectionBam32 = 0;
-    ptPosition->qBlendWeight = FOC_ZERO;
-    ptPosition->bPreviousObserverValid = false;
-    ptPosition->bObserverSpeedReady = false;
-    ptPosition->qObserverSpeedFilteredPu = FOC_ZERO;
+    ptPosition->tHandoff.eFeedbackState = MOTOR_POSITION_FEEDBACK_PRIMARY;
+    ptPosition->tHandoff.ePendingEvent = MOTOR_POSITION_EVENT_NONE;
+    ptPosition->tHandoff.wQualifiedCount = 0U;
+    ptPosition->tHandoff.wForcedCount = 0U;
+    ptPosition->tHandoff.wBlendCount = 0U;
+    ptPosition->tHandoff.nBlendCorrectionBam32 = 0;
+    ptPosition->tHandoff.qBlendWeight = FOC_ZERO;
 }
 
-static bool _motor_position_ObserverQualified(
+static bool _motor_position_SmoQualified(
     const motor_position_t *ptPosition,
     const motor_electrical_feedback_t *ptForced,
     const motor_electrical_feedback_t *ptObserved)
@@ -48,9 +45,9 @@ static bool _motor_position_ObserverQualified(
     if (!ptRaw->bValid || !ptObserved->bValid ||
         !foc_scalar_is_finite(ptObserved->qElectricalSpeedPu) ||
         !foc_scalar_is_finite(ptRaw->qSignalStrengthPu) ||
-        ptRaw->qSignalStrengthPu < ptPosition->qMinimumBemfPu ||
+        ptRaw->qSignalStrengthPu < ptPosition->tSmo.qMinimumBemfPu ||
         foc_abs(ptForced->qElectricalSpeedPu) <
-            ptPosition->qMinimumSpeedPu) {
+            ptPosition->tSmo.qMinimumSpeedPu) {
         return false;
     }
     qAngleError = foc_abs(foc_angle_diff(
@@ -60,11 +57,11 @@ static bool _motor_position_ObserverQualified(
         ptForced->qElectricalSpeedPu));
     qRawSpeedPu = foc_mul_wide(
         ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->qObserverSpeedGain);
+        ptPosition->tSmo.qObserverSpeedGain);
     qAllowedSpeedError = foc_mul_pu(
         foc_abs(ptForced->qElectricalSpeedPu),
-        ptPosition->qMaximumSpeedErrorRatio);
-    return qAngleError <= ptPosition->qMaximumAngleErrorTurns &&
+        ptPosition->tSmo.qMaximumSpeedErrorRatio);
+    return qAngleError <= ptPosition->tSmo.qMaximumAngleErrorTurns &&
            qSpeedError <= qAllowedSpeedError &&
            foc_abs(foc_sub_sat(qRawSpeedPu,
                ptForced->qElectricalSpeedPu)) <=
@@ -74,7 +71,7 @@ static bool _motor_position_ObserverQualified(
             (ptForced->qElectricalSpeedPu > FOC_ZERO));
 }
 
-static void _motor_position_FilterObserverSpeed(
+static void _motor_position_FilterSmoSpeed(
     motor_position_t *ptPosition)
 {
     const foc_observer_output_t *ptRaw =
@@ -83,26 +80,26 @@ static void _motor_position_FilterObserverSpeed(
 
     if (!ptRaw->bValid || !foc_scalar_is_finite(
             ptRaw->qElectricalSpeedTurnsPerSecond)) {
-        ptPosition->bObserverSpeedReady = false;
+        ptPosition->tSmo.bObserverSpeedReady = false;
         return;
     }
     qRawSpeedPu = foc_mul_wide(
         ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->qObserverSpeedGain);
+        ptPosition->tSmo.qObserverSpeedGain);
     if (!foc_scalar_is_finite(qRawSpeedPu) ||
         foc_abs(qRawSpeedPu) > FOC_ONE) {
-        ptPosition->bObserverSpeedReady = false;
+        ptPosition->tSmo.bObserverSpeedReady = false;
         return;
     }
-    if (!ptPosition->bObserverSpeedReady) {
-        ptPosition->qObserverSpeedFilteredPu = qRawSpeedPu;
-        ptPosition->bObserverSpeedReady = true;
+    if (!ptPosition->tSmo.bObserverSpeedReady) {
+        ptPosition->tSmo.qObserverSpeedFilteredPu = qRawSpeedPu;
+        ptPosition->tSmo.bObserverSpeedReady = true;
     } else {
-        ptPosition->qObserverSpeedFilteredPu = foc_add_sat(
-            ptPosition->qObserverSpeedFilteredPu,
+        ptPosition->tSmo.qObserverSpeedFilteredPu = foc_add_sat(
+            ptPosition->tSmo.qObserverSpeedFilteredPu,
             foc_mul_pu(FOC_SCALAR(0.02f),
                 foc_sub_sat(qRawSpeedPu,
-                    ptPosition->qObserverSpeedFilteredPu)));
+                    ptPosition->tSmo.qObserverSpeedFilteredPu)));
     }
 }
 
@@ -118,45 +115,44 @@ static void _motor_position_Blend(
     int64_t lRemaining = 0;
     int64_t lStep = 0;
 
-    ptPosition->wBlendCount++;
-    if (ptPosition->wBlendCount >= ptPosition->wBlendSteps) {
-        ptPosition->qBlendWeight = FOC_ONE;
+    ptPosition->tHandoff.wBlendCount++;
+    if (ptPosition->tHandoff.wBlendCount >= ptPosition->tHandoff.wBlendSteps) {
+        ptPosition->tHandoff.qBlendWeight = FOC_ONE;
     } else {
-        ptPosition->qBlendWeight = foc_add_sat(
-            ptPosition->qBlendWeight,
-            ptPosition->qBlendWeightStep);
+        ptPosition->tHandoff.qBlendWeight = foc_add_sat(
+            ptPosition->tHandoff.qBlendWeight,
+            ptPosition->tHandoff.qBlendWeightStep);
     }
     lRemaining = (int64_t)nDifference -
-                 ptPosition->nBlendCorrectionBam32;
+                 ptPosition->tHandoff.nBlendCorrectionBam32;
     lStep = lRemaining;
-    if (lStep > ptPosition->wMaxBlendCorrectionBam32) {
-        lStep = ptPosition->wMaxBlendCorrectionBam32;
-    } else if (lStep < -(int64_t)ptPosition->wMaxBlendCorrectionBam32) {
-        lStep = -(int64_t)ptPosition->wMaxBlendCorrectionBam32;
+    if (lStep > ptPosition->tHandoff.wMaxBlendCorrectionBam32) {
+        lStep = ptPosition->tHandoff.wMaxBlendCorrectionBam32;
+    } else if (lStep < -(int64_t)ptPosition->tHandoff.wMaxBlendCorrectionBam32) {
+        lStep = -(int64_t)ptPosition->tHandoff.wMaxBlendCorrectionBam32;
     }
-    ptPosition->nBlendCorrectionBam32 += (int32_t)lStep;
+    ptPosition->tHandoff.nBlendCorrectionBam32 += (int32_t)lStep;
     *ptFeedback = *ptForced;
     ptFeedback->tElectricalAngle.wBam32 +=
-        (uint32_t)ptPosition->nBlendCorrectionBam32;
+        (uint32_t)ptPosition->tHandoff.nBlendCorrectionBam32;
     ptFeedback->qElectricalSpeedPu = foc_add_sat(
         ptForced->qElectricalSpeedPu,
         foc_mul_pu(foc_sub_sat(
             ptObserved->qElectricalSpeedPu,
             ptForced->qElectricalSpeedPu),
-            ptPosition->qBlendWeight));
-    if (ptPosition->wBlendCount >= ptPosition->wBlendSteps &&
+            ptPosition->tHandoff.qBlendWeight));
+    if (ptPosition->tHandoff.wBlendCount >= ptPosition->tHandoff.wBlendSteps &&
         lRemaining == lStep) {
         *ptFeedback = *ptObserved;
-        ptPosition->eFeedbackState =
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_OBSERVER;
-        ptPosition->ePendingEvent =
+        ptPosition->tHandoff.ePendingEvent =
             MOTOR_POSITION_EVENT_OBSERVER_ACTIVE;
     }
 }
 
-static foc_result_t _motor_position_ObserverActiveStep(
+static foc_result_t _motor_position_SmoActiveStep(
     motor_position_t *ptPosition,
-    const motor_electrical_feedback_t *ptForced,
     const motor_electrical_feedback_t *ptObserved,
     motor_electrical_feedback_t *ptFeedback)
 {
@@ -166,46 +162,41 @@ static foc_result_t _motor_position_ObserverActiveStep(
     const foc_observer_output_t *ptRaw =
         &ptPosition->tObserver.tOutput;
 
-    if (ptPosition->bPreviousObserverValid) {
-        qStepAngle = foc_abs(foc_angle_diff(
-            ptObserved->tElectricalAngle,
-            ptPosition->tPreviousObserverAngle));
-    }
+    qStepAngle = foc_abs(foc_angle_diff(
+        ptObserved->tElectricalAngle,
+        ptPosition->tHandoff.tPreviousObserverAngle));
     qRawSpeedPu = foc_mul_wide(
         ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->qObserverSpeedGain);
+        ptPosition->tSmo.qObserverSpeedGain);
     qRawDeviationLimit = foc_mul_pu(
         foc_abs(ptObserved->qElectricalSpeedPu),
-        ptPosition->qMaximumSpeedErrorRatio);
+        ptPosition->tSmo.qMaximumSpeedErrorRatio);
     qRawDeviationLimit = foc_add_sat(
         qRawDeviationLimit, qRawDeviationLimit);
     if (!ptObserved->bValid ||
         !foc_scalar_is_finite(ptObserved->qElectricalSpeedPu) ||
         !foc_scalar_is_finite(qRawSpeedPu) ||
         !foc_scalar_is_finite(ptRaw->qSignalStrengthPu) ||
-        ptRaw->qSignalStrengthPu < ptPosition->qMinimumBemfPu ||
+        ptRaw->qSignalStrengthPu < ptPosition->tSmo.qMinimumBemfPu ||
         foc_abs(ptObserved->qElectricalSpeedPu) <
-            ptPosition->qMinimumSpeedPu ||
+            ptPosition->tSmo.qMinimumSpeedPu ||
         foc_abs(ptObserved->qElectricalSpeedPu) > FOC_ONE ||
         foc_abs(foc_sub_sat(qRawSpeedPu,
             ptObserved->qElectricalSpeedPu)) > qRawDeviationLimit ||
-        qStepAngle > ptPosition->qMaximumAngleErrorTurns ||
-        ((ptObserved->qElectricalSpeedPu > FOC_ZERO) !=
-         (ptForced->qElectricalSpeedPu > FOC_ZERO))) {
-        ptPosition->eFeedbackState =
+        qStepAngle > ptPosition->tSmo.qMaximumAngleErrorTurns) {
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_FAILED;
-        ptPosition->ePendingEvent =
+        ptPosition->tHandoff.ePendingEvent =
             MOTOR_POSITION_EVENT_OBSERVER_LOST;
         return FOC_RESULT_SAFETY;
     }
-    ptPosition->tPreviousObserverAngle =
+    ptPosition->tHandoff.tPreviousObserverAngle =
         ptObserved->tElectricalAngle;
-    ptPosition->bPreviousObserverValid = true;
     *ptFeedback = *ptObserved;
     return FOC_RESULT_OK;
 }
 
-static foc_result_t _motor_position_SelectObserver(
+static foc_result_t _motor_position_SelectSmo(
     motor_position_t *ptPosition,
     const motor_position_sample_t *ptSample,
     motor_electrical_feedback_t *ptFeedback)
@@ -217,77 +208,79 @@ static foc_result_t _motor_position_SelectObserver(
         &ptPosition->tObserver.tOutput;
     bool bQualified = false;
 
-    if (ptPosition->eFeedbackState ==
+    if (ptPosition->tHandoff.eFeedbackState ==
         MOTOR_POSITION_FEEDBACK_FAILED) {
         return FOC_RESULT_SAFETY;
     }
     tObserved.tElectricalAngle = ptRaw->tElectricalAngle;
     tObserved.qElectricalSpeedPu =
-        ptPosition->qObserverSpeedFilteredPu;
+        ptPosition->tSmo.qObserverSpeedFilteredPu;
     tObserved.bValid = ptRaw->bValid &&
-                       ptPosition->bObserverSpeedReady;
+                       ptPosition->tSmo.bObserverSpeedReady;
     if (tObserved.bValid) {
         int64_t lAngleLead = 0;
 
 #if defined(FOC_NUMERIC_FIXED)
-        lAngleLead = ((int64_t)ptPosition->wAngleLeadAtOnePuBam32 *
+        lAngleLead = ((int64_t)ptPosition->tSmo.wAngleLeadAtOnePuBam32 *
                       tObserved.qElectricalSpeedPu) / FOC_Q_SCALE;
 #else
         lAngleLead = (int64_t)(
-            (float)ptPosition->wAngleLeadAtOnePuBam32 *
+            (float)ptPosition->tSmo.wAngleLeadAtOnePuBam32 *
             tObserved.qElectricalSpeedPu);
 #endif
         tObserved.tElectricalAngle.wBam32 += (uint32_t)lAngleLead;
     }
-    if (ptPosition->eFeedbackState ==
+    if (ptPosition->tHandoff.eFeedbackState ==
         MOTOR_POSITION_FEEDBACK_OBSERVER) {
-        return _motor_position_ObserverActiveStep(
-            ptPosition, ptForced, &tObserved, ptFeedback);
+        return _motor_position_SmoActiveStep(
+            ptPosition, &tObserved, ptFeedback);
     }
-    bQualified = _motor_position_ObserverQualified(
+    if (!ptForced->bValid) {
+        return FOC_RESULT_SAFETY;
+    }
+    bQualified = _motor_position_SmoQualified(
         ptPosition, ptForced, &tObserved);
-    if (ptPosition->eFeedbackState ==
+    if (ptPosition->tHandoff.eFeedbackState ==
             MOTOR_POSITION_FEEDBACK_BLEND && !bQualified) {
-        ptPosition->eFeedbackState =
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_FAILED;
-        ptPosition->ePendingEvent =
+        ptPosition->tHandoff.ePendingEvent =
             MOTOR_POSITION_EVENT_OBSERVER_LOST;
         return FOC_RESULT_SAFETY;
     }
-    if (ptPosition->wForcedCount < UINT32_MAX) {
-        ptPosition->wForcedCount++;
+    if (ptPosition->tHandoff.wForcedCount < UINT32_MAX) {
+        ptPosition->tHandoff.wForcedCount++;
     }
     if (!bQualified) {
-        ptPosition->wQualifiedCount = 0U;
-        ptPosition->wBlendCount = 0U;
-        ptPosition->nBlendCorrectionBam32 = 0;
-        ptPosition->qBlendWeight = FOC_ZERO;
-        ptPosition->eFeedbackState =
+        ptPosition->tHandoff.wQualifiedCount = 0U;
+        ptPosition->tHandoff.wBlendCount = 0U;
+        ptPosition->tHandoff.nBlendCorrectionBam32 = 0;
+        ptPosition->tHandoff.qBlendWeight = FOC_ZERO;
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_PRIMARY;
-    } else if (ptPosition->wQualifiedCount <
-               ptPosition->wQualificationSteps) {
-        ptPosition->wQualifiedCount++;
+    } else if (ptPosition->tHandoff.wQualifiedCount <
+               ptPosition->tHandoff.wQualificationSteps) {
+        ptPosition->tHandoff.wQualifiedCount++;
     }
-    if (ptPosition->bAutoTakeover &&
-        ptPosition->wQualifiedCount >=
-            ptPosition->wQualificationSteps) {
-        ptPosition->eFeedbackState =
+    if (ptPosition->tHandoff.bAutoTakeover &&
+        ptPosition->tHandoff.wQualifiedCount >=
+            ptPosition->tHandoff.wQualificationSteps) {
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_BLEND;
     }
-    if (ptPosition->eFeedbackState ==
+    if (ptPosition->tHandoff.eFeedbackState ==
         MOTOR_POSITION_FEEDBACK_BLEND) {
         _motor_position_Blend(ptPosition, ptForced,
                                &tObserved, ptFeedback);
-        ptPosition->tPreviousObserverAngle =
+        ptPosition->tHandoff.tPreviousObserverAngle =
             tObserved.tElectricalAngle;
-        ptPosition->bPreviousObserverValid = true;
         return FOC_RESULT_OK;
     }
-    if (ptPosition->wForcedCount >=
-        ptPosition->wMaxForcedSteps) {
-        ptPosition->eFeedbackState =
+    if (ptPosition->tHandoff.wForcedCount >=
+        ptPosition->tHandoff.wMaxForcedSteps) {
+        ptPosition->tHandoff.eFeedbackState =
             MOTOR_POSITION_FEEDBACK_FAILED;
-        ptPosition->ePendingEvent =
+        ptPosition->tHandoff.ePendingEvent =
             MOTOR_POSITION_EVENT_OBSERVER_LOST;
         return FOC_RESULT_SAFETY;
     }
@@ -327,30 +320,30 @@ static foc_result_t _motor_position_ConfigureTakeover(
         ptConfig->qMaximumAngleErrorTurns >= FOC_HALF) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
-    ptPosition->bObserverTakeover = true;
-    ptPosition->wAngleLeadAtOnePuBam32 = (uint32_t)llround(
+    ptPosition->tHandoff.bObserverTakeover = true;
+    ptPosition->tSmo.wAngleLeadAtOnePuBam32 = (uint32_t)llround(
         (double)foc_to_float(
             ptConfig->qElectricalSpeedBaseTurnsPerSecond) *
         4294967296.0 /
         (double)ptConfig->wControlFrequencyHz);
-    ptPosition->wMaxBlendCorrectionBam32 = 0x100000000ULL / 720U;
-    ptPosition->bAutoTakeover = ptConfig->bAutoTakeover;
-    ptPosition->wQualificationSteps =
+    ptPosition->tHandoff.wMaxBlendCorrectionBam32 = 0x100000000ULL / 720U;
+    ptPosition->tHandoff.bAutoTakeover = ptConfig->bAutoTakeover;
+    ptPosition->tHandoff.wQualificationSteps =
         ptConfig->wQualificationSteps;
-    ptPosition->wBlendSteps = ptConfig->wBlendSteps;
-    ptPosition->wMaxForcedSteps = ptConfig->wMaxForcedSteps;
-    ptPosition->qMinimumBemfPu = ptConfig->qMinimumBemfPu;
-    ptPosition->qMinimumSpeedPu = ptConfig->qMinimumSpeedPu;
-    ptPosition->qMaximumSpeedErrorRatio =
+    ptPosition->tHandoff.wBlendSteps = ptConfig->wBlendSteps;
+    ptPosition->tHandoff.wMaxForcedSteps = ptConfig->wMaxForcedSteps;
+    ptPosition->tSmo.qMinimumBemfPu = ptConfig->qMinimumBemfPu;
+    ptPosition->tSmo.qMinimumSpeedPu = ptConfig->qMinimumSpeedPu;
+    ptPosition->tSmo.qMaximumSpeedErrorRatio =
         ptConfig->qMaximumSpeedErrorRatio;
-    ptPosition->qMaximumAngleErrorTurns =
+    ptPosition->tSmo.qMaximumAngleErrorTurns =
         ptConfig->qMaximumAngleErrorTurns;
-    ptPosition->qBlendWeightStep = foc_from_float(
+    ptPosition->tHandoff.qBlendWeightStep = foc_from_float(
         1.0f / (float)ptConfig->wBlendSteps);
-    if (ptPosition->qBlendWeightStep == FOC_ZERO ||
+    if (ptPosition->tHandoff.qBlendWeightStep == FOC_ZERO ||
         foc_div_checked(FOC_ONE,
             ptConfig->qElectricalSpeedBaseTurnsPerSecond,
-            &ptPosition->qObserverSpeedGain) != FOC_RESULT_OK) {
+            &ptPosition->tSmo.qObserverSpeedGain) != FOC_RESULT_OK) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     return FOC_RESULT_OK;
@@ -434,15 +427,15 @@ foc_result_t motor_position_Step(
 #endif
     }
     if (ptPosition->eSource == MOTOR_POSITION_SOURCE_HARD_DRAG) {
-        if (!ptSample->tHardDragCandidate.bValid) {
-            return FOC_RESULT_SAFETY;
-        }
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-        if (ptPosition->bObserverTakeover) {
-            return _motor_position_SelectObserver(
+        if (ptPosition->tHandoff.bObserverTakeover) {
+            return _motor_position_SelectSmo(
                 ptPosition, ptSample, ptFeedback);
         }
 #endif
+        if (!ptSample->tHardDragCandidate.bValid) {
+            return FOC_RESULT_SAFETY;
+        }
         *ptFeedback = ptSample->tHardDragCandidate;
         return FOC_RESULT_OK;
     }
@@ -486,8 +479,8 @@ void motor_position_ObserverStep(
     if (eResult != FOC_RESULT_OK) {
         ptPosition->tObserver.tOutput.bValid = false;
     }
-    if (ptPosition->bObserverTakeover) {
-        _motor_position_FilterObserverSpeed(ptPosition);
+    if (ptPosition->tHandoff.bObserverTakeover) {
+        _motor_position_FilterSmoSpeed(ptPosition);
     }
 }
 #endif
@@ -534,6 +527,8 @@ void motor_position_ResetObserver(motor_position_t *ptPosition)
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     if (ptPosition != NULL) {
         foc_observer_Reset(&ptPosition->tObserver);
+        ptPosition->tSmo.bObserverSpeedReady = false;
+        ptPosition->tSmo.qObserverSpeedFilteredPu = FOC_ZERO;
     }
 #else
     (void)ptPosition;
@@ -547,8 +542,8 @@ motor_position_event_t motor_position_TakeEvent(
     motor_position_event_t eEvent = MOTOR_POSITION_EVENT_NONE;
 
     if (ptPosition != NULL) {
-        eEvent = ptPosition->ePendingEvent;
-        ptPosition->ePendingEvent = MOTOR_POSITION_EVENT_NONE;
+        eEvent = ptPosition->tHandoff.ePendingEvent;
+        ptPosition->tHandoff.ePendingEvent = MOTOR_POSITION_EVENT_NONE;
     }
     return eEvent;
 #else

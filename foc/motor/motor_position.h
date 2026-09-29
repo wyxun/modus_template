@@ -78,28 +78,22 @@ typedef struct {
 #endif
 } motor_position_cfg_t;
 
-/** @brief App-owned position state; the Observer is an optional child. */
-typedef struct {
-    /* Keep layout identical even if the target binding macro becomes
-     * visible after this header in another translation unit. */
-    motor_position_provider_t tSensor;
-    const void *pSensorState;
-    foc_scalar_t qMechanicalToElectricalSpeedPuGain;
-    foc_angle_t tElectricalZero;
-    uint32_t wLastRunGeneration;
-    uint8_t chPolePairs;
-    motor_position_source_t eSource;
-    bool bElectricalZeroValid;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    foc_observer_t tObserver;
+/** @brief SMO-specific speed filtering and quality thresholds. */
+typedef struct {
     foc_scalar_t qObserverSpeedGain;
     uint32_t wAngleLeadAtOnePuBam32;
-    uint32_t wMaxBlendCorrectionBam32;
     foc_scalar_t qObserverSpeedFilteredPu;
     foc_scalar_t qMinimumBemfPu;
     foc_scalar_t qMinimumSpeedPu;
     foc_scalar_t qMaximumSpeedErrorRatio;
     foc_scalar_t qMaximumAngleErrorTurns;
+    bool bObserverSpeedReady;
+} motor_position_smo_t;
+
+/** @brief Candidate handoff limits and mutable progress. */
+typedef struct {
+    uint32_t wMaxBlendCorrectionBam32;
     foc_scalar_t qBlendWeight;
     foc_scalar_t qBlendWeightStep;
     foc_angle_t tPreviousObserverAngle;
@@ -114,8 +108,25 @@ typedef struct {
     motor_position_event_t ePendingEvent;
     bool bObserverTakeover;
     bool bAutoTakeover;
-    bool bPreviousObserverValid;
-    bool bObserverSpeedReady;
+} motor_position_handoff_t;
+#endif
+
+/** @brief App-owned position state; the Observer is an optional child. */
+typedef struct {
+    /* Keep layout identical even if the target binding macro becomes
+     * visible after this header in another translation unit. */
+    motor_position_provider_t tSensor;
+    const void *pSensorState;
+    foc_scalar_t qMechanicalToElectricalSpeedPuGain;
+    foc_angle_t tElectricalZero;
+    uint32_t wLastRunGeneration;
+    uint8_t chPolePairs;
+    motor_position_source_t eSource;
+    bool bElectricalZeroValid;
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    foc_observer_t tObserver;
+    motor_position_smo_t tSmo;
+    motor_position_handoff_t tHandoff;
 #endif
 } motor_position_t;
 

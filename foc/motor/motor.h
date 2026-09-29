@@ -120,6 +120,7 @@ typedef struct {
     bool bControlPrepared;
     bool bAlignCapturePending;
     bool bSensorlessStart;
+    bool bObserverActive;
 #if !defined(__NO_USE_LOG__)
     foc_port_pwm_phase_t tPwmCommitPhase;
 #endif

@@ -79,8 +79,8 @@ int main(void)
                                    &tControl) == FOC_RESULT_OK);
         assert((int32_t)(tControl.tElectricalAngle.wBam32 -
                          wPrevious) <=
-               (int32_t)tPosition.wMaxBlendCorrectionBam32);
-        if (tPosition.eFeedbackState ==
+               (int32_t)tPosition.tHandoff.wMaxBlendCorrectionBam32);
+        if (tPosition.tHandoff.eFeedbackState ==
             MOTOR_POSITION_FEEDBACK_OBSERVER) {
             break;
         }
@@ -91,6 +91,11 @@ int main(void)
            MOTOR_POSITION_EVENT_OBSERVER_ACTIVE);
     assert(motor_position_TakeEvent(&tPosition) ==
            MOTOR_POSITION_EVENT_NONE);
+    tSample.tHardDragCandidate.bValid = false;
+    motor_position_ObserverStep(&tPosition, &tSample);
+    assert(motor_position_Step(&tPosition, 0U, &tSample,
+                               &tControl) == FOC_RESULT_OK);
+    assert(tControl.bValid);
     s_tEstimate.qElectricalSpeedTurnsPerSecond =
         FOC_SCALAR(400.0f);
     motor_position_ObserverStep(&tPosition, &tSample);
@@ -100,6 +105,7 @@ int main(void)
            MOTOR_POSITION_EVENT_OBSERVER_LOST);
 
     assert(motor_position_Init(&tPosition, &tCfg) == FOC_RESULT_OK);
+    tSample.tHardDragCandidate.bValid = true;
     tSample.wRunGeneration = 2U;
     s_tEstimate.bValid = true;
     s_tEstimate.qElectricalSpeedTurnsPerSecond =
@@ -110,7 +116,7 @@ int main(void)
         assert(motor_position_Step(&tPosition, 0U, &tSample,
                                    &tControl) == FOC_RESULT_OK);
     }
-    assert(tPosition.wQualifiedCount == 0U);
+    assert(tPosition.tHandoff.wQualifiedCount == 0U);
     s_tEstimate.qSignalStrengthPu = FOC_SCALAR(0.2f);
     s_tEstimate.qElectricalSpeedTurnsPerSecond =
         FOC_SCALAR(48.0f);
@@ -119,7 +125,7 @@ int main(void)
         assert(motor_position_Step(&tPosition, 0U, &tSample,
                                    &tControl) == FOC_RESULT_OK);
     }
-    assert(tPosition.wQualifiedCount == 0U);
+    assert(tPosition.tHandoff.wQualifiedCount == 0U);
     s_tEstimate.qElectricalSpeedTurnsPerSecond =
         FOC_SCALAR(40.0f);
     tSample.wRunGeneration = 5U;
@@ -128,7 +134,7 @@ int main(void)
         assert(motor_position_Step(&tPosition, 0U, &tSample,
                                    &tControl) == FOC_RESULT_OK);
     }
-    assert(tPosition.eFeedbackState ==
+    assert(tPosition.tHandoff.eFeedbackState ==
            MOTOR_POSITION_FEEDBACK_BLEND);
     s_tEstimate.bValid = false;
     motor_position_ObserverStep(&tPosition, &tSample);

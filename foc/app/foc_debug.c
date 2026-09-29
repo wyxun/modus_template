@@ -216,13 +216,13 @@ static void foc_debug_PrintStatus(const motor_t *ptMotor)
           (unsigned)tStatus.bElectricalZeroValid,
           (unsigned)ptMotor->tInput.bAngleValid);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    if (tFocApp.tPosition.bObserverTakeover) {
+    if (tFocApp.tPosition.tHandoff.bObserverTakeover) {
         MLOGF(I, "position source=%u phase=%u qualified=%lu "
               "forced=%lu bemf=%.4f\r\n",
               (unsigned)tFocApp.tPosition.eSource,
-              (unsigned)tFocApp.tPosition.eFeedbackState,
-              (unsigned long)tFocApp.tPosition.wQualifiedCount,
-              (unsigned long)tFocApp.tPosition.wForcedCount,
+              (unsigned)tFocApp.tPosition.tHandoff.eFeedbackState,
+              (unsigned long)tFocApp.tPosition.tHandoff.wQualifiedCount,
+              (unsigned long)tFocApp.tPosition.tHandoff.wForcedCount,
               (double)foc_to_float(tFocApp.tPosition.tObserver.tOutput
                                    .qSignalStrengthPu));
     }
@@ -369,7 +369,7 @@ static void foc_debug_CmdMotor(const char *args)
             eResult = FOC_RESULT_INVALID_ARGUMENT;
         } else if (tFocApp.tPosition.eSource ==
                        MOTOR_POSITION_SOURCE_HARD_DRAG &&
-                   tFocApp.tMotor.tStartup.tCfg.wRampSteps != 0U) {
+                   tFocApp.tMotor.tStartup.wRampSteps != 0U) {
             eResult = motor_StartSensorlessSpeed(
                 &tFocApp.tMotor, foc_from_float(fQ));
             bStarted = eResult == FOC_RESULT_OK;

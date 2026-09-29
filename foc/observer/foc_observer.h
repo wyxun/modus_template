@@ -18,10 +18,6 @@ typedef struct {
 typedef struct {
     const foc_ab_t *ptCurrentAlphaBeta;
     const foc_ab_t *ptVoltageModelAlphaBeta;
-    const foc_ab_t *ptVoltageAppliedAlphaBeta;
-    foc_scalar_t qDcBusVoltagePu;
-    bool bVoltageAppliedValid;
-    bool bDcBusVoltageValid;
 } foc_observer_input_t;
 
 typedef struct {

@@ -343,6 +343,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     s_tFocAppBaseCfg.wParent = wObjectAddr;
     ptThis->chRunPt = 0U;
     ptThis->lForegroundTimestamp = 0;
+    ptThis->lForegroundPeriodTicks = perfc_convert_us_to_ticks(1000U);
     ptThis->bEncoderEnabled = false;
     ptThis->bReady = false;
 
@@ -637,8 +638,9 @@ static int foc_app_Run(uintptr_t wObjectAddr)
     }
     PERFC_PT_BEGIN(ptThis->chRunPt)
     while (true) {
-        PERFC_PT_WAIT_UNTIL(perfc_is_time_out_us(
-            1000U, &ptThis->lForegroundTimestamp, true))
+        PERFC_PT_WAIT_UNTIL(__perfc_is_time_out(
+            ptThis->lForegroundPeriodTicks,
+            &ptThis->lForegroundTimestamp, true))
 #if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
      (FOC_APP_LOG_SMO_DIAGNOSTICS && \
       FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \

@@ -18,8 +18,10 @@ typedef struct {
 
 /** @brief No observer or source-selection state belongs here. */
 typedef struct {
-    motor_startup_cfg_t tCfg;
     foc_angle_t tAngle;
+    double dStepQ16PerPu; /**< Derived from the configured electrical base. */
+    uint32_t wRampSteps; /**< Counter terminal; no config object is retained. */
+    /* Start computes targets and increments; ISR adds them per ramp tick. */
     int64_t lCurrentStepQ16;
     int64_t lTargetStepQ16;
     int64_t lStepDeltaQ16;
@@ -34,6 +36,7 @@ foc_result_t motor_startup_Init(motor_startup_t *ptStartup,
                                 const motor_startup_cfg_t *ptConfig);
 foc_result_t motor_startup_Start(motor_startup_t *ptStartup,
                                  foc_scalar_t qTargetSpeedPu);
+bool motor_startup_IsConfigured(const motor_startup_t *ptStartup);
 foc_result_t motor_startup_IsrStep(
     motor_startup_t *ptStartup,
     motor_electrical_feedback_t *ptForcedCandidate);

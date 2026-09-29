@@ -2,9 +2,9 @@
 
 ## Class 与 Driver 的职责
 
-`template_class_t` 是 MODUS 注册对象和业务编排者：它保存 Class 自身状态，并按值拥有一个 `template_driver_t`。Class 初始化时接收配置并传给子 Driver；随后在 `Run()` 中推进前台流程、读取 Driver 状态并把子模块错误收敛到 Class 的 `ERROR` 状态。具体产品可组合多个 Driver，或通过类型化接口调用算法模块；父 Class 负责决定何时调用子模块和如何处理结果。
+`template_class_t` 是 MODUS 注册对象和业务编排者：它保存 Class 自身状态，并按值拥有一个 `template_driver_t`。Class 初始化时接收配置并传给子 Driver；随后在 `Run()` 中推进前台流程、通过 Driver 状态快照读取状态，并把子模块错误收敛到 Class 的 `ERROR` 状态。具体产品可组合多个 Driver，或通过类型化接口调用算法模块；父 Class 负责决定何时调用子模块和如何处理结果。
 
-`template_driver_t` 是可独立实例化的功能对象：它拥有每实例运行状态、外部依赖绑定、服务计时、PT 游标和故障记录。Driver 负责维护自己的状态约束并通过操作 API 执行初始化、服务、停止、复位和状态查询；父 Class 不应直接改写 Driver 的运行成员。所有可变运行数据属于对象实例，不藏在 `.c` 的静态变量中。
+`template_driver_t` 是可独立实例化的功能对象：它拥有每实例运行状态、外部依赖绑定、服务计时、PT 游标和故障记录。Driver 负责维护自己的状态约束并通过操作 API 执行初始化、服务、停止、复位和状态查询；正式父 Class 逻辑不得直接读取或写入 Driver 的运行成员。例如，禁止用 `ptThis->tDriver.eState` 判断子对象状态，应调用 `template_driver_GetStatus()` 获取只读状态快照；命令和状态迁移也必须调用 Driver 操作 API。临时诊断、波形采集和白盒测试可以直接读内部成员，但不能据此驱动控制命令或安全状态迁移。C 语言中头文件必须公开完整结构体供按值组合时，这条正式代码边界仍然适用。所有可变运行数据属于对象实例，不藏在 `.c` 的静态变量中。
 
 `template_class_cfg_t` 按值包含子 Driver 的 `template_driver_cfg_t`，用于把外部输入交给 `template_driver_Init()`；`template_class_t` 则按值拥有 `template_driver_t`。`template_driver_t` 不包含完整的 `template_driver_cfg_t`；初始化后不再依赖原始 cfg 对象，只保留必要的依赖绑定和执行参数。
 

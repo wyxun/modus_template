@@ -7,6 +7,18 @@
 #include <math.h>
 #include <stddef.h>
 
+/* Startup uses BAM32 angles with a Q16 fractional increment and Q31 speed. */
+#define MOTOR_STARTUP_BAM32_SCALE          4294967296.0
+#define MOTOR_STARTUP_Q16_SCALE            65536.0
+#define MOTOR_STARTUP_Q31_SCALE            2147483648.0
+#define MOTOR_STARTUP_Q48_SCALE            \
+    (MOTOR_STARTUP_BAM32_SCALE * MOTOR_STARTUP_Q16_SCALE)
+/* Keep the per-tick trajectory below half a turn and above one BAM count. */
+#define MOTOR_STARTUP_MAX_STEP_Q16         \
+    (MOTOR_STARTUP_Q48_SCALE / 2.0)
+#define MOTOR_STARTUP_MIN_STEP_Q16         MOTOR_STARTUP_Q16_SCALE
+#define MOTOR_STARTUP_Q31_TO_FLOAT_SCALE   4.656612873077392578125e-10f
+
 foc_result_t motor_startup_Init(motor_startup_t *ptStartup,
                                 const motor_startup_cfg_t *ptConfig)
 {
@@ -23,7 +35,11 @@ foc_result_t motor_startup_Init(motor_startup_t *ptStartup,
         return FOC_RESULT_INVALID_ARGUMENT;
     }
     *ptStartup = (motor_startup_t){0};
-    ptStartup->tCfg = *ptConfig;
+    ptStartup->dStepQ16PerPu =
+        (double)ptConfig->fElectricalBaseHz *
+        MOTOR_STARTUP_Q48_SCALE /
+        (double)ptConfig->wControlFrequencyHz;
+    ptStartup->wRampSteps = ptConfig->wRampSteps;
     return FOC_RESULT_OK;
 }
 
@@ -36,7 +52,7 @@ foc_result_t motor_startup_Start(motor_startup_t *ptStartup,
     if (ptStartup == NULL) {
         return FOC_RESULT_NULL;
     }
-    if (ptStartup->tCfg.wControlFrequencyHz == 0U) {
+    if (ptStartup->wRampSteps == 0U) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
     if (ptStartup->bActive) {
@@ -47,30 +63,37 @@ foc_result_t motor_startup_Start(motor_startup_t *ptStartup,
         fabs(dSpeedPu) >= 1.0) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
-    dStepQ16 = dSpeedPu *
-        (double)ptStartup->tCfg.fElectricalBaseHz *
-        281474976710656.0 /
-        (double)ptStartup->tCfg.wControlFrequencyHz;
-    if (fabs(dStepQ16) >= 140737488355328.0 ||
-        fabs(dStepQ16) < 65536.0) {
+    dStepQ16 = dSpeedPu * ptStartup->dStepQ16PerPu;
+    if (fabs(dStepQ16) >= MOTOR_STARTUP_MAX_STEP_Q16 ||
+        fabs(dStepQ16) < MOTOR_STARTUP_MIN_STEP_Q16) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     ptStartup->tAngle = (foc_angle_t){0U};
     ptStartup->lCurrentStepQ16 = 0;
     ptStartup->lTargetStepQ16 = (int64_t)llround(dStepQ16);
     ptStartup->lStepDeltaQ16 = ptStartup->lTargetStepQ16 /
-                               (int64_t)ptStartup->tCfg.wRampSteps;
+                               (int64_t)ptStartup->wRampSteps;
     if (ptStartup->lStepDeltaQ16 == 0) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     ptStartup->lCurrentSpeedQ31 = 0;
     ptStartup->lTargetSpeedQ31 =
-        (int64_t)llround(dSpeedPu * 2147483648.0);
+        (int64_t)llround(dSpeedPu * MOTOR_STARTUP_Q31_SCALE);
     ptStartup->lSpeedDeltaQ31 = ptStartup->lTargetSpeedQ31 /
-                                (int64_t)ptStartup->tCfg.wRampSteps;
+                                (int64_t)ptStartup->wRampSteps;
     ptStartup->wRampCount = 0U;
     ptStartup->bActive = true;
     return FOC_RESULT_OK;
+}
+
+/**
+ * @brief Report whether startup has a validated ramp configuration.
+ * @param ptStartup Startup object.
+ * @return True when initialization enabled a ramp.
+ */
+bool motor_startup_IsConfigured(const motor_startup_t *ptStartup)
+{
+    return ptStartup != NULL && ptStartup->wRampSteps != 0U;
 }
 
 foc_result_t motor_startup_IsrStep(
@@ -84,11 +107,11 @@ foc_result_t motor_startup_IsrStep(
     if (!ptStartup->bActive) {
         return FOC_RESULT_DISABLED;
     }
-    if (ptStartup->wRampCount < ptStartup->tCfg.wRampSteps) {
+    if (ptStartup->wRampCount < ptStartup->wRampSteps) {
         ptStartup->wRampCount++;
         ptStartup->lCurrentStepQ16 += ptStartup->lStepDeltaQ16;
         ptStartup->lCurrentSpeedQ31 += ptStartup->lSpeedDeltaQ31;
-        if (ptStartup->wRampCount == ptStartup->tCfg.wRampSteps) {
+        if (ptStartup->wRampCount == ptStartup->wRampSteps) {
             ptStartup->lCurrentStepQ16 = ptStartup->lTargetStepQ16;
             ptStartup->lCurrentSpeedQ31 = ptStartup->lTargetSpeedQ31;
         }
@@ -96,15 +119,17 @@ foc_result_t motor_startup_IsrStep(
     ptForcedCandidate->tElectricalAngle = ptStartup->tAngle;
 #if defined(FOC_NUMERIC_FIXED)
     ptForcedCandidate->qElectricalSpeedPu =
-        (foc_scalar_t)(ptStartup->lCurrentSpeedQ31 / 65536);
+        (foc_scalar_t)(ptStartup->lCurrentSpeedQ31 /
+                       (int64_t)MOTOR_STARTUP_Q16_SCALE);
 #else
     ptForcedCandidate->qElectricalSpeedPu =
         (foc_scalar_t)((float)ptStartup->lCurrentSpeedQ31 *
-                       4.656612873e-10f);
+                       MOTOR_STARTUP_Q31_TO_FLOAT_SCALE);
 #endif
-    ptForcedCandidate->bValid = true;
     ptStartup->tAngle.wBam32 +=
-        (uint32_t)(ptStartup->lCurrentStepQ16 / 65536);
+        (uint32_t)(ptStartup->lCurrentStepQ16 /
+                   (int64_t)MOTOR_STARTUP_Q16_SCALE);
+    ptForcedCandidate->bValid = true;
     return FOC_RESULT_OK;
 }
 

@@ -207,6 +207,13 @@ int main(void)
     assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 ==
            tMotor.wHardDragAngleStepBam32);
     motor_IsrControlStep(&tMotor, &tFeedback);
+    motor_ApplyPositionEventIsr(&tMotor,
+        MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
+        FOC_SCALAR(-0.05f));
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(!tSample.tHardDragCandidate.bValid);
+    motor_IsrControlStep(&tMotor, &tFeedback);
     motor_Stop(&tMotor);
 
     tConfig.nHardDragElectricalMilliHz = 0;
@@ -231,11 +238,16 @@ int main(void)
         MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
         FOC_SCALAR(0.2f));
     assert(tMotor.tCommand.eMode == FOC_MODE_SPEED);
+    assert(!tMotor.tStartup.bActive);
     tFeedback = (motor_electrical_feedback_t){
         .tElectricalAngle = {0U},
         .qElectricalSpeedPu = FOC_SCALAR(0.2f),
         .bValid = true,
     };
+    motor_IsrControlStep(&tMotor, &tFeedback);
+    assert(motor_IsrPrepare(&tMotor, &tSample) ==
+           MOTOR_ISR_CONTROL_READY);
+    assert(!tSample.tHardDragCandidate.bValid);
     motor_IsrControlStep(&tMotor, &tFeedback);
     test_AssertNear(s_tLastCommand.tCurrentReference.qQ, 0.02f);
     motor_ApplyPositionEventIsr(&tMotor,

@@ -100,6 +100,7 @@ typedef struct {
     uint8_t chRunPt;
     foc_app_current_step_state_e eCurrentStepState;
     int64_t lForegroundTimestamp;
+    int64_t lForegroundPeriodTicks;
     int64_t lCurrentStepTimestamp;
     int64_t lCurrentStepDurationTicks;
     bool bEncoderEnabled;

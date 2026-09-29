@@ -33,6 +33,14 @@
  * its own ISR entry when the hardware Driver declares an ISR-safe hook.
  * Algorithm children should instead be called through their typed IsrStep
  * interface with the physical values captured by the ISR.
+ *
+ * Parent/child access rule:
+ * Formal parent logic must not inspect or modify child runtime members directly
+ * (for example, ptThis->tDriver.eState). Use child operation APIs for commands
+ * and a read-only status snapshot API for state queries. Temporary diagnostics,
+ * waveform capture and white-box tests may read internals, but must not use
+ * those reads to drive control commands or safety state transitions. Public C
+ * struct visibility for by-value composition does not change this rule.
  */
 
 #include "modus.h"

@@ -615,6 +615,7 @@ int main(void)
     assert(s_chLog[0] == '\0');
 
     tFocApp.bReady = false;
+    tFocApp.lForegroundPeriodTicks = perfc_convert_us_to_ticks(1000U);
     s_bReportTimeout = true;
     s_wShortTimeoutBudget = 1U;
     s_chLog[0] = '\0';
@@ -855,8 +856,8 @@ int main(void)
         assert(s_wEncoderInitCount == 1U);
         assert(strcmp(s_achWaveNames[0], "Ctrl_mT") == 0);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-        assert(tFocApp.tPosition.bObserverTakeover);
-        assert(!tFocApp.tPosition.bAutoTakeover);
+        assert(tFocApp.tPosition.tHandoff.bObserverTakeover);
+        assert(!tFocApp.tPosition.tHandoff.bAutoTakeover);
 #endif
     }
 #endif
