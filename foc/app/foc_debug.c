@@ -26,6 +26,90 @@
 
 extern foc_app_t tFocApp;
 
+#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
+/**
+ * @brief Report measured resistance inputs and PWM/ADC averages.
+ * @param ptResult Completed resistance-identification result.
+ * @return None.
+ */
+void foc_debug_ReportResistance(
+    const identify_resistance_result_t *ptResult)
+{
+    float afVoltagePu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
+    float afCurrentPu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
+    float afVoltageOutputPu[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
+    float afCurrentMilliamp[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
+    float afVoltageOutputMillivolt[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
+    float aafDutyPercent[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT][3] = {{0.0f}};
+    float fDeltaCurrentPu = 0.0f;
+    float fDeltaCurrentMilliamp = 0.0f;
+    uint8_t chLevel = 0U;
+
+    if (ptResult == NULL) {
+        return;
+    }
+    for (chLevel = 0U;
+         chLevel < IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT;
+         chLevel++) {
+        afVoltagePu[chLevel] = foc_to_float(
+            ptResult->aqVoltageLevelPu[chLevel]);
+        afCurrentPu[chLevel] = foc_to_float(
+            ptResult->aqAverageCurrentPu[chLevel]);
+        afVoltageOutputPu[chLevel] = foc_to_float(
+            ptResult->aqAverageVoltageDPu[chLevel]);
+        afVoltageOutputMillivolt[chLevel] = afVoltageOutputPu[chLevel] *
+            (float)ptResult->wVoltageBaseMillivolt;
+        afCurrentMilliamp[chLevel] = afCurrentPu[chLevel] *
+            (float)ptResult->wCurrentBaseMilliamp;
+        aafDutyPercent[chLevel][0U] = foc_to_float(
+            ptResult->atAverageDuty[chLevel].qU) * 100.0f;
+        aafDutyPercent[chLevel][1U] = foc_to_float(
+            ptResult->atAverageDuty[chLevel].qV) * 100.0f;
+        aafDutyPercent[chLevel][2U] = foc_to_float(
+            ptResult->atAverageDuty[chLevel].qW) * 100.0f;
+    }
+    fDeltaCurrentPu = foc_to_float(ptResult->qDeltaCurrentPu);
+    fDeltaCurrentMilliamp = fDeltaCurrentPu *
+        (float)ptResult->wCurrentBaseMilliamp;
+    MLOGF(I, "identify R VdRef=%.3f/%.3f pu VdCmd=%.3f/%.3f pu\r\n",
+          (double)afVoltagePu[0U], (double)afVoltagePu[1U],
+          (double)afVoltageOutputPu[0U],
+          (double)afVoltageOutputPu[1U]);
+    MLOGF(I, "identify R Id=%.4f/%.4f pu IdEq=%.1f/%.1f mA "
+          "dId=%.4f pu (%.1f mA) R=%lu mOhm bases=%lu mV/%lu mA\r\n",
+          (double)afCurrentPu[0U], (double)afCurrentPu[1U],
+          (double)afCurrentMilliamp[0U],
+          (double)afCurrentMilliamp[1U],
+          (double)fDeltaCurrentPu, (double)fDeltaCurrentMilliamp,
+          (unsigned long)ptResult->wResistanceMilliohm,
+          (unsigned long)ptResult->wVoltageBaseMillivolt,
+          (unsigned long)ptResult->wCurrentBaseMilliamp);
+    MLOGF(I, "identify R VdCmdEq=%.0f/%.0f mV (not measured)\r\n",
+          (double)afVoltageOutputMillivolt[0U],
+          (double)afVoltageOutputMillivolt[1U]);
+    MLOGF(I, "identify R duty%% 0.05 U/V/W=%.2f/%.2f/%.2f "
+          "| 0.10=%.2f/%.2f/%.2f\r\n",
+          (double)aafDutyPercent[0U][0U],
+          (double)aafDutyPercent[0U][1U],
+          (double)aafDutyPercent[0U][2U],
+          (double)aafDutyPercent[1U][0U],
+          (double)aafDutyPercent[1U][1U],
+          (double)aafDutyPercent[1U][2U]);
+    MLOGF(I, "identify R ADC mean 0.05 U/V/W=%lu/%lu/%lu "
+          "| 0.10=%lu/%lu/%lu\r\n",
+          (unsigned long)ptResult->aawAverageAd[0U][0U],
+          (unsigned long)ptResult->aawAverageAd[0U][1U],
+          (unsigned long)ptResult->aawAverageAd[0U][2U],
+          (unsigned long)ptResult->aawAverageAd[1U][0U],
+          (unsigned long)ptResult->aawAverageAd[1U][1U],
+          (unsigned long)ptResult->aawAverageAd[1U][2U]);
+}
+#endif
+
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 #define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
 

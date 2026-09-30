@@ -36,6 +36,16 @@
  */
 void foc_debug_CurrentStepRun(foc_app_t *ptApp);
 
+#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
+/**
+ * @brief Report one completed resistance-identification result.
+ * @param ptResult Result containing per-level measurements.
+ * @return None.
+ */
+void foc_debug_ReportResistance(
+    const identify_resistance_result_t *ptResult);
+#endif
+
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 void foc_debug_WaveformInit(foc_app_t *ptApp,
                             uint32_t wPeriodNanoseconds);

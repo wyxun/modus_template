@@ -78,8 +78,7 @@ void identify_IsrStep(identify_t *ptThis,
     }
     switch (ptThis->eOperation) {
     case IDENTIFY_OPERATION_RESISTANCE:
-        _identify_resistance_IsrStep(ptThis, ptSample->qCurrentD,
-                                     ptSample->qVoltageD);
+        _identify_resistance_IsrStep(ptThis, ptMotor, ptSample);
         break;
     case IDENTIFY_OPERATION_INDUCTANCE:
         _identify_inductance_IsrStep(ptThis, ptMotor, ptSample);

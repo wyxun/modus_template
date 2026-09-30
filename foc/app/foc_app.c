@@ -466,68 +466,6 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
-/**
- * @brief Report resistance measurement inputs and the resulting resistance.
- * @param ptResult Completed resistance identification result.
- * @return None.
- */
-#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
-static void foc_app_ReportResistance(
-    const identify_resistance_result_t *ptResult)
-{
-    float afVoltagePu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afCurrentPu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afVoltageOutputPu[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afVoltageBaseEqMillivolt[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afCurrentBaseEqMilliamp[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afVoltageOutputMillivolt[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float fDeltaCurrentPu = 0.0f;
-    float fDeltaCurrentMilliamp = 0.0f;
-    uint8_t chLevel = 0U;
-
-    if (ptResult == NULL) {
-        return;
-    }
-    for (chLevel = 0U;
-         chLevel < IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT;
-         chLevel++) {
-        afVoltagePu[chLevel] = foc_to_float(
-            ptResult->aqVoltageLevelPu[chLevel]);
-        afCurrentPu[chLevel] = foc_to_float(
-            ptResult->aqAverageCurrentPu[chLevel]);
-        afVoltageOutputPu[chLevel] = foc_to_float(
-            ptResult->aqAverageVoltageDPu[chLevel]);
-        afVoltageOutputMillivolt[chLevel] = afVoltageOutputPu[chLevel] *
-            (float)ptResult->wVoltageBaseMillivolt;
-        afCurrentBaseEqMilliamp[chLevel] = afCurrentPu[chLevel] *
-            (float)ptResult->wCurrentBaseMilliamp;
-    }
-    fDeltaCurrentPu = foc_to_float(ptResult->qDeltaCurrentPu);
-    fDeltaCurrentMilliamp = fDeltaCurrentPu *
-        (float)ptResult->wCurrentBaseMilliamp;
-    MLOGF(I, "identify R VdRef=%.3f/%.3f pu VdCmd=%.3f/%.3f pu\r\n",
-          (double)afVoltagePu[0U], (double)afVoltagePu[1U],
-          (double)afVoltageOutputPu[0U],
-          (double)afVoltageOutputPu[1U]);
-    MLOGF(I, "identify R Id=%.4f/%.4f pu IdEq=%.1f/%.1f mA "
-          "dId=%.4f pu (%.1f mA) R=%lu mOhm bases=%lu mV/%lu mA\r\n",
-          (double)afCurrentPu[0U], (double)afCurrentPu[1U],
-          (double)afCurrentBaseEqMilliamp[0U],
-          (double)afCurrentBaseEqMilliamp[1U],
-          (double)fDeltaCurrentPu, (double)fDeltaCurrentMilliamp,
-          (unsigned long)ptResult->wResistanceMilliohm,
-          (unsigned long)ptResult->wVoltageBaseMillivolt,
-          (unsigned long)ptResult->wCurrentBaseMilliamp);
-    MLOGF(I, "identify R VdCmdEq=%.0f/%.0f mV (not measured)\r\n",
-          (double)afVoltageOutputMillivolt[0U],
-          (double)afVoltageOutputMillivolt[1U]);
-}
-#endif
-
 #if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
 static const char *foc_app_InductanceFailureName(
     identify_inductance_failure_t eFailure)
@@ -673,7 +611,7 @@ static int foc_app_Run(uintptr_t wObjectAddr)
             identify_GetResistance(&ptThis->tIdentify,
                                    &tResistanceResult) == FOC_RESULT_OK) {
 #if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
-            foc_app_ReportResistance(&tResistanceResult);
+            foc_debug_ReportResistance(&tResistanceResult);
 #endif
         }
         if (eIdentify == FOC_RESULT_OK &&
@@ -808,7 +746,6 @@ void foc_app_HighFrequencyISR(void)
                 .qCurrentD = tFocApp.tMotor.tCore.tCurrent.qD,
                 .qVoltageD = tFocApp.tMotor.tCore.tVoltage.qD,
             };
-
             if (eIdentifyOperation == IDENTIFY_OPERATION_INDUCTANCE) {
                 tIdentifySample.qCurrentQ =
                     tFocApp.tMotor.tCore.tCurrent.qQ;

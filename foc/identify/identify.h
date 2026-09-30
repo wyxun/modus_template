@@ -142,6 +142,11 @@ typedef struct {
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
     foc_scalar_t aqAverageCurrentPu[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+#if FOC_APP_LOG_RESISTANCE_ID
+    uint32_t aawAverageAd[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT][3];
+    foc_duty_abc_t atAverageDuty[
+        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
+#endif
     foc_scalar_t qDeltaCurrentPu;
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;
@@ -226,6 +231,8 @@ typedef struct {
     foc_scalar_t aqAverageVoltageD[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
 #if FOC_APP_LOG_RESISTANCE_ID
+    uint32_t awAdSum[3];
+    foc_duty_abc_t tDutySum;
     foc_scalar_t qDeltaCurrent;
     uint32_t wVoltageBaseMillivolt;
     uint32_t wCurrentBaseMilliamp;

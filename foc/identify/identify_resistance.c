@@ -42,6 +42,12 @@ static void _identify_resistance_ClearCapture(identify_t *ptThis)
     ptResistance->hwCaptureSampleCount = 0U;
     ptResistance->qCurrentSum = FOC_ZERO;
     ptResistance->qVoltageSum = FOC_ZERO;
+#if FOC_APP_LOG_RESISTANCE_ID
+    ptResistance->awAdSum[0U] = 0U;
+    ptResistance->awAdSum[1U] = 0U;
+    ptResistance->awAdSum[2U] = 0U;
+    ptResistance->tDutySum = (foc_duty_abc_t){0};
+#endif
     ptResistance->bBatchReady = false;
     perfc_port_resume_global_interrupt(tIrqState);
 }
@@ -74,6 +80,10 @@ static foc_result_t _identify_resistance_ProcessLevel(identify_t *ptThis)
     perfc_global_interrupt_status_t tIrqState = 0U;
     foc_scalar_t qCurrentSum = FOC_ZERO;
     foc_scalar_t qVoltageSum = FOC_ZERO;
+#if FOC_APP_LOG_RESISTANCE_ID
+    uint32_t awAdSum[3] = {0U};
+    foc_duty_abc_t tDutySum = {0};
+#endif
     uint16_t hwSampleCount = 0U;
     foc_scalar_t qSampleCount = FOC_ZERO;
     foc_result_t eResult = FOC_RESULT_OK;
@@ -82,6 +92,16 @@ static foc_result_t _identify_resistance_ProcessLevel(identify_t *ptThis)
     qCurrentSum = ptResistance->qCurrentSum;
     qVoltageSum = ptResistance->qVoltageSum;
     hwSampleCount = ptResistance->hwCaptureSampleCount;
+#if FOC_APP_LOG_RESISTANCE_ID
+    awAdSum[0U] = ptResistance->awAdSum[0U];
+    awAdSum[1U] = ptResistance->awAdSum[1U];
+    awAdSum[2U] = ptResistance->awAdSum[2U];
+    tDutySum = ptResistance->tDutySum;
+    ptResistance->awAdSum[0U] = 0U;
+    ptResistance->awAdSum[1U] = 0U;
+    ptResistance->awAdSum[2U] = 0U;
+    ptResistance->tDutySum = (foc_duty_abc_t){0};
+#endif
     ptResistance->qCurrentSum = FOC_ZERO;
     ptResistance->qVoltageSum = FOC_ZERO;
     ptResistance->hwCaptureSampleCount = 0U;
@@ -100,6 +120,32 @@ static foc_result_t _identify_resistance_ProcessLevel(identify_t *ptThis)
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
+#if FOC_APP_LOG_RESISTANCE_ID
+    ptResistance->aawAverageAd[ptResistance->chVoltageLevel][0U] =
+        awAdSum[0U] / (uint32_t)hwSampleCount;
+    ptResistance->aawAverageAd[ptResistance->chVoltageLevel][1U] =
+        awAdSum[1U] / (uint32_t)hwSampleCount;
+    ptResistance->aawAverageAd[ptResistance->chVoltageLevel][2U] =
+        awAdSum[2U] / (uint32_t)hwSampleCount;
+    eResult = foc_div_checked(tDutySum.qU, qSampleCount,
+        &ptResistance->atAverageDuty[
+            ptResistance->chVoltageLevel].qU);
+    if (eResult != FOC_RESULT_OK) {
+        return eResult;
+    }
+    eResult = foc_div_checked(tDutySum.qV, qSampleCount,
+        &ptResistance->atAverageDuty[
+            ptResistance->chVoltageLevel].qV);
+    if (eResult != FOC_RESULT_OK) {
+        return eResult;
+    }
+    eResult = foc_div_checked(tDutySum.qW, qSampleCount,
+        &ptResistance->atAverageDuty[
+            ptResistance->chVoltageLevel].qW);
+    if (eResult != FOC_RESULT_OK) {
+        return eResult;
+    }
+#endif
     return foc_div_checked(qVoltageSum, qSampleCount,
                            &ptResistance->aqAverageVoltageD[
                                ptResistance->chVoltageLevel]);
@@ -244,18 +290,19 @@ foc_result_t _identify_resistance_Start(identify_t *ptThis)
 }
 
 /**
- * @brief Record one high-frequency D-axis current sample.
+ * @brief Record one decimated resistance-identification sample.
  * @param ptThis Identification object.
- * @param qCurrentD Motor's transformed D-axis current.
+ * @param ptMotor Motor owning the raw sample and generated PWM duty.
+ * @param ptSample Current and voltage values transformed by the control loop.
  * @return None.
  */
 void _identify_resistance_IsrStep(identify_t *ptThis,
-                                  foc_scalar_t qCurrentD,
-                                  foc_scalar_t qVoltageD)
+                                  const motor_t *ptMotor,
+                                  const identify_isr_sample_t *ptSample)
 {
     identify_resistance_t *ptResistance = NULL;
 
-    if (ptThis == NULL) {
+    if (ptThis == NULL || ptMotor == NULL || ptSample == NULL) {
         return;
     }
     ptResistance = &ptThis->tResistance;
@@ -269,8 +316,16 @@ void _identify_resistance_IsrStep(identify_t *ptThis,
     }
     ptResistance->hwIsrDivider = 0U;
     /* 100 samples of a [-1, 1] pu current fit in the scalar accumulator. */
-    ptResistance->qCurrentSum += qCurrentD;
-    ptResistance->qVoltageSum += qVoltageD;
+    ptResistance->qCurrentSum += ptSample->qCurrentD;
+    ptResistance->qVoltageSum += ptSample->qVoltageD;
+#if FOC_APP_LOG_RESISTANCE_ID
+    ptResistance->awAdSum[0U] += ptMotor->tCalib.tLatestSample.wU;
+    ptResistance->awAdSum[1U] += ptMotor->tCalib.tLatestSample.wV;
+    ptResistance->awAdSum[2U] += ptMotor->tCalib.tLatestSample.wW;
+    ptResistance->tDutySum.qU += ptMotor->tCore.tDuty.qU;
+    ptResistance->tDutySum.qV += ptMotor->tCore.tDuty.qV;
+    ptResistance->tDutySum.qW += ptMotor->tCore.tDuty.qW;
+#endif
     ptResistance->hwCaptureSampleCount++;
     if (ptResistance->hwCaptureSampleCount >=
         IDENTIFY_RESISTANCE_SAMPLE_COUNT) {
@@ -461,6 +516,22 @@ foc_result_t identify_GetResistance(identify_t *ptThis,
         ptThis->tResistance.aqAverageCurrent[0U];
     ptResult->aqAverageCurrentPu[1U] =
         ptThis->tResistance.aqAverageCurrent[1U];
+    ptResult->aawAverageAd[0U][0U] =
+        ptThis->tResistance.aawAverageAd[0U][0U];
+    ptResult->aawAverageAd[0U][1U] =
+        ptThis->tResistance.aawAverageAd[0U][1U];
+    ptResult->aawAverageAd[0U][2U] =
+        ptThis->tResistance.aawAverageAd[0U][2U];
+    ptResult->aawAverageAd[1U][0U] =
+        ptThis->tResistance.aawAverageAd[1U][0U];
+    ptResult->aawAverageAd[1U][1U] =
+        ptThis->tResistance.aawAverageAd[1U][1U];
+    ptResult->aawAverageAd[1U][2U] =
+        ptThis->tResistance.aawAverageAd[1U][2U];
+    ptResult->atAverageDuty[0U] =
+        ptThis->tResistance.atAverageDuty[0U];
+    ptResult->atAverageDuty[1U] =
+        ptThis->tResistance.atAverageDuty[1U];
     ptResult->qDeltaCurrentPu = ptThis->tResistance.qDeltaCurrent;
     ptResult->wVoltageBaseMillivolt =
         ptThis->tResistance.wVoltageBaseMillivolt;
