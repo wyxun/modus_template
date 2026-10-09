@@ -24,7 +24,7 @@ int main(void)
     tCfg.tSensor.fnGetPosition = test_GetSensor;
     tCfg.tSensor.pContext = &chContext;
     tCfg.chPolePairs = 7U;
-    tCfg.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tCfg.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     assert(motor_position_Init(&tPosition, &tCfg) == FOC_RESULT_OK);
     assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);

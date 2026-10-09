@@ -8,7 +8,7 @@ if ($source -notmatch "smo_StoreFixedRatio") {
 }
 $initMatch = [regex]::Match(
     $source,
-    "(?s)foc_result_t foc_smo_Init\(.*?\r?\n\}\r?\n\r?\n/\*\*")
+    "(?s)foc_result_t foc_smo_Init\(.*?\r?\n\}")
 if (-not $initMatch.Success) {
     throw "foc_smo_Init body cannot be located"
 }
@@ -23,7 +23,7 @@ if (-not $fixedMatch.Success -or
     $fixedMatch.Groups["fixed"].Value -match "\bfloat\b") {
     throw "FIXED foc_smo_Init branch contains floating-point code"
 }
-if ($source -notmatch "(?s)smo_StoreFixedRatio.*?qSpeedConversionGain") {
+if ($source -notmatch "(?s)smo_StoreFixedRatio.*?speed_scale") {
     throw "FIXED SMO initialization does not cover speed conversion"
 }
 

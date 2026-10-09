@@ -1,444 +1,416 @@
 ---
 name: embedded-coding
-description: Use when 编写或审查 STM32/ARM/RISC-V 代码、MODUS Class、Mdriver、状态机、HAL/MDI 适配或 grblhal 集成时
+description: Use when 编写、修改或审查本仓库 src/ class/ peripheral/ foc/ target/ 下的嵌入式 C 代码，涉及 MODUS Class/Driver、Mdriver、perfc-PT 状态机、MDI 硬件接口、FOC 实时路径、ISR 或 grblhal 集成时
 ---
 
 # Embedded Coding Rules (modus)
 
-编写或审查嵌入式 C 代码时必须遵守本规则。规则按以下优先级执行：L0 MISRA 安全约束，L1 代码和对象设计，L2 状态机，L3 MODUS/MDI 库映射，最后是 TDD 验证。
+## 0. 核心理念（遇到本文未覆盖的情况，按这里推理）
 
-本文档本身、其他 Markdown 文件、SKILL 文件、设计方案、测试报告和普通说明文字不受 82 字符硬限制。82 字符限制只适用于嵌入式 C/C++ 源代码；文档应按语义分段、表格完整性和阅读美观排版，不得为了凑行宽而切断自然段。
+1. **状态有主**：所有可变状态都属于某个对象实例（`xxx_t` 或其按值拥有的成员），所有权、生命周期和并发访问可从类型定义直接看出。文件静态变量不是状态的藏身处。
+2. **语义优先于形式**：接口表达"做什么"（`MDI_PWM_SetDuty`、`motor_Start`），带单位、范围和类型；不为统一形式发明 `read/write/control`、`void *` 参数、getter/setter 或空壳模板 API。
+3. **编译期绑定，热路径零抽象成本**：能在编译期确定的依赖就不在运行时分派；实时路径没有函数指针链、命令 `switch`、日志或阻塞。
+4. **非阻塞且必收敛**：前台流程用对象内的 perfc-PT 推进；每个等待都有超时，每个失败都有安全输出并收敛到 `ERROR`。
+5. **简单优先，按需拆分**：只在出现独立生命周期、独立测试入口或独立变化原因时才拆模块；不为"可能复用"预先抽象。
+6. **证据驱动**：改行为先有失败测试或可复现步骤；无根因证据不改无关外设；无硬件证据不宣称真机已验证。
+
+## 1. 适用范围与优先级
+
+- 冲突时优先级：L0 MISRA > L1 对象与接口设计 > L2 状态机 > L3 库映射 > TDD。
+- 82 字符硬限制**只适用于嵌入式 C/C++ 源码**。Markdown、SKILL、设计文档、报告按语义分段排版，不为凑行宽切断句子。
+- `third_party/`（含 grblhal）、厂商代码和生成文件不受 L1 风格约束，但业务代码调用它们时仍受本规则约束。
 
 ## L0: MISRA C:2012 安全子集（硬规则）
 
 | 规则 | 要求 | bad | good |
 |---|---|---|---|
-| 10.3 | 禁止隐式整数转换 | `uint8_t b = a;` | `uint8_t b = (uint8_t)(a & 0xFF);` |
-| 10.4 | 禁止有符号/无符号混合比较 | `if (s < u)` | `if (s < (int32_t)u)` |
-| 13.1 | 禁止在 if 条件中赋值 | `if ((ret = f()) == OK)` | `ret = f(); if (ret == OK) {...}` |
-| 13.2 | 禁止同一变量在表达式中多次修改 | `d = buf[i++]` | `d = buf[i]; i++;` |
-| 13.5 | 复杂表达式中禁止自增/自减 | `d = buf[i++]` | `d = buf[i]; i++;` |
-| 15.1 | if-else-if 链必须以 else 收尾 | 只有 if 和 else-if | 增加最终 else |
-| 16.1 | switch 必须有 default | 没有 default | 增加 default 错误分支 |
-| 16.3 | case 不能 fall-through | case 末尾没有 break | 每个 case 明确 break |
-| 8.2 | 函数原型必须显式声明参数 | `void process();` | `void process(void);` |
-| 8.13 | 只读指针必须使用 const | `void read(uint8_t *buf)` | `void read(const uint8_t *buf)` |
-| 9.1 | 局部变量声明时必须初始化 | `uint32_t cnt;` | `uint32_t cnt = 0U;` |
-| 17.7 | 函数返回值必须检查 | `hal_init();` | 保存返回值并处理错误 |
-| 20.1 | include 必须位于文件开头 | 宏定义后 include | include 先于宏和代码 |
-| 20.7 | 禁止使用 #undef | `#undef SIZE` | 使用作用域或独立命名 |
+| 10.3 | 禁止隐式窄化或跨本质类型赋值 | `uint8_t b = a;` | `uint8_t b = (uint8_t)(a & 0xFFU);` |
+| 10.4 | 运算/比较两侧本质类型类别一致 | `if (s < u)` | `if (s < (int32_t)u)` |
+| 13.4 | 不使用赋值表达式的结果 | `if ((ret = f()) == OK)` | `ret = f(); if (ret == OK) {...}` |
+| 13.2 | 表达式结果和持久副作用不得依赖求值顺序（不限于 `++/--`） | `a[i] = i++;`、`x = f() + g();`（f/g 改同一状态） | 拆成按顺序执行的独立语句 |
+| 13.3 | `++/--` 不与其他副作用混在同一完整表达式 | `d = buf[i++];` | `d = buf[i]; i++;` |
+| 15.7 | if-else-if 链以 else 收尾 | 只有 if/else-if | 增加最终 else |
+| 16.4 | switch 必须有 default | 无 default | default 进入错误分支 |
+| 16.3 | case 不得 fall-through | case 末尾无 break | 每个 case 显式 break |
+| 8.2 | 原型显式声明参数 | `void process();` | `void process(void);` |
+| 8.13 | 只读指针加 const | `void read(uint8_t *buf)` | `void read(const uint8_t *buf)` |
+| 9.1（项目加强） | 局部变量声明即初始化 | `uint32_t cnt;` | `uint32_t cnt = 0U;` |
+| 17.7（项目加强） | 返回值必须检查；错误/状态码不得 `(void)` 丢弃 | `hal_init();`、`(void)hal_init();` | 保存返回值并处理错误；仅非状态类返回值（如 `memset` 的指针）可写 `(void)` |
+| 20.1 | include 位于文件开头 | 宏定义后 include | include 先于宏和代码 |
+| 20.5 | 不使用 `#undef` | `#undef SIZE` | 独立命名或缩小作用域 |
 
-可选规则 15.5 默认不启用。只有项目规则明确打开时，才要求使用单一出口；嵌入式错误处理允许使用多个 return。
-
-以下偏差允许保留：标准库内存操作 `memset/memcpy/memcmp/strlen`；DMA 缓冲区所需的 `void *` 指针运算；`third_party/` 中的 grblhal 内部代码。偏差不适用于 `src/`、`class/`、`peripheral/driver/` 和 `foc/` 业务代码。
+- 15.5 单一出口默认**不启用**；错误处理允许提前 return。
+- 允许的偏差：`memset/memcpy/memcmp/strlen`；DMA 缓冲区所需的 `void *` 指针运算；`third_party/` 内部代码。偏差不适用于 `src/`、`class/`、`peripheral/driver/`、`foc/`。
 
 ## L1: 代码与对象设计
 
-### L1.1: C 源码风格和复杂度
+### L1.1 源码风格
 
-- 嵌入式 C/C++ 源码使用 82 字符硬限制。普通语句超出时优先在运算符或逗号后按语义换行，不强制使用反斜杠。此要求不适用于本文档或其他文档。
-- Makefile、头文件，以及 C/C++ 源文件中的预处理宏使用反斜杠续行时，反斜杠必须对齐到当前工程固定的第 81 列，续行内容保持 4 个空格缩进；不得额外补一格。生成文件、第三方代码和文档不适用此规则。
-- Makefile 中带引号的宏值不得在 `=` 后直接拆行，避免 GNU Make 把续行展开为空格并改变编译器参数；应先定义辅助变量，再在 `C_DEFS` 中引用，并用 Windows 和 POSIX 目标各验证一次。
-- C 源文件必须有 Doxygen 文件头，至少包含 `@file`、`@brief`、`@author` 和 `@date`。
-- C 函数必须有 Doxygen 函数说明。至少包含 `@brief`、`@param` 和 `@return`；涉及 ISR、并发或错误边界时补充 `@note`。
-- 行内注释只说明为什么存在硬件限制、性能考量、副作用或失败条件，不写“增加变量、循环、返回、赋值”等机械过程描述。
-- 函数使用 `module_Action()` 命名，类型使用 `_t` 后缀，宏使用全大写。
-- 函数体最多 80 行。统计函数定义大括号内的非空、非纯注释行；超过限制必须拆分职责。
-- 一个函数只能有一个主要变化原因和一个主要动作。采样、数学计算、状态迁移、硬件提交、日志和参数解析应按职责拆分。
-- 函数参数默认最多 4 个。超过 4 个时必须在评审中说明必要性，并优先将稳定配置放入配置结构体；不得为了逃避参数数量限制而随意打包结构体。
-- 实时生产路径的实际调用深度最多 3 层；普通非实时生产路径最多 5 层。函数指针、回调、宏和 inline 展开后的调用层级也必须计算。
-- 仅由明确的非 release 条件编译保护的调试路径最多 4 层；调试代码位于实时路径时仍最多 3 层。不能以“测试没有走到”为理由豁免。
-- 复杂度超过限制时，优先拆成入口编排、业务步骤和叶子操作。不能只移动代码或增加宏来规避复杂度检查。
+- C/C++ 源码 82 字符硬限制；超长语句在运算符或逗号后按语义换行。
+- 头文件、C 源码预处理宏和 Makefile 的反斜杠续行：反斜杠对齐第 81 列，续行内容缩进 4 空格，不额外补格。
+- Makefile 带引号的宏值不得在 `=` 后直接拆行（GNU Make 会把续行展开为空格改变编译参数）；先定义辅助变量再在 `C_DEFS` 中引用，并在 Windows 和 POSIX 目标各验证一次。
+- 每个 C 文件有 Doxygen 文件头：`@file`、`@brief`、`@author`、`@date`。
+- 每个函数有 Doxygen 说明：`@brief`、`@param`、`@return`；涉及 ISR、并发或错误边界时加 `@note`。
+- 注释说明硬件限制、时序/性能考量、副作用、失败条件；算法允许注明公式、单位、离散系数和历史拍关系。不写"给变量赋值""循环遍历"等机械描述。
 
-### L1.2: 结构体与操作 API
+### L1.2 命名
 
-- 结构体必须保持单一职责。配置、运行状态、硬件接口、统计信息和错误上下文不能仅为了减少类型数量而合并。
-- 直接成员数不超过 16 个为推荐范围；17～24 个必须在评审中说明成员的共同职责；超过 24 个默认拆分。寄存器映射、协议报文和厂商生成结构体可以例外，但必须标注用途。
-- 具有生命周期、资源所有权、状态转换、不变量、硬件副作用、并发保护或中断访问约束的结构体属于对象，必须提供操作 API。API 负责维护不变量和错误返回。
-- 纯数据结构不强制提供对象 API。坐标、采样值、abc/dq 量、命令和配置快照可以公开定义并按值或 const 指针传递；需要校验时只提供必要的 validate/normalize 接口。
-- 禁止为了形式上的面向对象给每个成员机械增加 getter/setter。接口应表达完整操作或状态迁移，外部不得直接修改受保护对象的成员。
-- 正式业务代码不得直接读取或写入其他模块对象的运行时成员，包括子对象状态字段（例如 `ptApp->tMotor.eState`）；应调用对象操作 API 执行命令和状态迁移，通过只读状态快照 API 查询状态。配置、采样和其他纯数据快照不受此限制。临时诊断、波形和白盒测试代码可直接读取内部成员，但必须与正式控制路径隔离，不得驱动控制命令或安全状态迁移；不为这类临时访问单独增加 getter。C 结构体若因按值组合而公开定义，仍须遵守正式代码的访问边界。
-- `.c` 文件按模块职责和变化原因组织。只有在对象具有独立生命周期、独立测试入口或独立变化原因时，才拆成独立模块。
-- 对于按 MODUS 模板构建的 Class，`xxx_t`、`xxx_cfg_t` 和直接组合的成员类型必须按模板在 `.h` 中提供完整声明，以便对象组合、配置组合和 `MODUS_DECLARE_OBJECT` 实例化显式可见。更深层的 Class 私有实现可以放在 `Mdriver/<class_name>/` 的私有头文件中。
-- 结构体拆分不得破坏实时路径、增加无意义的调用层级或引入额外拷贝。FOC 和 ISR 数据还必须检查总大小、对齐、访问原子性、volatile 和缓存布局。
+- 函数 `module_Action()`（如 `motor_Start`）；文件内私有函数加前导下划线 `_module_Action()`；类型（含枚举）用 `_t` 后缀；宏和枚举值全大写。
+- 变量前缀是**推荐的可读性约定**，以周边代码为准，不作为接口硬性要求：
 
-#### FOC 硬件边界（项目当前约定）
+| 前缀 | 含义 | 示例 |
+|---|---|---|
+| `pt` / `p` | 结构体指针 / 其他指针（可与类型前缀组合） | `ptThis`、`ptCfg`、`pchBuf`、`pwTick` |
+| `ch` / `hw` / `w` / `l` | 8 / 16 / 32 / 64 位整数 | `chRunPt`、`hwSize`、`wNowTick`、`lTimestamp` |
+| `e` / `t` / `b` | 枚举 / 按值结构体 / bool | `eState`、`tDriver`、`bEnable` |
+| `s_` | 文件静态对象 | `s_tTemplateClassBase` |
 
-- FOC 电流环的核心硬件契约只有原始三相 ADC 采样和 PWM 占空比提交，使用
-  `foc_SampleCurrent()`、`foc_SetDuty()` 这两个直接语义 API。
-- `motor_t` 不保存 ADC/PWM `ops/context`，Motor 热路径不经过函数指针、通用
-  `read/write/control` 或额外转发函数；目标 `foc_port.c` 直接调用类型化 MDI
-  能力，保证编译期绑定和零运行时分派成本。
-- ADC 偏移校准、电流归一化和电流基准属于 Motor 内部业务。电流基准由
-  `FOC_CURRENT_BASE_MILLIAMP` 初始化到 `motor_t.wCurrentBaseMilliamp`，不能由
-  应用配置重复提供。
-- PWM 安全停机、Break 锁存与故障恢复属于非热路径安全生命周期，可保留直接
-  的安全 API；它们不得回流到电流环的函数指针分派链。
-- 增加母线电压、过流输入等能力时，继续新增单位和语义明确的直接 API；不为
-  统一形式恢复泛化 `read/write/control` 或重复的接口层。
+### L1.3 复杂度
 
-### L1.3: MODUS Class 与 Mdriver 组合规范（硬规则）
+- 函数体 ≤ 80 行（大括号内非空、非纯注释行）；一个函数只有一个主要动作和一个变化原因。采样、数学计算、状态迁移、硬件提交、日志、参数解析按职责拆分。
+- 参数默认 ≤ 4 个；超出需说明必要性，优先把稳定配置放入配置结构体，不为凑数随意打包。
+- 实际调用深度：实时路径 ≤ 3 层；普通非实时路径 ≤ 5 层；仅由非 release 条件编译保护的调试路径 ≤ 4 层（位于实时路径时仍 ≤ 3）。函数指针、回调、宏、inline 展开都计入，不得以"测试没走到"豁免。
+- 超限时拆成"入口编排 → 业务步骤 → 叶子操作"；不得只搬代码或用宏规避。
 
-#### Class 的对象所有权
+### L1.4 结构体、对象与访问边界
 
-MODUS Class 的 `xxx_t` 是运行时状态的唯一拥有者。所有可变状态必须属于 `xxx_t`，或属于它直接拥有的子模块成员。
+- **对象 vs 纯数据**：具有生命周期、资源所有权、状态转换、不变量、硬件副作用、并发或中断访问约束的结构体是对象，必须提供操作 API 维护不变量和错误返回。坐标、采样值、abc/dq 量、命令、配置快照是纯数据，可公开定义并按值或 const 指针传递，需要时只提供 validate/normalize。
+- 结构体单一职责：配置、运行状态、硬件接口、统计、错误上下文不为减少类型数而合并。直接成员 ≤ 16 推荐；17～24 需说明共同职责；> 24 默认拆分（寄存器映射、协议报文、厂商生成结构体可例外并注明）。
+- 拆分不得破坏实时路径、增加无意义调用层级或额外拷贝；FOC/ISR 数据还要检查大小、对齐、访问原子性、`volatile` 和缓存布局。
+- **访问边界（唯一表述）**：正式业务代码不得读写其他对象或子对象的运行时成员（如 `ptApp->tMotor.eState`、`ptThis->tDriver.eState`），即使 C 头文件中可见。改变状态用 `Start/Stop/Reset/Step` 等语义操作；查询用 `GetStatus()` 等只读快照。配置和采样等纯数据不受限。
+- 临时诊断、波形和白盒测试可直接读内部成员，但必须与正式控制路径隔离，不得据此驱动控制命令或安全状态迁移，也不为它们新增 getter。
+- 禁止机械 getter/setter；正式业务确需数据时，由对象提供恰好满足该业务的快照或操作接口。
+- `.c` 按模块职责和变化原因组织；只有独立生命周期、独立测试入口或独立变化原因才拆成独立模块。
 
-`xxx_cfg_t` 是初始化参数和外部依赖的唯一入口。配置字段必须有明确含义，并且必须在 `xxx_Init()` 中被校验、复制或绑定。禁止使用只有 `chReserved` 等占位字段的配置结构体掩盖没有配置契约的问题。
+### L1.5 MODUS Class 与 Mdriver（硬规则）
 
-`xxx.h` 声明 `xxx_cfg_t`、`xxx_t` 和公开 API；`xxx.c` 实现行为并只放置私有辅助函数。Class 对象必须通过 `MODUS_DECLARE_OBJECT` 创建，禁止再在 `.c` 中创建一套替代对象的 `static` runtime。
+动手前完整阅读 [template_class.h](../../../class/template_class.h)、[template_class.c](../../../class/template_class.c)、[template_driver.h](../../../class/template_driver.h)，以模板为准。
 
-如果 Class 是单实例，单实例必须是 `MODUS_DECLARE_OBJECT` 生成的 `xxx_t`，不能是“空的 MODUS 对象 + 隐藏的 `static xxx_runtime_t`”。Class 的结构体成员应按职责分组；复杂功能应组合成子结构体，不能把状态移到文件静态变量中。
+**对象所有权**
 
-父 Class 必须按值拥有其 Driver 或 Mdriver 成员，不能用全局句柄、隐藏
-单例或另一个 `static runtime` 替代对象成员。每个 Class 实例必须拥有
-独立的子模块状态；只有明确声明所有权、生命周期和仲裁规则的共享资源
-才可以由 Manager 统一管理。
+- `xxx_t` 是运行时状态的唯一拥有者；`xxx_cfg_t` 是初始化参数和外部依赖的唯一入口，每个字段都必须在 `xxx_Init()` 中被校验、复制或绑定。禁止只有 `chReserved` 等占位字段的配置结构体。
+- `xxx.h` 完整声明 `xxx_cfg_t`、`xxx_t`、直接组合的成员类型和公开 API，使组合与 `MODUS_DECLARE_OBJECT` 实例化显式可见；`xxx.c` 只放实现和私有辅助函数。更深层私有实现可放 `Mdriver/<class_name>/` 的私有头文件（`Mdriver/` 目前是**尚未落地的设计约定**，首次使用时需同时接入构建）。
+- 对象只能由 `MODUS_DECLARE_OBJECT` 创建。单实例也必须是它生成的 `xxx_t`，不能是"空 MODUS 对象 + 隐藏 `static xxx_runtime_t`"。
+- 父 Class 按值拥有其 Driver/Mdriver 成员；每个实例拥有独立子模块状态。多个 Class 共享物理资源时必须用显式 Manager/client/接口注入表达所有权和仲裁。
 
-#### 静态变量边界
+**静态变量边界** —— Class `.c` 中只允许：
 
-Class `.c` 中允许的静态对象仅限于：
-
-1. MODUS 模板要求的基础对象和基础配置，例如 `modus_base_t` 及其配置；
-2. `const` 查表、只读映射和只读默认参数；
+1. MODUS 模板要求的基础对象和基础配置（`modus_base_t` 等）；
+2. `const` 查表、只读映射、只读默认参数/ops；
 3. 明确声明所有权、生命周期和并发保护的共享资源管理对象；
-4. 测试中的 fake、stub 和测试统计对象。
+4. 测试中的 fake、stub 和统计对象。
 
-运行时状态禁止使用文件静态变量保存，包括状态、命令、定时器、缓存、PID 积分、编码器状态、错误标志、ISR 统计和 Waveform 句柄。若一个变量会随对象运行而变化，它必须是对象或对象子成员的一部分。
+运行时会变化的任何东西（状态、命令、定时器、时间戳、缓存、PID 积分、编码器状态、错误标志、ISR 统计、Waveform 句柄）都必须在对象内。基类配置若含随实例变化的 `wParent`、缓冲区、依赖或回调，只有严格单实例时才能静态保存；多实例必须每实例独立配置。
 
-MODUS 基类配置中如果包含会随实例变化的 `wParent`、缓冲区、依赖或
-回调绑定，不得默认作为多实例安全的静态配置。此类可变配置只有在严格
-单实例且所有权明确时才能静态保存；多实例 Class 必须使用每实例配置，
-或确认框架为每个实例提供独立的基类配置存储。
+> [!WARNING]
+> perf_counter 有两个宏在省略指针时使用**调用点级隐藏 `static int64_t`**，多实例共用调用点会互相踩踏（实测第二个实例 300 ms 就收到 500 ms 超时）：`PERFC_PT_DELAY_MS(ms)` 和单参数 `perfc_is_time_out_ms/us(t)`。Class/Driver 中必须显式传入对象成员指针。
 
-#### Mdriver 子模块
+两种槽语义不同，不得混用或互相赋值：
 
-只有同时具备以下特征的 Class 子功能，才应抽离为 `Mdriver` 子模块：职责相对独立、功能较复杂、需要多个操作 API，并且未来具有较高的复用概率。此类子模块应有自己的结构体和 API，例如 `serial_screen_t` 与 `serial_screen_Run()`。
+| 槽 | 写法 | 保存内容 | 启动方式 |
+|---|---|---|---|
+| PT 延时槽 | `PERFC_PT_DELAY_MS(ms, &ptThis->lXxxStartMs)` | **毫秒起点**（`get_system_ms()`） | 宏进入时自动写入 |
+| 超时槽 | `perfc_is_time_out_ms(ms, &ptThis->lXxxDeadline, false)` | **tick 截止时间**，0 表示未启动 | 进入等待前清零，再调用一次以启动；首次调用只设截止时间并返回 `false` |
 
-简单功能不应为了形式上的模块化而拆分，直接作为对应 Class 的成员和内部逻辑即可。
+**Mdriver 子模块**
 
-只服务于一个 Class 的复杂子模块放在：
+- 简单功能直接作为 Class 成员和内部逻辑，不为形式拆分。
+- 同时满足"职责独立、较复杂、需要多个操作 API"时才抽成 Mdriver：只服务一个 Class 放 `Mdriver/<class_name>/<submodule>/`；再满足"不依赖父 Class、API 不接收父指针、配置可独立描述、可多实例、可独立测试"时才提升到 `Mdriver/<submodule>/`。相似函数名或预期复用不构成理由。
+- Mdriver 是父对象的成员，不是独立 MODUS Class：父 `xxx_t` 含 `sub_t`，父 `xxx_cfg_t` 含 `sub_cfg_t`，父 `Init` 初始化它，父 `Run`/PT 调度它，父 Class 负责停止和处理其错误。只有确需独立注册、生命周期或调度时才用 `MODUS_DECLARE_OBJECT`。
+- 子模块 API 以自身指针为上下文（`sub_Run(sub_t *ptThis)`），不保存父指针、不 `extern` 父变量、不承载父 Class 的业务决策。
 
-```text
-Mdriver/<class_name>/<submodule>/
-```
+**初始化契约** —— `xxx_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)` 顺序：
 
-预计会被多个 Class 独立实例化，且已经能够脱离父 Class 描述配置和依赖的通用子模块放在：
-
-```text
-Mdriver/<submodule>/
-```
-
-提升到 `Mdriver` 顶层必须同时满足：子模块较复杂且 API 较多、不依赖某个父 Class、API 不接收父 Class 指针、配置和依赖可以独立描述、每个父 Class 可以拥有独立实例，并且子模块可以独立测试。仅仅存在相似函数名，或仅仅为了预期中的复用，不足以抽成公共模块；简单子功能继续直接归属于对应 Class。
-
-Class 专属的 Mdriver 是父对象的成员，不是独立 MODUS Class：
-
-- 父 `xxx_t` 包含 `submodule_t` 成员；
-- 父 `xxx_cfg_t` 包含 `submodule_cfg_t` 配置；
-- 父 `xxx_Init()` 调用子模块初始化；
-- 父 `xxx_Run()` 或父 PT 调用子模块服务 API；
-- 子模块不能反向访问父 Class 内部成员；
-- 子模块不使用 `MODUS_DECLARE_OBJECT`，除非它确实需要独立注册、独立生命周期或独立调度。
-
-子模块接口应以子模块对象指针为上下文，例如 `serial_screen_Run(serial_screen_t *ptThis)`。子模块不得保存父 Class 指针，不得通过 `extern` 访问父 Class 的隐藏变量，也不得把父 Class 的业务决策塞进通用 Mdriver。父 Class 负责拥有、初始化、调度、停止和处理子模块错误。
-
-父 Class 的正式业务流程调用子模块时必须经子模块 API 读写运行状态：用 `Start/Stop/Reset/Step` 等语义操作改变状态，用 `GetStatus()` 等只读快照接口查询状态。正式代码禁止直接读取或赋值子对象成员，例如 `ptThis->tDriver.eState`；即使成员在 C 头文件中可见，也视为子模块内部状态。临时诊断、波形和白盒测试代码可直接读取，但不得据此驱动控制命令或安全状态迁移；不为这类临时访问增加 getter/setter。正式业务确需数据时，由子模块提供恰好满足该业务的状态快照或操作接口。
-
-多个 Class 共享一个物理资源时，必须使用显式 Manager 或接口表达所有权和仲裁关系。禁止使用隐藏的共享静态对象让多个 Class 偷偷共用资源。
-
-#### Class 初始化契约
-
-`xxx_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)` 必须按以下顺序执行：
-
-1. 转换并检查对象地址和配置地址；
+1. 转换并检查对象/配置地址；
 2. 校验配置内容；
-3. 初始化对象自身状态；
-4. 设置 `ptThis->ptBase` 和基础配置的 `wParent`；
-5. 将配置依赖绑定到对象和子模块；
+3. 初始化对象自身状态（`UNINITIALIZED`）；
+4. 设置 `ptThis->ptBase` 和基础配置 `wParent`；
+5. 绑定配置依赖到对象和子模块；
 6. 初始化 PT 游标、业务状态、定时器、事件和子模块；
-7. 通过 MDI 初始化硬件依赖，并检查每个返回值；
-8. 最后调用 `mbase_Init()` 完成 MODUS 注册，并检查返回值。
+7. 通过 MDI 初始化硬件依赖，检查每个返回值；
+8. 最后 `mbase_Init()` 注册并检查返回值。
 
-启用 MODUS 的有效路径中不得用 `(void)wObjectAddr` 或 `(void)wObjectCfgAddr` 代替对象初始化。只有关闭 MODUS 的纯算法构建分支可以显式忽略这两个参数。
+- 失败路径：对象保持安全状态，已启用硬件资源关闭，详细错误被锁存。
+- 启用 MODUS 时不得用 `(void)wObjectAddr` / `(void)wObjectCfgAddr` 跳过初始化（仅关闭 MODUS 的纯算法分支例外）。`Run`/`Clock` 必须从 `wObjectAddr` 取得真实 `xxx_t` 工作。
 
-`Run` 和 `Clock` 回调必须从 `wObjectAddr` 获取真实的 `xxx_t`，并通过对象成员工作。除非回调确实无状态，否则禁止忽略对象地址。初始化失败时对象必须保持安全状态，已启用的硬件资源必须关闭。
+### L1.6 Driver 能力模型
 
-#### Class 业务逻辑与 PT
+`template_driver_*` 是能力模板，不是固定 API。具体 Driver 先选能力，删掉没有语义的示例接口：
 
-- Class 的前台业务流程必须由 `Run()` 驱动，并使用对象成员保存的 perfc-PT 游标；业务状态和 PT 游标必须分开保存。
-- 业务状态至少包含 `IDLE` 和 `ERROR`；状态转移只能在 Class 状态机内完成，与 ISR 共享的转移必须有中断保护。
-- 等待、重试、通信、校准和多步骤流程必须使用非阻塞 PT 条件或 `perf_counter` 超时；禁止 `HAL_Delay`、忙等和阻塞式轮询。
-- 每个等待状态必须有超时和错误收敛路径，默认超时为 500 ms。
-- Class 专属 Mdriver 若拥有自己的流程，也必须在自己的对象成员中保存 PT 游标；父 PT 与子 PT 不得共享静态状态。
-- `Clock()` 只执行短小的周期服务、设置事件或更新时间标志，不承载阻塞业务流程。Shell 只提交命令，不直接修改 Class 内部成员。
+| 能力 | 用途 |
+|---|---|
+| `Init` | 初始化对象和外部依赖（必需） |
+| `Run` | 前台非阻塞流程：校准、启动、异步通信 |
+| `Start` / `Stop` / `Reset` | 启停、安全输出、故障恢复 |
+| `Clock` | 短小固定周期服务、置事件/时间标志；不是第二个 `Run` |
+| `IsrStep` | 有严格时间边界的硬件或控制环服务 |
+| `GetStatus` | 只读状态快照 |
 
-硬实时 ISR 是明确边界：FOC 电流环等固定时限路径必须满足明确的执行时间、重入和上下文安全约束。是否使用 PT 不作一刀切禁止；若使用 PT，必须证明每次调用有界、非阻塞、不会引入不可控的跨调用状态、重入冲突或超出时序预算。证明至少应说明调用链和循环上界、最坏执行时间或时序预算、PT 游标的并发所有权、以及依赖回调的上下文安全。ISR 不得执行无界循环、等待硬件或总线完成，也不得调用时延不确定的回调。ISR 仍不得执行日志、I2C 或其他阻塞操作，所需状态必须属于 Class 对象或其子模块成员，不能因此转移到隐藏静态 runtime。
+- 只在 ISR 中执行的固定步长算法（SMO、Flux、EKF）默认只提供参数类型固定的 `xxx_IsrStep()`，不保留 PT、`Run()` 或通用 `sample/apply`。
+- `Stop()` 请求依赖进入安全状态并停止本对象服务计时；`Reset()` 只能在安全停止后清除锁存故障和 PT 游标；失败时父 Class 锁存详细错误并进入 `ERROR`。
+- Class/Driver 状态至少表达 `UNINITIALIZED`、`IDLE`、`RUNNING`、`ERROR`；状态、错误码、故障位、定时器、PT 游标各自存于所属对象，父子不共享流程状态。
+- 复制模板后必须：替换 `template_*` 名称和占位类型；用真实语义替换占位依赖和 ops；删除不需要的回调、状态和示例能力（模板中的 `sample/apply`、通用 ops 和 no-op 依赖只是可运行示例）；为每个配置字段定义校验/复制/绑定；审计所有文件静态对象；提供独立验证入口。
 
-#### Class 代码审查拒绝项
+### L1.7 接口、分派与 MDI（硬规则）
 
-出现以下任一情况时，Agent 不得继续扩展实现，必须先回到对象设计：
+- 接口描述一个语义能力族（observer、ADC、PWM、storage），不是通用基类或第二套 Driver 框架。输入、输出和操作函数使用带单位、范围、生命周期说明的类型。
+- MDI 使用语义能力接口：`MDI_PWM_SetDuty`、`MDI_PWM_SetFrequency`、`MDI_PWM_Enable`、`MDI_PWM_SafeStop`、`MDI_ADC_Sample`、`MDI_I2C_Transfer` 等。只有 Stream 和 Flash 因数据流/存储语义保留 Read/Write；GPIO、ADC、PWM、I2C 不伪装成字节流。不把 MDI 做成运行时 POSIX 设备系统。
+- **分派二选一，同一调用链不得叠加**：
+  - `_Generic`：编译期按具体设备类型选择，目标必须是直接函数或 `static inline`；热路径默认用它。
+  - `ops/context`：仅用于确需运行时替换的非实时依赖。
+- `void *` 只能作为绑定一个明确依赖实例的 `pContext`；禁止用它传递物理量、通道号、地址或命令参数。
+- MDI 设备实例保留具体类型；板级 `mdi_hw.h` 静态绑定实现；业务代码不 include vendor HAL、不访问寄存器。
+- 返回值只表示状态；读取值和传输长度通过输出参数返回，不复用无定义的 `int32_t`。未实现能力返回 `MDI_STATUS_ENOTSUP`，不得用成功 stub。
 
-- `xxx_t` 只有 `ptBase` 或占位字段，而真正状态在 `static` runtime 中；
-- `xxx_cfg_t` 只有 `chReserved`，或存在未被初始化函数使用的配置字段；
-- 可变状态、子模块、定时器或统计数据藏在 Class `.c` 的文件静态变量中；
-- 启用 MODUS 时用 `(void)wObjectAddr` 或 `(void)wObjectCfgAddr` 跳过初始化；
-- Class 的多步骤业务流程没有使用对象成员保存的 perfc-PT 状态；
-- Class 专属子模块被错误注册成独立 MODUS 对象，或多个 Class 通过隐式全局变量共享资源；
-- 修改 Class 行为时顺带修改 ADC、PWM、定时器或其他无关外设初始化，却没有单独的根因证据和验证计划。
+### L1.8 FOC 硬件边界（项目当前约定）
 
-#### Driver 能力模型与模板特化
+- 电流/PWM 硬件契约使用直接语义 API：`foc_SampleCurrent()`（原始三相 ADC）、`foc_SetDuty()`（三相占空比）和 `foc_SampleDcBusRaw()`（原始母线 ADC）。目标 `foc_port.c` 直接调用类型化 MDI，编译期绑定、零运行时分派。
+- `motor_t` 不保存 ADC/PWM `ops/context`；Motor 热路径不经过函数指针、通用 `read/write/control`、转发函数、日志或阻塞总线。
+- 电流偏移校准、电流归一化和母线 ADC 标定/PU 归一化属于 Motor：`motor_t.tParams.wCurrentBaseMilliamp` 由 `FOC_CURRENT_BASE_MILLIAMP` 初始化；`motor_SampleDcBusPuIsr()` 用板级 ADC 标定和 Motor 电压基值输出母线 PU。App 只编排采样与算法，不重复做物理换算。
+- PWM 安全停机、Break 锁存与故障恢复属于非热路径安全生命周期，保留显式安全 API，直到单独设计安全能力接口；不得回流到电流环分派链。
+- 新增母线电压、过流输入等能力时，继续新增单位明确的直接 API。
 
-`template_driver_*` 是能力模板，不是每个具体模块都必须复制的固定
-API。具体 Driver 必须先选择能力档位，再删除没有语义的示例接口：
+### L1.9 FOC 算法数值边界与可读性
 
-- `Init`：初始化对象和外部依赖，所有 Driver 必需；
-- `Run`：前台非阻塞流程、校准、启动或异步通信；
-- `Start`、`Stop`、`Reset`：启停、安全输出和故障恢复；
-- `Clock`：短小的固定周期服务，不是第二个 `Run`；
-- `IsrStep`：有严格边界的硬件或控制环服务。
+本节是实现和审核约束；基值推导、边界表、特殊格式和 SMO 模板详见 [标幺值、定点和离散时间](../foc-motor-control-methodology/references/per-unit-fixed-point-and-discrete-time.md) 第 8 节。它约束后续整理，不代表现有实现已经全部满足。
 
-只在 ISR 中执行的固定步长 SMO、Flux 或 EKF 等算法，通常不应保留 PT、
-`Run()` 或通用 `sample/apply` 接口；这是默认设计建议，不是对 PT 的绝对
-禁止。硬件或控制 Driver 可以在满足 ISR 安全证据的前提下使用受限的
-`IsrStep()`；算法模块仍应优先提供语义明确、参数类型固定的
-`xxx_IsrStep()`。
+1. **统一标幺契约**：控制链使用同一套电压、电流、电角速度及派生基值；明确相量/线量、峰值/RMS、坐标、方向和采样拍。算法公共标量默认用 `foc_scalar_t` 表示约定基值下的 pu，角度统一用 `foc_angle_t`；计数、状态和布尔值不标幺化。Hz、rad/s、turn/s 不得冒充速度 pu。
+2. **物理换算集中在边界**：电流 ADC 原始码在 Motor 采样入口扣每相零偏并归一化；母线 ADC 原始码由 Motor 的母线采样 API 按板级标定换算并归一化；用户物理指令在指令入口转换；电机物理参数在初始化统一转成标幺模型并生成离散系数。模型参数安全更新时重算相关系数，运行递推不重新读取物理参数或反复换算基值。可以代数合并初始化计算，不为保留中间结果重复存储或增加调用层。
+3. **调制与硬件边界**：调制依据电压 pu 和 Motor 提供的实时母线 pu 求占空比；电压 pu 不等于占空比。硬件端口只把占空比转换为定时器计数。显示/诊断出口的物理换算不得回流驱动控制。
+4. **格式统一，例外有据**：算法内部默认沿用公共标量格式；乘积、积分或低速步进确需精度/范围时允许局部加宽或特殊 Q 格式。注明用途、存储缩放关系、有效范围、舍入、溢出和转换位置，禁止特殊格式跨模块传播。必要的数值缩放不属于重复物理换算；不能仅凭格式数量删除精度状态。浮点后端默认 `float`，初始化可按精度需要使用 `double`，ISR 使用 double 必须有必要性和目标时序依据。
+5. **公式命名**：算法局部量和明确限定在算法内的状态/系数使用数学名，如 `i`、`u`、`i_hat`、`e_hat`、`z_prev`、`err`、`ku`、`kr`、`b0`、`a1`；不强制类型前缀。定义旁说明符号和单位；边界参数用清楚的语义/单位名。禁止用 `part0/part1` 等无语义短名，特殊格式状态不能仅靠 Q 后缀表达含义。
+6. **按递推顺序阅读**：核心函数按模型、积分/限幅、切换/滤波、历史更新组织，源码可直接对照离散公式；明确当前拍和上一拍，历史值在最后按原时序更新。初始化校验和系数生成与每拍计算分开，限幅与故障处理就近可见，不为每个乘加拆函数。
+7. **依赖保持窄小**：算法只接收自身配置及有单位约定的纯数据，状态属于实例；不依赖父对象、硬件、日志或启动接管策略。拆分以独立职责为依据，不为解耦增加 getter、函数指针、宏包装或通用算法框架。
+8. **后端表达数值语义**：浮点核心优先直接表达公式，定点核心显式保留宽乘、缩放、饱和和舍入；共用公式与接口契约，不为去重强行遮住公式。初始化预计算稳定系数，每拍仅做必要递推；内联、FMA 或运算重排的收益以目标编译/时序证据为准。
+9. **重构验收**：看核心函数能对照公式，看头文件能确定单位、状态归属和拍关系，热路径没有无关依赖。保持递推时序、限幅、异常收敛和数值结果；定点检查逐拍一致性，浮点事先定义误差容限并检查边界。模型、反馈路径、滤波方法或限幅行为改变须作为独立算法变更验证，不混入可读性整理。
 
-复制模板时必须完成以下特化：
+### L1.10 Motor / Position / Observer / Core 边界（硬规则）
 
-1. 替换 `template_*` 名称和占位数据类型；
-2. 用真实语义替换占位依赖和操作表；
-3. 删除不需要的回调、状态和示例能力；
-4. 为每个配置字段定义真实的校验、复制或绑定行为；
-5. 审计全部文件静态对象的所有权和生命周期；
-6. 为 Class、Driver 和可复用接口提供独立验证入口。
+接口字段和本仓库拍关系详见 [FOC 模块架构](../foc-motor-control-methodology/references/foc-module-architecture.md) 第 7 节；修改这些模块时必须同时核对该契约。
 
-模板中的 `sample/apply`、通用硬件操作表和 no-op 依赖只是可运行示例，
-不是所有具体模块的强制契约。
+1. **职责单向**：Motor 管生命周期、ADC 归一化、运行参考及 PWM 提交；Position 管传感器/强拖/估计角度的选择、补偿与接管；Observer 选择具体估计算法；SMO、磁链观测器、EKF 等只计算模型。Motor 不 include、调用或检查具体观测算法；算法和 Observer 不依赖 `motor.h`、App、端口、驱动、日志或启动状态。
+2. **最小数据接口**：初始化只传实际需要的电气模型及算法配置，安全更新时重算系数；Step 只传同步的标幺采样，返回角度、速度、有效性及有明确含义的质量证据。禁止传父对象指针、保留临时输入指针、从父对象取参数或新增未使用的通用槽。算法内部状态、增益、协方差、历史量不得成为 Motor 的控制依据。
+3. **Core 输入输出契约**：Core 接收命令、当前 alpha-beta 电流、有效电角度及速度 pu；输出电流、电压模型、占空比和自身限幅结果。输入输出是纯数据，Core 的 PI/积分/历史状态归 Core，Motor 不访问其内部成员。Core 不做采样、选择角度源、控制硬件或迁移 Motor 状态；错误返回由 Motor 收敛到安全状态。
+4. **拍与单位不可隐式改变**：采样快照必须明确 `i[k]`、控制区间模型电压 `u[k-1]` 及运行代次；当前 ISR 先 Prepare、取反馈、执行 Core，再推进 Observer，估计用于下一拍。禁止把本拍新算的电压配给本拍已采完的电流。请求电压、模型电压、实际施加电压和占空比不得混称；所有来源共用电流、电压、速度基值。
+5. **算法可替换，策略有归属**：后端在 Observer 编译期选择，未实现后端返回禁用/错误，不返回假成功。接管资格、启动超时、失效停机由 Position/Motor 处理；算法只报告自身估计有效性。SMO 的 BEMF 阈值不能直接套用到 EKF 协方差或磁链置信度；不同质量量必须明确类型、单位和消费者，再扩展接口，不能异义复用字段或下放到 Motor。
+6. **边界验收是变更要求**：相关改动必须运行 `foc/tests/run_foc_module_boundary_test.ps1`、受影响模块测试及目标构建。源码守卫检查直接依赖和调用顺序；类型检查、逐拍对照、失效/复位和接管测试补足语义验证，不能以守卫通过代替数值或硬件验证。共享类型只能承载数据，不能经此引入算法或硬件依赖。
 
-#### 类型化接口与分派
+## L2: 状态机
 
-接口必须描述一个语义能力族，例如 observer、ADC、PWM 或 storage；
-接口不是通用基类，也不是第二套 Driver 框架。接口应把物理输入、算法
-输出和操作函数定义为具有单位、范围和生命周期说明的类型。
+选择顺序：**perfc-PT > 简单叶子 `switch` > PLOOC**。PLOOC（`modus/lib/plooc`，`__IMPLEMENT`、`__new` 等宏）仅用于确需封装、继承和多实例的领域对象，如电机或传感器 Manager：Manager 结构体第一个成员是基类，实例用 `__new` 创建。
 
-依赖实现只能选择一种主要分派方式：
+### 通用约束（唯一表述）
 
-- `_Generic`：编译期固定实现，适合热路径和需要内联的调用；
-- `ops/context`：运行时按配置选择实现，适合可替换依赖。
+1. 前台业务由 `Run()` 驱动，PT 游标（`uint8_t chXxxPt`）和业务状态（`eState`）分开存放在所属对象中；父子各自拥有游标。
+2. 禁止 `HAL_Delay`、`perfc_delay_ms`、空循环和阻塞轮询；PT 中用 `PERFC_PT_WAIT_UNTIL` / `PERFC_PT_DELAY_MS(ms, &成员)`，超时判断用 `perfc_is_time_out_ms(ms, &成员, false)`，槽规则见 L1.5 警告。
+3. 每个 `PERFC_PT_WAIT_UNTIL` 的条件都必须包含对象内超时槽，超时后进入 `ERROR` 并返回 `fsm_rt_err`；`PERFC_PT_DELAY_MS` 本身有界，不需要额外超时。默认超时 500 ms；状态枚举至少含 `IDLE` 和 `ERROR`。
+4. 明确流程语义：一次性流程以 `PERFC_PT_END()` 结束并在完成时返回 `fsm_rt_cpl`；循环流程用 `while (1)` 包住，每轮 `PERFC_PT_YIELD(fsm_rt_cpl)` 一次。不要在 `YIELD(cpl)` 后紧接 `END()`，否则下一次调用会重复报告完成。
+5. 状态迁移只在状态机内部发生；与 ISR 共享的迁移加中断保护或等效调度保护。Shell 只提交命令，不改对象成员。
+6. `Clock()` 不承载流程。高频 ISR 内禁止任何日志。
 
-同一条调用链不得同时维护两套分派机制。算法数据禁止通过无语义的
-`void *` 参数传递；`void *pContext` 只能绑定一个明确的依赖实例。
+### perfc-PT 写法（以 template_class.c 为准）
 
-#### Stop、Reset 和状态快照
+PT 由 `switch/case` 宏实现，因此：**局部变量在 yield/wait 之后失效**（需跨越的值放对象成员或在恢复后重新读取）；PT 体内**不得再写 `switch`** 包住 yield/wait；函数返回值须兼容 `fsm_rt_t`（等待宏返回 `fsm_rt_on_going`）；`PERFC_PT_BEGIN` 之前的守卫可以提前 return。
 
-Driver 的失败必须能够被父 Class 读取并收敛。Driver 应提供明确的停止、
-复位和只读状态查询语义：
-
-- `Stop()` 必须请求外部依赖进入安全状态，并停止本对象的服务计时；
-- `Reset()` 只能在安全停止后清除锁存故障和 PT 游标；
-- `GetStatus()` 返回只读状态快照，不允许父对象直接篡改 Driver 内部状态；
-- 初始化或运行失败时，父 Class 必须锁存详细错误并进入 `ERROR`；
-- 已启用的硬件资源在初始化失败路径必须关闭。
-
-Class 和 Driver 的状态至少应能表达 `UNINITIALIZED`、`IDLE`、`RUNNING`
-和 `ERROR`。状态、错误码、故障位、定时器和 PT 游标必须存放在对应对象
-中，父对象和子对象不得共享流程状态。
-
-#### Class / Driver 模板审查拒绝项
-
-出现以下任一情况时，Agent 必须停止继续扩展实现并回到对象设计：
-
-- Driver 保留了没有业务语义的模板占位 API；
-- 算法通过无类型参数传递物理量、输入或输出；
-- `Clock()` 承载复杂前台业务或阻塞流程；
-- `Stop()`、`Reset()` 或初始化失败路径没有定义安全输出和错误收敛；
-- 父 Class 直接修改子 Driver 的内部状态；
-- 同一调用链同时使用 `_Generic` 和 `ops/context` 两套分派机制；
-- 具体模块复制模板后没有删除不适用的能力和默认依赖。
-
-## L2: 状态机策略（modus 真实能力）
-
-库选择优先级：**perfc-PT 协程 > 裸机 switch > PLOOC**。
-
-MODUS Class 和其 Mdriver 的前台业务流程优先使用 perfc-PT。裸机 `switch` 只适用于确实简单、无等待层次的叶状态机，不能用它绕开 Class 的 PT 约束。PT 游标必须存放在对应对象中，父对象和子对象各自拥有自己的游标。
-
-### perfc-PT 协程（首选：任务级状态机/并发流程）
-
-- 头文件：`perfc_task_pt.h`（Protothreads，开关 `__C_LANGUAGE_EXTENSIONS_PERFC_PT__`）和 `perf_counter.h`。
-- 适用：多状态、需要等待、超时或挂起的流程型状态机。
-- 示例：
+以下示例为循环流程：等待计数就绪（500 ms 超时进 `ERROR`）→ 稳定 200 ms → 每轮返回一次 `fsm_rt_cpl` → 下一次调用开始新一轮。示例已用真实 perf_counter 头文件做过编译检查（Doxygen 从略）。
 
 ```c
+#include <stdbool.h>
+#include <stdint.h>
 #include "perf_counter.h"
 #include "perfc_task_pt.h"
 
-typedef struct {
-    struct pt pt;
-    uint32_t timestamp;
-    uint8_t count;
-} pump_task_t;
+#define PUMP_READY_COUNT        10U
+#define PUMP_WAIT_TIMEOUT_MS    500U
+#define PUMP_SETTLE_MS          200
 
-static PT_THREAD(pump_run(struct pt *pt, pump_task_t *sm))
+typedef enum {
+    PUMP_STATE_UNINITIALIZED = 0,
+    PUMP_STATE_IDLE,
+    PUMP_STATE_RUNNING,
+    PUMP_STATE_ERROR
+} pump_state_t;
+
+typedef struct {
+    pump_state_t eState;
+    uint8_t chRunPt;            /* PT cursor, 0 = flow start */
+    uint8_t chCount;            /* written by pump_AddCount() */
+    int64_t lWaitDeadline;      /* timeout slot: tick deadline, 0 = disarmed */
+    int64_t lSettleStartMs;     /* PERFC_PT_DELAY_MS slot: start time in ms */
+} pump_t;
+
+void pump_Init(pump_t *ptThis)
 {
-    PT_BEGIN(pt);
-    for (;;) {
-        PT_WAIT_UNTIL(pt, sm->count >= 10U);
-        perfc_delay_ms(500U);
-        sm->count = 0U;
-        PT_YIELD(pt);
-    }
-    PT_END(pt);
+    ptThis->eState = PUMP_STATE_IDLE;
+    ptThis->chRunPt = 0U;
+    ptThis->chCount = 0U;
+    ptThis->lWaitDeadline = 0;
+    ptThis->lSettleStartMs = 0;
 }
 
-void pump_init(pump_task_t *sm)
+static void _pump_ArmWaitTimeout(pump_t *ptThis)
 {
-    PT_INIT(&sm->pt);
-    sm->count = 0U;
+    ptThis->lWaitDeadline = 0;
+    /* First call on a zero slot only stores the deadline and returns false. */
+    (void)perfc_is_time_out_ms(PUMP_WAIT_TIMEOUT_MS,
+                               &ptThis->lWaitDeadline, false);
+}
+
+static bool _pump_IsReadyOrTimedOut(pump_t *ptThis)
+{
+    bool bReady = (ptThis->chCount >= PUMP_READY_COUNT);
+    bool bTimedOut = perfc_is_time_out_ms(PUMP_WAIT_TIMEOUT_MS,
+                                          &ptThis->lWaitDeadline, false);
+
+    return (bReady || bTimedOut);
+}
+
+fsm_rt_t pump_Run(pump_t *ptThis)
+{
+    if (ptThis->eState == PUMP_STATE_ERROR) {
+        return fsm_rt_err;
+    }
+
+    PERFC_PT_BEGIN(ptThis->chRunPt)
+
+    while (1) {
+        ptThis->eState = PUMP_STATE_RUNNING;
+        _pump_ArmWaitTimeout(ptThis);
+        PERFC_PT_WAIT_UNTIL(_pump_IsReadyOrTimedOut(ptThis))
+
+        if (ptThis->chCount < PUMP_READY_COUNT) {
+            ptThis->eState = PUMP_STATE_ERROR;
+            ptThis->chRunPt = 0U;
+            return fsm_rt_err;
+        }
+
+        PERFC_PT_DELAY_MS(PUMP_SETTLE_MS, &ptThis->lSettleStartMs)
+        ptThis->chCount = 0U;
+        ptThis->eState = PUMP_STATE_IDLE;
+        PERFC_PT_YIELD(fsm_rt_cpl)
+    }
+
+    PERFC_PT_END()
+
+    return fsm_rt_cpl;
 }
 ```
 
-### 裸机 switch（简单叶状态机）
+要点：`_pump_ArmWaitTimeout()` 位于 WAIT 入口之前，因此只在每轮进入等待时执行一次；超时后清零游标并锁存 `ERROR`，由 `Reset()` 类接口负责恢复。
 
-裸机 `switch` 只用于无复杂等待层次的简单叶状态机。状态必须包含 `IDLE` 和 `ERROR`，每个可等待状态必须有超时和错误路径。
+### 简单叶子 switch
+
+只用于没有等待层次的叶状态机，不得用来绕开 Class 的 PT 约束。进入等待状态时清零超时槽并立即调用一次以启动计时。
 
 ```c
+#define SM_RUN_TIMEOUT_MS   500U
+
 typedef enum {
-    SM_IDLE,
-    SM_RUN,
-    SM_ERROR
-} sm_state_e;
+    SM_STATE_IDLE = 0,
+    SM_STATE_RUN,
+    SM_STATE_ERROR
+} sm_state_t;
 
 typedef struct {
-    sm_state_e eCurrent;
-    sm_state_e eNext;
-    uint32_t wTimeout;
+    sm_state_t eState;
+    int64_t lDeadline;          /* timeout slot: tick deadline, 0 = disarmed */
 } sm_t;
 
-static void sm_Run(sm_t *ptThis)
+static void _sm_Run(sm_t *ptThis, bool bStart, bool bDone)
 {
-    switch (ptThis->eCurrent) {
-    case SM_IDLE:
-        if (start_cond()) {
-            ptThis->eNext = SM_RUN;
-            ptThis->wTimeout = perfc_get() + 500U;
+    switch (ptThis->eState) {
+    case SM_STATE_IDLE:
+        if (bStart) {
+            ptThis->lDeadline = 0;
+            (void)perfc_is_time_out_ms(SM_RUN_TIMEOUT_MS,
+                                       &ptThis->lDeadline, false);
+            ptThis->eState = SM_STATE_RUN;
         }
         break;
-    case SM_RUN:
-        if (perfc_is_time_out_ms(500U, &ptThis->wTimeout, false)) {
-            ptThis->eNext = SM_ERROR;
+    case SM_STATE_RUN:
+        if (bDone) {
+            ptThis->eState = SM_STATE_IDLE;
+        } else if (perfc_is_time_out_ms(SM_RUN_TIMEOUT_MS,
+                                        &ptThis->lDeadline, false)) {
+            ptThis->eState = SM_STATE_ERROR;
+        } else {
+            /* keep waiting */
         }
         break;
-    case SM_ERROR:
+    case SM_STATE_ERROR:
         break;
     default:
-        ptThis->eNext = SM_ERROR;
+        ptThis->eState = SM_STATE_ERROR;
         break;
     }
-    ptThis->eCurrent = ptThis->eNext;
 }
 ```
 
-### PLOOC（复杂对象、继承和多实例）
+### 硬实时 ISR 边界
 
-- 头文件：`lib/plooc`，使用 `__IMPLEMENT`、`__new` 等宏。
-- 适用：确实需要封装、继承和多实例的领域对象，例如电机或传感器管理器。
-- Manager 结构体的第一个成员是基类，并使用 `__new` 创建实例。
+FOC 电流环等固定时限路径必须满足明确的执行时间、重入和上下文安全约束。ISR 中使用 PT 不一刀切禁止，但必须给出证据：调用链与循环上界、最坏执行时间或时序预算、PT 游标的并发所有权、依赖回调的上下文安全。ISR 不得有无界循环、等待硬件/总线完成、时延不确定的回调、日志或 I2C；所需状态仍属于对象，不得转移到隐藏静态 runtime。
 
-### 通用状态机约束
-
-1. 状态切换必须使用中断保护，或使用等效的调度保护。
-2. 禁止在状态机中使用阻塞延时；协程使用 `perfc_delay_ms`，轮询状态机使用 `perfc_is_time_out_ms`。
-3. 状态枚举必须包含 `IDLE` 和 `ERROR`。
-4. 每个等待状态必须实现超时跳转，默认超时为 500 ms。
-5. 状态机函数命名为 `xxx_Run()` 或项目现有的 `xxx_run()` 风格，初始化函数命名为 `xxx_Init()` 或对应项目既有风格；状态迁移只能发生在状态机内部。
-
-## L3: MODUS 和硬件库映射（禁止重复造轮子）
+## L3: 库映射（禁止重复造轮子）
 
 | 场景 | 必须使用 | 禁止 |
 |---|---|---|
 | 对象注册 | `MODUS_DECLARE_OBJECT` | 手写注册表或自造对象框架 |
-| Shell/日志 | `MODUS_SHELL_CMD` 和 mdebug | 裸 printf 自造日志协议 |
-| 延时 | `perfc_delay_us`、`perfc_delay_ms` 或项目提供的等效宏 | 空循环延时、`HAL_Delay`、`vTaskDelay` |
-| 超时判断 | `perfc_is_time_out_ms()`、`perfc_is_time_out_us()` | 手写毫秒计数比较 |
-| 硬件访问 | MDI 层，即 `peripheral/<chip>/` 适配和 `peripheral/driver/` 芯片无关驱动 | 业务代码直接 include vendor HAL 或寄存器 |
-| 调试 | `tools/aitrace.exe` 和 RTT | 裸串口自造 AI 调试协议 |
-| 运动控制 | grblhal 的 `mc_`、`protocol_`、`settings_` API；板级适配源码放在 `target/<chip>/` | 业务代码直接调用 grblhal 内部实现 |
-| Class 私有子模块 | `Mdriver/<class_name>/<submodule>/`，由父 Class 组合和调度 | 隐藏 `static` runtime 或父子反向耦合 |
-| 多 Class 可复用子模块 | `Mdriver/<submodule>/`，每个 Class 持有独立成员实例 | 放入某个 Class 目录后跨 Class 直接引用 |
+| Shell/日志 | `MODUS_SHELL_CMD`、mdebug `MLOG/MLOGF` | 裸 printf 自造日志协议 |
+| 等待/延时 | `PERFC_PT_WAIT_UNTIL`、`PERFC_PT_DELAY_MS`；必须忙等的硬件微秒时序用 `perfc_delay_us` | `HAL_Delay`、`vTaskDelay`、空循环 |
+| 超时判断 | `perfc_is_time_out_ms/us()` | 手写毫秒计数比较 |
+| 硬件访问 | MDI：`peripheral/<chip>/` 适配，`peripheral/driver/` 芯片无关驱动 | 业务代码 include vendor HAL 或寄存器 |
+| 调试 | `tools/aitrace.exe` + RTT | 裸串口自造 AI 调试协议 |
+| 运动控制 | grblhal `mc_`、`protocol_`、`settings_` API；板级适配在 `target/<chip>/` | 业务代码调用 grblhal 内部实现 |
 | 共享物理资源 | 显式 Manager、client 或接口注入 | 多个 Class 偷偷共用静态资源 |
 
-### L3.1 日志级别选择（mdebug）
+### mdebug 日志级别
 
-`MLOG/MLOGF` 级别不只是严重度，还承担**可观测性分类**。选择规则：
-
-| 级别 | 使用场景 | 示例 |
+| 级别 | 场景 | 示例 |
 |---|---|---|
-| `T` | **周期性/重复性输出**（固定节拍、状态轮询、统计快照），运行期可单独开关（`log` 命令 bit4） | 每秒 ISR 计时报告、心跳、波形状态轮询 |
-| `I` | **触发式一次性事件**（命令执行、状态迁移、校准完成） | `motor start accepted`、`encoder cal done` |
-| `W` | 可恢复异常（命令被拒绝、依赖缺失、重试失败） | `motor start rejected (not IDLE)` |
-| `E` | 不可恢复错误（初始化失败、硬件故障、断言） | `init failed`、`HardFault` |
+| `T` | **周期性/重复性**输出，运行期可单独开关（`log` 命令 bit4） | 每秒 ISR 计时报告、心跳、波形状态轮询 |
+| `I` | **触发式一次性**事件 | `motor start accepted`、`encoder cal done` |
+| `W` | 可恢复异常 | `motor start rejected (not IDLE)` |
+| `E` | 不可恢复错误 | `init failed`、`HardFault` |
 
-核心约定：**周期性打印用 `T`，触发式用 `I`**。禁止把周期性输出写成 `I`（会淹没日志、无法单独关闭）；禁止把一次性事件写成 `T`（事件需要默认可见）。`W/E` 语义不变。高频 ISR 内禁止任何日志。
+周期性输出写成 `I` 会淹没日志且无法关闭；一次性事件写成 `T` 会默认不可见。
 
-### L3.2 MDI 编译期能力接口（硬规则）
+## TDD：独立验证
 
-MDI 的主要目标是提供高可读、可编译期检查、热路径零运行时抽象成本的
-硬件能力接口。不要把 MDI 设计成完整的运行时 POSIX 设备系统，也不要
-把所有设备强行统一成 `read/write/control`。
-
-- 使用语义明确的能力接口：`MDI_PWM_SetDuty`、
-  `MDI_PWM_SetFrequency`、`MDI_PWM_Enable`、`MDI_PWM_SafeStop`、
-  `MDI_ADC_Sample`、`MDI_I2C_Transfer` 等。
-- Stream 和 Flash 可以保留 Read/Write，因为它们具有明确的数据流或存储
-  语义；GPIO、ADC、PWM 和 I2C 不得为了形式统一而伪装成字节流。
-- `_Generic` 只用于编译期按具体设备类型选择实现；被选择的实现必须是
-  直接函数或 `static inline` 函数。禁止在热路径中使用运行时命令分发。
-- `void *` 只能作为明确依赖实例的上下文，禁止用 `void *` 传递没有单位、
-  范围和所有权说明的物理量、通道号、地址或命令参数。
-- MDI 设备实例应保留具体类型。板级 `mdi_hw.h` 负责静态绑定具体实现，
-  业务代码只通过 MDI 能力接口访问硬件，不直接访问寄存器或 vendor HAL。
-- FOC 高频路径使用独立的、类型明确的实时能力接口，例如三相占空比、
-  电流采样、编码器采样和安全停机；不得经过通用 `mdi_control()`、命令
-  `switch`、阻塞总线访问或日志。
-- 统一错误码与输出数据：读取值、传输长度和错误状态不得复用一个没有
-  明确定义的 `int32_t` 返回值。未实现能力必须返回明确的
-  `MDI_STATUS_ENOTSUP`，不得使用成功 stub。
-- 同一调用链只能选择一种主要分派方式。热路径选择 `_Generic` 静态分派；
-  只有确实需要运行时替换的非实时依赖才使用 `ops/context`，不得两套机制
-  叠加形成不可见的多层调用。
-
-## TDD：独立验证要求
-
-- 每个业务模块必须有独立验证入口：`tests/` 目录和可单独编译、运行的测试 target。
-- 模块通过接口解耦，测试不依赖真实硬件；硬件依赖必须可注入 fake 或 stub。
-- 修改模块行为时先补充或修改测试，再修改实现，形成红→绿→重构闭环；如果无法自动化，必须提供可执行验证脚本。
-- 不为测试引入过度设计，测试接口应保持简单并服务于真实边界。
-- 每个 MODUS Class 至少验证：空指针和配置校验、对象基类绑定、配置依赖注入、PT 流程推进、超时和错误收敛，以及初始化失败后的安全状态。
-- 每个 Mdriver 至少有独立测试；父 Class 还必须有组合测试，验证每个子模块实例的状态互不污染。
-- 如果多个 Class 使用同一个 Mdriver，测试必须覆盖两个独立实例；如果共享物理资源，测试必须覆盖 Manager 的所有权和仲裁接口。
-- 代码审查前必须清点 Class `.c` 中所有 `static` 对象，并逐个归入允许的静态变量类别；无法归类的可变静态对象视为设计缺陷。
+- 每个业务模块有可单独编译运行的测试入口（参考 `foc/tests/`、`peripheral/template/tests/`）；硬件依赖可注入 fake/stub，测试不依赖真实硬件。无法自动化时提供可执行验证脚本。
+- 改行为先补/改测试再改实现（红 → 绿 → 重构）；测试接口保持简单，不为测试过度设计。
+- 每个 Class 至少覆盖：空指针与配置校验、基类绑定、依赖注入、PT 推进、超时与错误收敛、初始化失败后的安全状态。
+- 每个 Mdriver 有独立测试；父 Class 有组合测试验证子模块实例互不污染；多 Class 共用 Mdriver 时覆盖两个独立实例；共享资源时覆盖 Manager 的所有权与仲裁。
 
 ## Agent 执行流程
 
-1. 读取 `AGENTS.md`，确认项目构建、调试、硬件和提交权限。
-2. 完整阅读 `class/template_class.c` 和 `class/template_class.h`，再阅读目标 Class 的 `.h`、`.c` 及其测试。
-3. 绘制对象所有权：标出 `xxx_t`、`xxx_cfg_t`、每个 Mdriver 成员和每个外部依赖；列出 `.c` 中所有 `static` 变量及其允许性。
-4. 判断子功能是简单 Class 成员、Class 私有 Mdriver、可复用 Mdriver，还是必须独立注册的 MODUS Class。
-5. 按任务选择状态机档位和库映射；Class 前台流程默认使用 perfc-PT，硬实时 ISR 按明确例外处理。
-6. 修改行为前先建立最小失败测试或可执行复现。
-7. 生成代码后逐项自查 MISRA、源码 82 字符、Doxygen、返回值、函数体长度、调用深度、结构体职责、对象 API、Class/Mdriver 静态状态和 PT 所有权。
-8. release 构建必须验证调试代码已被预处理移除；debug 构建允许的最大调用深度为 4 层。
-9. 运行 Class 和 Mdriver 的独立测试、目标构建和与风险匹配的硬件验证；没有硬件证据时不得宣称真机行为已验证。
+1. 读 `.agents/AGENTS.md` 确认构建、调试、硬件和提交权限。
+2. 读模板（`class/template_*`），再读目标模块 `.h`、`.c` 和测试。
+3. 画对象所有权：`xxx_t`、`xxx_cfg_t`、每个子模块成员、每个外部依赖；列出 `.c` 中全部 `static` 对象并归入 L1.5 允许类别，无法归类的可变静态对象即设计缺陷。
+4. 判定子功能归属：Class 成员 / Class 私有 Mdriver / 可复用 Mdriver / 独立 MODUS Class。
+5. 选择状态机方式和库映射；前台默认 perfc-PT，ISR 按硬实时边界处理。
+6. 改行为前建立最小失败测试或可执行复现。
+7. 自查：MISRA、82 字符、Doxygen、返回值、函数长度、调用深度、结构体职责、访问边界、静态状态、PT 游标、延时槽与超时槽所有权。
+8. 运行 Class 和 Mdriver 的独立测试，并用 `.\make.bat` 完成目标构建；release 构建确认调试代码已被预处理移除。
+9. 按风险做硬件验证；无硬件证据不宣称真机行为已验证。
 
-## Agent 自检红线
+## 拒绝清单（出现任一项，停止堆叠修改，回到对象设计）
 
-如果 Agent 发现以下任一情况，必须停止继续堆叠修改并回到对象设计：
+**状态与所有权**
+- 为快速通过编译把运行状态、定时器、时间戳或统计放进文件 `static`，或省略对象成员指针调用 `PERFC_PT_DELAY_MS` / `perfc_is_time_out_ms/us`；
+- PT 等待没有对象内超时槽和到 `ERROR` 的收敛路径；
+- `xxx_t` 只有 `ptBase`/占位字段而真正状态在隐藏 runtime；单实例借口下 MODUS 对象成为空壳；
+- `xxx_cfg_t` 只有 `chReserved`，或存在未被 `Init` 使用的配置字段；
+- `Init` 只做 `ptBase` + `mbase_Init()`，没有初始化对象成员、依赖和子模块；启用 MODUS 时 `(void)wObjectAddr` 跳过初始化；
+- 父对象或全局变量保存多个子模块的 PT 进度；多个 Class 通过隐式全局对象共享资源。
 
-- 为了快速通过编译，把运行状态放入 `static` 变量；
-- 用 `chReserved` 保留没有实际用途的配置结构体；
-- 只初始化 `ptBase` 和 `mbase_Init()`，但没有初始化对象成员、配置依赖和子模块；
-- 因为单实例而创建隐藏 runtime，导致 MODUS 对象成为空壳；
-- 用一个父对象或全局变量保存多个子模块的 PT 进度；
-- 把简单功能过度拆成 Mdriver，或把复杂且可能复用的功能散落在 Class `.c`；
-- 让多个 Class 通过隐式全局对象共享物理资源；
-- 为修复 Class 业务问题而无证据修改 ADC、PWM、定时器或其他无关外设初始化；
-- 把文档的自然排版误认为 C 源代码的 82 字符规则。
+**接口与分派**
+- 正式代码直接读写子对象运行时成员；
+- 模板占位 API、no-op 依赖或不适用能力在具体模块中残留；
+- 算法通过 `void *` 或无类型参数传递物理量、输入或输出；
+- 同一调用链同时使用 `_Generic` 和 `ops/context`；热路径出现函数指针链、命令 `switch` 或日志。
+
+**流程与范围**
+- 多步骤业务没有用对象内 PT；`Clock()` 承载复杂或阻塞流程；
+- `Stop()`、`Reset()` 或初始化失败路径没有定义安全输出和错误收敛；
+- 简单功能被过度拆成 Mdriver，或复杂可复用功能散落在 Class `.c`；Class 专属子模块被注册成独立 MODUS 对象；
+- 为修 Class 业务问题而无根因证据修改 ADC、PWM、定时器或其他无关外设初始化。

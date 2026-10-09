@@ -9,6 +9,14 @@
 
 #include "foc_port.h"
 
+/** @brief These host fixtures have no sampled DC bus.
+ * @param eChannel Requested channel. @return Explicitly invalid sample. */
+uint32_t foc_SampleDcBusRaw(foc_port_adc_channel_e eChannel)
+{
+    (void)eChannel;
+    return FOC_PORT_ADC_SAMPLE_INVALID;
+}
+
 foc_result_t foc_SampleCurrent(foc_current_sample_t *ptSample)
 {
     if (ptSample == NULL) {
@@ -23,19 +31,23 @@ foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty)
     return (ptDuty == NULL) ? FOC_RESULT_NULL : FOC_RESULT_OK;
 }
 
+#if !defined(FOC_TEST_EXTERNAL_ADC_TRIGGER)
 void foc_port_StartAdcTrigger(void)
 {
 }
+#endif
 
 foc_result_t foc_PwmEnable(void)
 {
     return FOC_RESULT_OK;
 }
 
+#if !defined(FOC_TEST_EXTERNAL_PWM_STOP)
 foc_result_t foc_PwmSafeStop(void)
 {
     return FOC_RESULT_OK;
 }
+#endif
 
 #if !defined(FOC_TEST_EXTERNAL_FAULT_PORT)
 bool foc_PwmGetFault(void)

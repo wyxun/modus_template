@@ -13,11 +13,11 @@
 
 #include "modus.h"
 #include "foc_config.h"
-#include "foc_log_config.h"
 #include "motor_config.h"
 #include "foc_encoder.h"
 #include "identify.h"
 #include "motor.h"
+#include "motor_position.h"
 
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
 #include "foc_observer.h"
@@ -25,6 +25,9 @@
 #endif
 
 typedef struct {
+    /* Unbound profile: speed limit is electrical Hz; speed gains are
+     * per electrical Hz. BindMotorConfig produces Motor's pu config.
+     * Do not pass this nested profile directly to motor_Init(). */
     motor_cfg_t tMotorCfg;
     motor_position_source_t ePositionSource;
     foc_encoder_cfg_t tEncoderCfg;
@@ -41,41 +44,14 @@ typedef struct {
 #endif
     uint32_t wVoltageBaseMillivolt;
     uint32_t wHighFrequencyIsrHz;
-    foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
+    /** Electrical base Hz, not speed pu; consumed only at initialization.
+     * FLOAT stores Hz. FIXED int32 stores Hz * 32768 (15 fraction bits).
+     * Configure 0 < Hz <= 65535 with FOC_SCALAR(); rounding is nearest,
+     * ties away from zero. The macro does not saturate: reject overflow
+     * before encoding. Init decodes/derives coefficients; Step uses pu.
+     */
+    foc_scalar_t qElectricalSpeedBaseHz;
 } foc_app_cfg_t;
-
-#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
-     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
-      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
-    !defined(__NO_USE_LOG__)
-/** @brief ISR-owned cycle window consumed by the foreground reporter. */
-typedef struct {
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS
-    volatile uint32_t wCycleTotal;
-    volatile uint32_t wSampleCount;
-    volatile uint32_t wCcrLatencyTicksTotal;
-    volatile uint32_t wCcrLatencySampleCount;
-    volatile uint32_t wCcrLatencyMaxTicks;
-    volatile uint32_t wCcrAfterBottomCount;
-    volatile uint32_t wCcrLatencyInvalidCount;
-    volatile uint32_t wCcrMinimumBottomMarginTicks;
-#endif
-#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
-    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
-    volatile uint32_t wSmoDiagnosticSampleCount;
-    volatile uint32_t wSmoLargeAngleErrorCount;
-    volatile float fBemfSquareTotal;
-    volatile float fCurrentErrorSquareTotal;
-    volatile float fSmoBadBemfSquareTotal;
-    volatile float fSmoBadCurrentSquareTotal;
-    volatile uint32_t awSmoBinSampleCount[4];
-    volatile uint32_t awSmoBinBadCount[4];
-    volatile uint32_t awSmoSectorBadCount[8];
-    volatile uint32_t awSmoSectorLowCount[8];
-#endif
-    int64_t lReportTimestamp;
-} foc_app_hf_stats_t;
-#endif
 
 typedef enum {
     FOC_APP_CURRENT_STEP_IDLE = 0,
@@ -88,14 +64,7 @@ typedef struct {
     motor_t tMotor;
     motor_position_t tPosition;
     identify_t tIdentify;
-    identify_state_t eLastIdentifyState;
     foc_encoder_t tEncoder;
-#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
-     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
-      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
-    !defined(__NO_USE_LOG__)
-    foc_app_hf_stats_t tHfStats;
-#endif
     uint8_t chRunPt;
     foc_app_current_step_state_e eCurrentStepState;
     int64_t lForegroundTimestamp;
@@ -104,72 +73,71 @@ typedef struct {
     int64_t lCurrentStepDurationTicks;
     bool bEncoderEnabled;
     bool bReady;
-#if FOC_APP_LOG_ADC_OFFSETS
-    bool bAdcOffsetReported;
-#endif
 } foc_app_t;
 
 /* User-profile initializer; time values are seconds and loop rate is hertz. */
-#define FOC_APP_INIT_MOTOR_CONFIG                                             \
-    {                                                                         \
-        .tParams = {                                                          \
-            .chPolePairs = MOTOR_CONFIG_POLE_PAIRS,                           \
-            .wResistanceMilliohm = MOTOR_CONFIG_RESISTANCE_MILLIOHM,          \
-            .wInductanceDMicroHenry = MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY,   \
-            .wInductanceQMicroHenry = MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY,   \
-        },                                                                    \
-        .nHardDragElectricalMilliHz =                                         \
-            MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ,                        \
-        .wStartupRampSteps = MOTOR_CONFIG_STARTUP_RAMP_STEPS,                \
-        .wStartupMaxRunSteps = MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS,          \
-        .qStartupIqPu = FOC_SCALAR(MOTOR_CONFIG_STARTUP_IQ_PU),             \
-        .qStartupClosedLoopSpeedStepPu = FOC_SCALAR(                         \
-            MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU),                      \
-        .tLimits = {                                                          \
-            .qMaxSpeedReference =                                             \
-                FOC_SCALAR(MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU),              \
-            .qMaxPhaseCurrent =                                               \
-                FOC_SCALAR(MOTOR_CONFIG_MAX_PHASE_CURRENT_PU),                \
-            .qMaxModulation =                                                 \
-                FOC_SCALAR(MOTOR_CONFIG_MAX_MODULATION_PU),                   \
-        },                                                                    \
-        .tCurrentPiParams = {                                                 \
-            .tKp = {MOTOR_CONFIG_PI_GAIN_INTEGER,                             \
-                    FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KP_PU)},               \
-            .tKiTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                           \
-                      FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KI_TS_PU)},          \
-            .tKdOverTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                       \
-                          FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KD_OVER_TS_PU)}, \
-            .qOutputMinimum =                                                 \
-                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_OUTPUT_MIN_PU),            \
-            .qOutputMaximum =                                                 \
-                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_OUTPUT_MAX_PU),            \
-            .qIntegratorMinimum =                                             \
-                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MIN_PU),        \
-            .qIntegratorMaximum =                                             \
-                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MAX_PU),        \
-        },                                                                    \
-        .tSpeedPiParams = {                                                   \
-            .tKp = {MOTOR_CONFIG_PI_GAIN_INTEGER,                             \
-                    FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KP_PU)},                 \
-            .tKiTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                           \
-                      FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KI_TS_PU)},            \
-            .tKdOverTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                       \
-                          FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PU)},   \
-            .qOutputMinimum =                                                 \
-                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_OUTPUT_MIN_PU),              \
-            .qOutputMaximum =                                                 \
-                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_OUTPUT_MAX_PU),              \
-            .qIntegratorMinimum =                                             \
-                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MIN_PU),          \
-            .qIntegratorMaximum =                                             \
-                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MAX_PU),          \
-        },                                                                    \
-        .fAdcCalibrationTimeoutSeconds =                                      \
-            MOTOR_CONFIG_ADC_CALIBRATION_TIMEOUT_SECONDS,                     \
-        .fAlignTimeSeconds = MOTOR_CONFIG_ALIGN_TIME_SECONDS,                 \
-        .wSpeedLoopFrequencyHz = MOTOR_CONFIG_SPEED_LOOP_FREQUENCY_HZ,        \
-        .qAlignCurrent = FOC_SCALAR(MOTOR_CONFIG_ALIGN_CURRENT_PU),           \
+#define FOC_APP_INIT_MOTOR_CONFIG                                               \
+    {                                                                           \
+        .tParams = {                                                            \
+            .chPolePairs = MOTOR_CONFIG_POLE_PAIRS,                             \
+            .wResistanceMilliohm = MOTOR_CONFIG_RESISTANCE_MILLIOHM,            \
+            .wInductanceDMicroHenry = MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY,     \
+            .wInductanceQMicroHenry = MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY,     \
+        },                                                                      \
+        .nHardDragElectricalMilliHz =                                           \
+            MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ,                          \
+        .wStartupRampSteps = MOTOR_CONFIG_STARTUP_RAMP_STEPS,                   \
+        .wStartupMaxRunSteps = MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS,              \
+        .qStartupIqPu = FOC_SCALAR(MOTOR_CONFIG_STARTUP_IQ_PU),                 \
+        .qStartupClosedLoopSpeedStepPu = FOC_SCALAR(                            \
+            MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU),                         \
+        .tLimits = {                                                            \
+            .qMaxSpeedReference =                                               \
+                FOC_SCALAR(MOTOR_CONFIG_MAX_SPEED_ELECTRICAL_HZ),               \
+            .qMaxPhaseCurrent =                                                 \
+                FOC_SCALAR(MOTOR_CONFIG_MAX_PHASE_CURRENT_PU),                  \
+            .qMaxModulation =                                                   \
+                FOC_SCALAR(MOTOR_CONFIG_MAX_MODULATION_PU),                     \
+        },                                                                      \
+        .tCurrentPiParams = {                                                   \
+            .tKp = {MOTOR_CONFIG_PI_GAIN_INTEGER,                               \
+                    FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KP_PU)},                 \
+            .tKiTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                             \
+                      FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KI_TS_PU)},            \
+            .tKdOverTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                         \
+                          FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_KD_OVER_TS_PU)},   \
+            .qOutputMinimum =                                                   \
+                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_OUTPUT_MIN_PU),              \
+            .qOutputMaximum =                                                   \
+                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_OUTPUT_MAX_PU),              \
+            .qIntegratorMinimum =                                               \
+                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MIN_PU),          \
+            .qIntegratorMaximum =                                               \
+                FOC_SCALAR(MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MAX_PU),          \
+        },                                                                      \
+        .tSpeedPiParams = {                                                     \
+            .tKp = {MOTOR_CONFIG_PI_GAIN_INTEGER,                               \
+                    FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KP_PER_ELECTRICAL_HZ)},    \
+            .tKiTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                             \
+                      FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KI_TS_PER_ELECTRICAL_HZ)},\
+            .tKdOverTs = {                                                      \
+                MOTOR_CONFIG_PI_GAIN_INTEGER,                                  \
+                FOC_SCALAR(                                                     \
+                    MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PER_ELECTRICAL_HZ)},       \
+            .qOutputMinimum =                                                   \
+                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_OUTPUT_MIN_PU),                \
+            .qOutputMaximum =                                                   \
+                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_OUTPUT_MAX_PU),                \
+            .qIntegratorMinimum =                                               \
+                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MIN_PU),            \
+            .qIntegratorMaximum =                                               \
+                FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MAX_PU),            \
+        },                                                                      \
+        .fAdcCalibrationTimeoutSeconds =                                        \
+            MOTOR_CONFIG_ADC_CALIBRATION_TIMEOUT_SECONDS,                       \
+        .fAlignTimeSeconds = MOTOR_CONFIG_ALIGN_TIME_SECONDS,                   \
+        .wSpeedLoopFrequencyHz = MOTOR_CONFIG_SPEED_LOOP_FREQUENCY_HZ,          \
+        .qAlignCurrent = FOC_SCALAR(MOTOR_CONFIG_ALIGN_CURRENT_PU),             \
     }
 
 /**

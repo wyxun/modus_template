@@ -57,15 +57,11 @@ or MDI command identifiers.
 Naming such as `ptXxx` is a readable convention, not a mandatory interface
 rule; use the name that best describes ownership and semantics.
 
-FOC hardware integration follows one direct target-bound contract. The Motor
-hot path calls `foc_SampleCurrent()` and `foc_SetDuty()` directly; it does not
-store ADC/PWM `ops/context` objects and does not add forwarding wrappers.
-Target `foc_port.c` maps those calls directly to typed MDI capabilities. ADC
-offset calibration, current normalization, and the built-in current base are
-Motor-owned behavior; `motor_t.wCurrentBaseMilliamp` is initialized from
-`FOC_CURRENT_BASE_MILLIAMP` and is not supplied by application configuration.
-PWM safe-stop and break recovery are non-hot safety lifecycle paths and must
-remain explicit until a separate safety capability is designed.
+FOC hardware integration follows one direct target-bound contract
+(`foc_SampleCurrent()` / `foc_SetDuty()` via target `foc_port.c`). The full
+contract is defined in "L1.8 FOC 硬件边界" of
+[the embedded-coding skill](skills/embedded-coding/SKILL.md); do not restate
+it here.
 
 ## Coding and Change Boundaries
 

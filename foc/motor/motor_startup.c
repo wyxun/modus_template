@@ -11,10 +11,10 @@
 #define MOTOR_STARTUP_BAM32_SCALE          4294967296.0
 #define MOTOR_STARTUP_Q16_SCALE            65536.0
 #define MOTOR_STARTUP_Q31_SCALE            2147483648.0
-#define MOTOR_STARTUP_Q48_SCALE            \
+#define MOTOR_STARTUP_Q48_SCALE                                                 \
     (MOTOR_STARTUP_BAM32_SCALE * MOTOR_STARTUP_Q16_SCALE)
 /* Keep the per-tick trajectory below half a turn and above one BAM count. */
-#define MOTOR_STARTUP_MAX_STEP_Q16         \
+#define MOTOR_STARTUP_MAX_STEP_Q16                                              \
     (MOTOR_STARTUP_Q48_SCALE / 2.0)
 #define MOTOR_STARTUP_MIN_STEP_Q16         MOTOR_STARTUP_Q16_SCALE
 #define MOTOR_STARTUP_Q31_TO_FLOAT_SCALE   4.656612873077392578125e-10f

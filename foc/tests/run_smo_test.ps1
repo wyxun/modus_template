@@ -1,6 +1,4 @@
 $ErrorActionPreference = "Stop"
-Write-Output "SKIP: legacy SMO assertions await the SMO rewrite"
-return
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/foc_smo_test.c"),

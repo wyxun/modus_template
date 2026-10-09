@@ -136,7 +136,7 @@ foc_pid_Track(&ptMotor->tSpeedPi,
 ptMotor->tCommand.eMode = FOC_MODE_SPEED;
 ```
 - [ ] 无感配置的 `motor speed <pu>` 调用原子启动入口，拒绝在 RUN 中重启；`motor status` 可读取 `ALIGN/RAMP/WAIT_LOCK/BLEND/SMO_ACTIVE/ERROR`、强制/SMO 电频、资格计数和故障。状态迁移只打印一次 `I`，周期统计用 `T`，ISR 中不写日志。旧有感命令和识别命令回归不得退化。
-- [ ] 重跑启动、接管、Encoder 和 PID 主机测试，再构建 debug/release；检查 20 kHz ISR 的最大执行时间、ADC 触发到 CCR 延时以及 `bottomLate/bad` 计数。若 ISR 预算变差，先优化资格与角度融合计算，不牺牲保护。
+- [ ] 重跑启动、接管、Encoder 和 PID 主机测试，再构建 debug/release；检查 20 kHz ISR 的最大执行时间及 ADC 触发到 CCR/PWM 更新的最坏余量。2026-10-09 已删除 `bottomLate/bad` 日志计数；须按 [电流采样审计](g431-current-adc-and-identify-audit.md) 的受控仪表流程补测，当前不能宣称此项已验证。若 ISR 预算变差，先优化资格与角度融合计算，不牺牲保护。
 
 ## Task 5：逐级台架验收并确定实际接管门槛
 
@@ -153,3 +153,5 @@ ptMotor->tCommand.eMode = FOC_MODE_SPEED;
 依次完成 Task 1 → 2 → 3 → 4 → 5。Task 2 结束时已有可单独测试的无编码器限流 I/f 启动；Task 3 的资格器默认只观察；Task 4 才允许自动接管；Task 5 决定实际阈值。一个阶段失败时停在该阶段分析，不同时改 PI、SMO 参数、启动斜率和 ADC/PWM 时序。
 
 每次代码改动先补能失败的主机测试，再用最小改动通过测试。Motor/Position 的对象运行状态放入对象成员，主循环和 ISR 不使用隐藏文件静态状态；热路径保持固定上界和直接调用。实机启动、烧录和带电切换按用户当次现场授权与台架状态执行。
+
+2026-10-09 交叉说明：本计划的初始电流给定和日志字段属于当时基线。当前 2804/119-code 参数、宏名及保留的观测入口见 [参数变更存档](2026-10-09-g431-2804-parameter-change.md)；不要把旧 `0.005/0.02 pu` 作为当前配置。零偏打印与 CCR 计时统计已移除，硬件验收仍待完成。

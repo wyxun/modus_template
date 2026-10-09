@@ -7,8 +7,6 @@ $config = Get-Content -LiteralPath (
     Join-Path $repoRoot "foc\foc_config.h") -Raw
 $makefile = Get-Content -LiteralPath (
     Join-Path $repoRoot "makefile") -Raw
-$app = Get-Content -LiteralPath (
-    Join-Path $repoRoot "foc\app\foc_app.c") -Raw
 
 if ($source -notmatch
     '(?s)tElectricalAngle\s*=\s*foc_angle_from_turns\(\s*atan2f\(') {
@@ -23,8 +21,4 @@ if ($config -match 'FOC_SMO_(SKIP_ANGLE|RETURN_AFTER_CORDIC|SOFTWARE_ATAN2)_DIAG
     $makefile -match 'FOC_SMO_FOREGROUND_BENCHMARK') {
     throw "Temporary SMO angle diagnostic switches must be removed"
 }
-if ($app -notmatch 'FOC HF ISR avg=.*vbus=') {
-    throw "Keep the concise periodic HF ISR and DC bus telemetry"
-}
-
 Write-Output "SMO software atan2 test passed"

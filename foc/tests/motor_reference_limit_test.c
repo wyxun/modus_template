@@ -9,19 +9,33 @@
 
 #include "motor.h"
 
+foc_result_t foc_core_Init(foc_core_state_t *ptState,
+    const foc_pid_params_t *ptPi, foc_scalar_t qVoltageLimit)
+{
+    foc_result_t eResult = foc_pid_Init(&ptState->tIdPi, ptPi);
+    if (eResult == FOC_RESULT_OK) {
+        eResult = foc_pid_Init(&ptState->tIqPi, ptPi);
+    }
+    ptState->qVoltageLimitSquared = foc_mul_pu(qVoltageLimit, qVoltageLimit);
+    return eResult;
+}
+
 foc_result_t foc_core_step(foc_core_state_t *ptState,
                            const foc_core_command_t *ptCommand,
-                           const foc_core_input_t *ptInput)
+                           const foc_core_input_t *ptInput,
+                           foc_core_output_t *ptOutput)
 {
     (void)ptState;
+    (void)ptOutput;
     (void)ptCommand;
     (void)ptInput;
     return FOC_RESULT_OK;
 }
 
-void foc_core_Reset(foc_core_state_t *ptState)
+void foc_core_Reset(foc_core_state_t *ptState, foc_core_output_t *ptOutput)
 {
     (void)ptState;
+    (void)ptOutput;
 }
 
 foc_result_t foc_clarke(foc_scalar_t qIu,
@@ -52,7 +66,7 @@ int main(void)
     tConfig.tParams.wResistanceMilliohm = 500U;
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
     tConfig.tParams.wInductanceQMicroHenry = 1000U;
-    tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tConfig.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
     tConfig.tLimits.qMaxModulation = FOC_SCALAR(0.5773502692f);

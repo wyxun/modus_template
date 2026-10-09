@@ -7,6 +7,7 @@
 #include <math.h>
 
 #include "motor.h"
+#include "motor_position.h"
 
 static foc_core_input_t s_tLastInput = {0};
 static foc_core_command_t s_tLastCommand = {0};
@@ -49,11 +50,24 @@ static foc_result_t test_GetPosition(const void *pContext,
  * @param ptInput Motor input.
  * @return FOC_RESULT_OK.
  */
+foc_result_t foc_core_Init(foc_core_state_t *ptState,
+    const foc_pid_params_t *ptPi, foc_scalar_t qVoltageLimit)
+{
+    foc_result_t eResult = foc_pid_Init(&ptState->tIdPi, ptPi);
+    if (eResult == FOC_RESULT_OK) {
+        eResult = foc_pid_Init(&ptState->tIqPi, ptPi);
+    }
+    ptState->qVoltageLimitSquared = foc_mul_pu(qVoltageLimit, qVoltageLimit);
+    return eResult;
+}
+
 foc_result_t foc_core_step(foc_core_state_t *ptState,
                            const foc_core_command_t *ptCommand,
-                           const foc_core_input_t *ptInput)
+                           const foc_core_input_t *ptInput,
+                           foc_core_output_t *ptOutput)
 {
     (void)ptState;
+    (void)ptOutput;
     s_tLastInput = *ptInput;
     s_tLastCommand = *ptCommand;
     return FOC_RESULT_OK;
@@ -64,9 +78,10 @@ foc_result_t foc_core_step(foc_core_state_t *ptState,
  * @param ptState Core state.
  * @return None.
  */
-void foc_core_Reset(foc_core_state_t *ptState)
+void foc_core_Reset(foc_core_state_t *ptState, foc_core_output_t *ptOutput)
 {
     (void)ptState;
+    (void)ptOutput;
 }
 
 /**
@@ -110,7 +125,7 @@ int main(void)
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
     tConfig.tParams.wInductanceQMicroHenry = 1000U;
     tConfig.tParams.wVoltageBaseMillivolt = 12000U;
-    tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tConfig.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     tConfig.nHardDragElectricalMilliHz = 5000;
     tConfig.wControlFrequencyHz = 20000U;
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
@@ -119,7 +134,7 @@ int main(void)
     tPositionCfg.tSensor.fnGetPosition = test_GetPosition;
     tPositionCfg.tSensor.pContext = &s_chPositionContext;
     tPositionCfg.chPolePairs = 7U;
-    tPositionCfg.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+    tPositionCfg.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     tPositionCfg.tObserverCfg.tSmo.wSampleFrequencyHz = 20000U;
     tPositionCfg.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
     tPositionCfg.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
@@ -172,7 +187,7 @@ int main(void)
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CONTROL_READY);
     assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 ==
-           tMotor.wHardDragAngleStepBam32);
+           tMotor.tStart.wHardDragStepBam32);
     assert(FOC_POSITION_GET(&tPosition, 2U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     motor_IsrControlStep(&tMotor, &tFeedback);
@@ -205,7 +220,7 @@ int main(void)
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CONTROL_READY);
     assert(tSample.tHardDragCandidate.tElectricalAngle.wBam32 ==
-           tMotor.wHardDragAngleStepBam32);
+           tMotor.tStart.wHardDragStepBam32);
     motor_IsrControlStep(&tMotor, &tFeedback);
     motor_ApplyPositionEventIsr(&tMotor,
         MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
@@ -238,7 +253,7 @@ int main(void)
         MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
         FOC_SCALAR(0.2f));
     assert(tMotor.tCommand.eMode == FOC_MODE_SPEED);
-    assert(!tMotor.tStartup.bActive);
+    assert(!tMotor.tStart.tTrajectory.bActive);
     tFeedback = (motor_electrical_feedback_t){
         .tElectricalAngle = {0U},
         .qElectricalSpeedPu = FOC_SCALAR(0.2f),
@@ -270,5 +285,23 @@ int main(void)
            MOTOR_ISR_NO_CONTROL);
     assert(tMotor.eState == MOTOR_STATE_FAULT);
     assert(!tMotor.bPwmEnabled);
+    /* ALIGN completion is explicit even after a failed sensorless run. */
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(motor_RequestPositionCalibration(&tMotor) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_CAPTURE_ZERO);
+    assert(s_tLastInput.bAngleValid);
+    assert(s_tLastInput.tElectricalAngle.wBam32 == 0U);
+    assert(s_tLastInput.qElectricalSpeedPu == FOC_ZERO);
+    motor_CompleteAlignIsr(&tMotor, FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_IDLE);
+    /* Retrying ADC calibration must retain the configured timeout. */
+    const uint32_t wTimeout = tMotor.tCalib.wTimeoutSteps;
+    motor_IdentificationAbortIsr(&tMotor, MOTOR_FAULT_ADC_CAL);
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_ADC_CAL);
+    assert(tMotor.tCalib.wTimeoutSteps == wTimeout);
+    assert(tMotor.tCalib.wElapsedSteps == 0U);
+    assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.eState == MOTOR_STATE_IDLE);
     return 0;
 }

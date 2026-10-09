@@ -18,6 +18,7 @@ if (-not (Get-Command gcc -ErrorAction SilentlyContinue)) {
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/foc_app_encoder_command_test.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
     (Join-Path $repoRoot "foc/math/foc_trig_lut.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
@@ -50,8 +51,6 @@ $commonArgs = @(
     "-D__COMPILER_HAS_GNU_EXTENSIONS__=1", "-DTRACE_USE_LIBC_PRINTF=0",
     "-DMODUS_CFG_USER_CONFIG_INCLUSION=<userconfig.h>",
     "-DFOC_TRIG_BACKEND=1",
-    "-DFOC_APP_LOG_SMO_DIAGNOSTICS=1",
-    "-DFOC_APP_LOG_TIMING_DIAGNOSTICS=1",
     "-DFOC_HF_ISR_HZ=20000U",
     "-DFOC_DCBUS_SOURCE=1U",
     "-DFOC_DCBUS_NOMINAL_MILLIVOLT=12000U"
@@ -78,4 +77,43 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         exit $LASTEXITCODE
     }
     Write-Output "$backend FOC App tests passed"
+
+    if ($backend -eq "FLOAT") {
+        $alternateTestExe = Join-Path $env:TEMP `
+            "foc_app_encoder_check_FLOAT_alternate.exe"
+        $alternateArgs = @(
+            $commonArgs + $includeArgs + $numericDefine + $waveformDefine + @(
+                "-DFOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA=0",
+                "-DFOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA=0",
+                "-DFOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA=1",
+                "-DFOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA=1"
+            ) + $sourceFiles + @(
+                "-Wl,--gc-sections", "-lm", "-o", $alternateTestExe
+            )
+        )
+        & gcc @alternateArgs
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        & $alternateTestExe
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        Write-Output "FLOAT alternate waveform channels passed"
+    }
 }
+
+$overLimitArgs = @(
+    $commonArgs + $includeArgs + @(
+        "-DFOC_NUMERIC_FLOAT=1", "-DMWAVEFORM_ENABLE=1",
+        "-DFOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA=1",
+        "-fsyntax-only",
+        (Join-Path $repoRoot "foc/tests/foc_app_encoder_command_test.c")
+    )
+)
+$overLimitOutput = & gcc @overLimitArgs 2>&1
+if ($LASTEXITCODE -eq 0 -or
+    ($overLimitOutput -join "`n") -notmatch "at most six channels") {
+    throw "Waveform configuration must fail compilation above six channels"
+}
+Write-Output "Waveform six-channel build limit passed"

@@ -12,18 +12,20 @@
  * 切换后端只需修改编译宏，无需改动算法代码。
  *
  * ===== Q15 定点格式 =====
- * FOC_NUMERIC_FIXED 后端使用 Q15 格式（1.15.16 有符号定点）：
+ * FOC_NUMERIC_FIXED 使用 int32_t，低 15 位为小数位：
  *
- *   值范围：[-1, 1)，分辨率：1/32768 ≈ 3.05e-5
- *   物理量统一归一化到 pu（per-unit）范围，越界由饱和运算处理。
+ *   stored = value * 32768，存储范围 [-65536, 65536)，步长 1/32768。
+ *   这不是 16 位 Q1.15；常用 pu 上限由具体控制模块规定。
+ *   初始化的有量纲 Hz 也可借此编码，但必须注明单位与换算边界。
+ *   FOC_SCALAR 常量就近舍入（半值远离零），不检查/饱和溢出；
+ *   动态输入使用 foc_from_float()，调用方先检查有限性和物理范围。
  *
- *   Q15 乘法的本质：a * b / 32768
- *   两个 Q15 数相乘得到 Q30 → 右移 15 位回到 Q15 → 支持饱和。
+ *   Q15 乘法缩放：a * b / 32768；中间乘积必须先加宽。
  *
  * ===== foc_gain_t 定点增益 =====
- * 单纯的 Q15 只能表示 [-1, 1)，但 PID 系数 Kp 可能 > 1。
+ * PID 增益用整数部分加小数部分表示，与历史配置格式兼容。
  * foc_gain_t 用 {整数部分, Q15 小数} 组合表示任意范围的增益，
- * 克服了 Q15 动态范围不足的限制。
+ * 其取值范围同时受整数载体和小数部分校验约束。
  *
  *   gain = nInteger + qFraction / 32768
  *   例如 Kp=12.5 → {12, 16384}
@@ -113,21 +115,21 @@ foc_scalar_t foc_from_float(float fValue);
  */
 float foc_to_float(foc_scalar_t qValue);
 /**
- * @brief  饱和加法：qA + qB，结果钳位到 [Q_NEG_ONE, Q_ONE]
+ * @brief  加法：FIXED 在 int32 范围饱和，FLOAT 直接相加；不裁到 ±1 pu
  * @param  qA  加数 A
  * @param  qB  加数 B
  * @return     饱和和
  */
 foc_scalar_t foc_add_sat(foc_scalar_t qA, foc_scalar_t qB);
 /**
- * @brief  饱和减法：qA - qB，结果钳位到 [Q_NEG_ONE, Q_ONE]
+ * @brief  减法：FIXED 在 int32 范围饱和，FLOAT 直接相减；不裁到 ±1 pu
  * @param  qA  被减数
  * @param  qB  减数
  * @return     饱和差
  */
 foc_scalar_t foc_sub_sat(foc_scalar_t qA, foc_scalar_t qB);
 /**
- * @brief  定点乘法，结果按 pu 归一化（qA * qB / Q_SCALE）
+ * @brief  PU 乘法；FIXED 先裁输入到 ±1，宽 PU 输入应使用 foc_mul_wide
  * @param  qA  乘数 A
  * @param  qB  乘数 B
  * @return     乘积

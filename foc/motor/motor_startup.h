@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "motor_position.h"
+#include "foc_types.h"
 
 typedef struct {
     uint32_t wControlFrequencyHz;

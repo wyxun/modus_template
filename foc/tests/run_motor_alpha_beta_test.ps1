@@ -3,6 +3,7 @@ $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_alpha_beta_test.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/motor/motor_position.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
@@ -17,7 +18,7 @@ $includePaths = @(
     "modus/src/arch/cortex-m", "modus/src/utilities",
     "modus/lib/plooc", "modus/lib/perf_counter", "foc", "foc/math",
     "foc/hal", "foc/motor", "foc/middleware", "foc/control",
-    "foc/observer"
+    "foc/observer", "foc/modulation"
 )
 $includeArgs = @($includePaths | ForEach-Object {
     "-I$(Join-Path $repoRoot $_)"
@@ -27,7 +28,14 @@ $commonArgs = @(
     "-D__PERFC_USE_USER_CUSTOM_PORTING__=1",
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
-        "-DFOC_OFFSET_CALIB_TIMES=1U",
+    "-DFOC_OFFSET_CALIB_TIMES=1U",
+    # Synthetic Clarke fixture: keep ADC quantization below its 0.001 PU bound.
+    "-DFOC_CURRENT_COUNTS_PER_BASE=1000U",
+    "-DFOC_DCBUS_SOURCE=2U",
+    "-DFOC_DCBUS_MV_PER_COUNT_NUM=3U",
+    "-DFOC_DCBUS_MV_PER_COUNT_DEN=2U",
+    "-DFOC_DCBUS_OFFSET_MILLIVOLT=0",
+    "-DFOC_DCBUS_MAX_MILLIVOLT=60000U",
     "-DFOC_TRIG_BACKEND=1",
     "-DFOC_ENABLE_SMO=1"
 )

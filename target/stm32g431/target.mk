@@ -15,6 +15,9 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 C_DEFS += -DFOC_TRIG_BACKEND=2
 C_DEFS += -DFOC_HF_ISR_HZ=20000U
+# 20 mOhm shunt, 10k/22k/976 input network, PGA x16: about 34 counts/A.
+C_DEFS += -DFOC_CURRENT_BASE_MILLIAMP=3500U
+C_DEFS += -DFOC_CURRENT_COUNTS_PER_BASE=119U
 C_DEFS += -DFOC_DCBUS_SOURCE=2U
 # 12 V operation: PB10=0, Q48 off, R30=18 kOhm is the lower divider leg.
 C_DEFS += -DHALADC_VBUS_RANGE_48V=0U

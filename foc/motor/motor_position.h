@@ -11,8 +11,6 @@
 #include "foc_observer.h"
 #include "foc_position.h"
 
-struct motor_params_t;
-
 /** @brief Portable fallback for a mechanical sensor provider. */
 typedef struct {
     foc_result_t (*fnGetPosition)(const void *pContext,
@@ -23,32 +21,25 @@ typedef struct {
 
 typedef motor_position_provider_t motor_position_if_t;
 
-/** @brief The sole electrical feedback consumed by one Core step. */
-typedef struct {
-    foc_angle_t tElectricalAngle;
-    foc_scalar_t qElectricalSpeedPu;
-    bool bValid;
-} motor_electrical_feedback_t;
-
-/** @brief One synchronized Motor sample for position estimators. */
-typedef struct {
-    foc_ab_t tCurrentAlphaBeta;
-    foc_ab_t tVoltageModelAlphaBeta;
-    motor_electrical_feedback_t tHardDragCandidate;
-    uint32_t wRunGeneration;
-    bool bControlLimited; /**< Previous control interval hit a limit. */
-} motor_position_sample_t;
-
 typedef enum {
     MOTOR_POSITION_SOURCE_SENSOR = 0,
     MOTOR_POSITION_SOURCE_HARD_DRAG,
 } motor_position_source_t;
 
-typedef enum {
-    MOTOR_POSITION_EVENT_NONE = 0,
-    MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
-    MOTOR_POSITION_EVENT_OBSERVER_LOST,
-} motor_position_event_t;
+/* HFI + SMO selection contract (future policy; not implemented here):
+ *   HFI -> qualify SMO -> blend to SMO -> SMO
+ *   SMO -> qualify HFI -> blend to HFI -> HFI
+ * Use separate up/down speed thresholds, dwell time and continuous target
+ * qualification. Compare time-aligned estimates with wrapped angle error;
+ * bound the correction so crossing zero turns cannot cause an angle jump.
+ * Each candidate uses its own evidence, not the SMO BEMF threshold for all.
+ * Schedule HFI injection and requalification before low-speed reentry;
+ * an inactive HFI estimator is not an immediately usable fallback.
+ * Fallback requires a qualified peer and a permitted operating condition;
+ * otherwise publish loss and let Motor enter its safe state.
+ * Preserve sensor feedback, pure hard drag, shadow SMO and hard-drag-to-SMO
+ * paths. The enum below currently describes only the existing SMO handoff.
+ */
 
 typedef enum {
     MOTOR_POSITION_FEEDBACK_PRIMARY = 0,
@@ -63,7 +54,13 @@ typedef struct {
     motor_position_source_t eSource;
     uint8_t chPolePairs;
     uint32_t wControlFrequencyHz;
-    foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
+    /** Electrical base Hz, not speed pu; consumed only at initialization.
+     * FLOAT stores Hz. FIXED int32 stores Hz * 32768 (15 fraction bits).
+     * Configure 0 < Hz <= 65535 with FOC_SCALAR(); rounding is nearest,
+     * ties away from zero. The macro does not saturate: reject overflow
+     * before encoding. Init decodes/derives coefficients; Step uses pu.
+     */
+    foc_scalar_t qElectricalSpeedBaseHz;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     const struct motor_params_t *ptMotorParams;
     foc_observer_cfg_t tObserverCfg;
@@ -81,8 +78,8 @@ typedef struct {
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
 /** @brief SMO-specific speed filtering and quality thresholds. */
 typedef struct {
-    foc_scalar_t qObserverSpeedGain;
     uint32_t wAngleLeadAtOnePuBam32;
+    foc_scalar_t qSpeedFilterAlpha; /**< Init-derived, same time constant. */
     foc_scalar_t qObserverSpeedFilteredPu;
     foc_scalar_t qMinimumBemfPu;
     foc_scalar_t qMinimumSpeedPu;
@@ -124,6 +121,7 @@ typedef struct {
     bool bElectricalZeroValid;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     foc_observer_t tObserver;
+    foc_observer_estimates_t tEstimates;
     motor_position_smo_t tSmo;
     motor_position_handoff_t tHandoff;
 #endif
@@ -131,6 +129,11 @@ typedef struct {
 
 foc_result_t motor_position_Init(motor_position_t *ptPosition,
                                   const motor_position_cfg_t *ptConfig);
+/** @brief Check the startup budget against this initialized handoff plan.
+ * @param ptPosition Position instance. @param wSteps Post-ramp time budget.
+ * @return OK when qualification and blend can finish before the deadline. */
+foc_result_t motor_position_CheckStartupBudget(
+    const motor_position_t *ptPosition, uint32_t wSteps);
 foc_result_t motor_position_Step(
     motor_position_t *ptPosition, uint32_t wNowTick,
     const motor_position_sample_t *ptSample,
@@ -151,16 +154,16 @@ motor_position_event_t motor_position_TakeEvent(
 
 /* Target adapters may replace only the raw mechanical sensor binding. */
 #ifndef FOC_SENSOR_POSITION_GET
-#define FOC_SENSOR_POSITION_GET(P, T, O) \
+#define FOC_SENSOR_POSITION_GET(P, T, O)                                        \
     ((P)->tSensor.fnGetPosition((P)->tSensor.pContext, (T), (O)))
 #endif
 #ifndef FOC_SENSOR_POSITION_CAPTURE_ZERO
-#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O) \
+#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O)                               \
     FOC_SENSOR_POSITION_GET((P), (T), (O))
 #endif
 
 #ifndef FOC_POSITION_GET
-#define FOC_POSITION_GET(P, T, S, O) \
+#define FOC_POSITION_GET(P, T, S, O)                                            \
     motor_position_Step((P), (T), (S), (O))
 #endif
 

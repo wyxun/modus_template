@@ -1,6 +1,4 @@
 $ErrorActionPreference = "Stop"
-Write-Output "SKIP: legacy SMO hot-path contract awaits the SMO rewrite"
-return
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $smoPath = Join-Path $repoRoot "foc\observer\foc_smo.c"
 $numericHeaderPath = Join-Path $repoRoot "foc\math\foc_numeric.h"
@@ -11,7 +9,7 @@ $numericSource = Get-Content -LiteralPath $numericSourcePath -Raw
 
 $axisMatch = [regex]::Match(
     $smo,
-    '(?s)static void smo_AxisStep\(.*?\r?\n\}\r?\n\r?\n/\*\*')
+    '(?s)static void _foc_smo_AxisStep\(.*?\r?\n\}\r?\n\r?\n/\*\*')
 $stepMatch = [regex]::Match(
     $smo,
     '(?s)foc_result_t foc_smo_Step\(.*?\r?\n\}\s*$')
@@ -30,25 +28,26 @@ foreach ($name in @(
     }
 }
 foreach ($name in @(
-        'qVoltageCurrentGain', 'qResistanceGain', 'qCrossAxisGain',
-        'qBemfFilterNumerator', 'qBemfFilterDenominator',
-        'qPreviousDerivative', 'qPreviousSlidingVoltage',
-        'bIntegratorFrozen')) {
+        'ku', 'kr',
+        'b0', 'a1',
+        'd_prev', 'z_prev',
+        'frozen')) {
     if ($smo -notmatch $name) {
         throw "SMO core state or coefficient is missing: $name"
     }
 }
-if ($axisBody -notmatch 'qPreviousDerivative') {
-    throw "smo_AxisStep does not implement trapezoidal current integration"
+if ($axisBody -notmatch 'd_prev') {
+    throw "_foc_smo_AxisStep does not implement trapezoidal current integration"
 }
-if ($axisBody -notmatch 'bIntegratorFrozen') {
-    throw "smo_AxisStep does not implement integral freeze protection"
+if ($axisBody -notmatch 'frozen') {
+    throw "_foc_smo_AxisStep does not implement integral freeze protection"
 }
-if ($axisBody -notmatch 'qBemfFilterNumerator' -or
-    $axisBody -notmatch 'qBemfFilterDenominator') {
-    throw "smo_AxisStep does not implement the back-EMF filter"
+if ($axisBody -notmatch 'b0' -or
+    $axisBody -notmatch 'a1') {
+    throw "_foc_smo_AxisStep does not implement the back-EMF filter"
 }
-if ($stepBody -notmatch 'foc_angle_atan2') {
+if ($smo -notmatch 'foc_angle_atan2' -or
+    $stepBody -notmatch '_foc_smo_OutputStep') {
     throw "foc_smo_Step does not calculate angle from back-EMF"
 }
 

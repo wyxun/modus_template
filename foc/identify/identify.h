@@ -9,8 +9,21 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "foc_log_config.h"
-#include "motor.h"
+#include "foc_config.h"
+#include "foc_types.h"
+
+/* Foreground orchestration borrows Motor; algorithm data imports no hardware. */
+typedef struct motor_t motor_t;
+
+/** @brief Compile-time switch for Identify diagnostics and result logs. */
+#ifndef IDENTIFY_LOG_ENABLE
+#define IDENTIFY_LOG_ENABLE (0)
+#endif
+#if IDENTIFY_LOG_ENABLE && !defined(__NO_USE_LOG__)
+#define IDENTIFY_LOG_ACTIVE (1)
+#else
+#define IDENTIFY_LOG_ACTIVE (0)
+#endif
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT      (2U)
 #define IDENTIFY_RESISTANCE_SAMPLE_COUNT             (100U)
@@ -18,23 +31,27 @@
 #define IDENTIFY_RESISTANCE_SETTLE_TIME_MS           (100U)
 #define IDENTIFY_RESISTANCE_SETTLE_TIMEOUT_MS        (500U)
 #define IDENTIFY_RESISTANCE_CAPTURE_TIMEOUT_MS       (1500U)
-#define IDENTIFY_RESISTANCE_MIN_CURRENT_PU           \
-    FOC_SCALAR(0.001f)
+#define IDENTIFY_ALIGNMENT_TIMEOUT_MS                (5000U)
+#define IDENTIFY_RESISTANCE_MIN_CURRENT_PU                                      \
+    FOC_SCALAR(0.025f)
+/* Measured alpha-beta magnitude limit, checked before ISR decimation. */
+#define IDENTIFY_RESISTANCE_MAX_CURRENT_PU                                      \
+    FOC_SCALAR(0.14f)
 
-#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU       \
-    FOC_SCALAR(0.05f)
-#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU       \
-    FOC_SCALAR(0.1f)
+#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU                                  \
+    FOC_SCALAR(0.025f)
+#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU                                  \
+    FOC_SCALAR(0.085f)
 
-#if (IDENTIFY_RESISTANCE_SAMPLE_HZ == 0U) || \
-    (FOC_HF_ISR_HZ == 0U) || \
-    ((FOC_HF_ISR_HZ %                                      \
+#if (IDENTIFY_RESISTANCE_SAMPLE_HZ == 0U) ||                                    \
+    (FOC_HF_ISR_HZ == 0U) ||                                                    \
+    ((FOC_HF_ISR_HZ %                                                           \
       IDENTIFY_RESISTANCE_SAMPLE_HZ) != 0U)
 #error "Resistance sample frequency must divide the HF ISR frequency"
 #endif
 
-#define IDENTIFY_RESISTANCE_ISR_PER_SAMPLE           \
-    (FOC_HF_ISR_HZ /                                \
+#define IDENTIFY_RESISTANCE_ISR_PER_SAMPLE                                      \
+    (FOC_HF_ISR_HZ /                                                            \
      IDENTIFY_RESISTANCE_SAMPLE_HZ)
 
 /** @brief Parent lifecycle state. */
@@ -52,6 +69,17 @@ typedef enum {
     IDENTIFY_OPERATION_INDUCTANCE,
 } identify_operation_t;
 
+/** @brief Short failure categories retained for deferred ISR diagnostics. */
+typedef enum {
+    IDENTIFY_FAILURE_CAUSE_NONE = 0,
+    IDENTIFY_FAILURE_CAUSE_INVALID_SAMPLE,
+    IDENTIFY_FAILURE_CAUSE_PWM_SATURATED,
+    IDENTIFY_FAILURE_CAUSE_OVERCURRENT,
+    IDENTIFY_FAILURE_CAUSE_TRANSVERSE_CURRENT,
+    IDENTIFY_FAILURE_CAUSE_INCOMPLETE_CAPTURE,
+    IDENTIFY_FAILURE_CAUSE_CONTROL_REJECTED,
+} identify_failure_cause_t;
+
 /** @brief Resistance child state. */
 typedef enum {
     IDENTIFY_RESISTANCE_STATE_IDLE = 0,
@@ -63,149 +91,129 @@ typedef enum {
     IDENTIFY_RESISTANCE_STATE_ERROR,
 } identify_resistance_state_t;
 
-/** @brief Synchronous motor snapshot consumed by identification ISR code. */
+/** @brief Fixed Rs contract: alpha-beta i[k], model u_alpha[k-1].
+ * @note Model voltage PU is reconstructed with the sampled DC bus PU. */
 typedef struct {
-    foc_scalar_t qCurrentD;
-    foc_scalar_t qVoltageD;
-    foc_scalar_t qCurrentQ;
-    foc_scalar_t qElectricalSpeedPu;
-    uint32_t wDcBusMillivolt;
-    bool bDcBusValid;
-    bool bPwmSaturated;
-    bool bMotorFault;
-    bool bAngleValid;
-} identify_isr_sample_t;
+    foc_ab_t tCurrentPu;
+    foc_scalar_t qVoltageModelAlphaPu;
+    bool bValid; /**< Current, PWM interval and bus sample are valid. */
+    bool bPwmSaturated; /**< Prior interval reached a duty boundary. */
+} identify_resistance_sample_t;
+
+/** @brief Fixed Ld contract: stationary alpha-beta i[k], u_alpha[k-1].
+ * @note Model voltage uses the shared physical voltage base, not duty ratio. */
+typedef struct {
+    foc_ab_t tCurrentPu;
+    foc_scalar_t qVoltageModelAlphaPu; /**< Signed ideal inverter voltage. */
+    bool bValid; /**< Valid current, PWM interval and bus sample. */
+    bool bPwmSaturated; /**< Prior interval reached a duty boundary. */
+} identify_inductance_sample_t;
+
+/** @brief Same-ISR fixed alpha-axis voltage-mode modulation request.
+ * @note Modulation is dimensionless PWM geometry, not u_model_pu.
+ * Abort takes priority. Motor owns the command validation and submission. */
+typedef struct {
+    foc_ab_t tModulationCommand;
+    bool bSetModulation;
+    bool bAbort;
+} identify_isr_request_t;
+
+/** @brief Physical configuration consumed once by Init. */
+typedef struct {
+    uint32_t wVoltageBaseMillivolt;
+    uint32_t wCurrentBaseMilliamp;
+    uint32_t wResistanceMilliohm;
+    foc_scalar_t qElectricalSpeedBaseHz; /**< Init-only electrical Hz. */
+} identify_cfg_t;
+
+#if defined(FOC_NUMERIC_FLOAT)
+typedef float identify_accumulator_t;
+#else
+/** Accumulated Q15 samples; no extra fractional scaling. */
+typedef int64_t identify_accumulator_t;
+#endif
 
 /** @brief Configuration for a mechanically locked Phase 1 Ld test. */
 typedef struct {
     uint32_t wInjectionFrequencyHz;
-    uint16_t hwCaptureDelayCycles;
+    uint16_t hwCaptureDelayCycles; /**< At least 2 + bus delay ISR cycles. */
     uint16_t hwCaptureSampleCount;
     uint16_t hwHalfCycleCount;
     foc_scalar_t qModulationAmplitude;
     foc_scalar_t qMaxIdentificationCurrent;
     foc_scalar_t qMinCurrentDelta;
-    foc_scalar_t qMaxElectricalSpeedPu;
-    uint16_t hwMotionFaultCycles;
+    foc_scalar_t qMaxTransverseCurrentPu; /**< Disturbance, not measured speed. */
+    uint16_t hwTransverseFaultCycles; /**< Consecutive above-threshold samples. */
 } identify_inductance_cfg_t;
 
 /** @brief Result from one Phase 1 Ld measurement. */
 typedef struct {
-    uint32_t wInductanceDMicroHenry;
-#if FOC_APP_LOG_INDUCTANCE_ID
-    uint32_t wInjectionFrequencyHz;
-    uint32_t wEffectiveVoltageMillivolt;
-    int32_t lMeanCurrentMilliamp;
-    uint16_t hwCaptureSampleCount;
-    uint16_t hwHalfCycleCount;
-#endif
+    foc_scalar_t qInductanceDPu;
 } identify_inductance_result_t;
 
-#if FOC_APP_LOG_INDUCTANCE_ID
-/** @brief Why one polarity did not yield a valid inductance estimate. */
-typedef enum {
-    IDENTIFY_INDUCTANCE_FAILURE_NONE = 0,
-    IDENTIFY_INDUCTANCE_FAILURE_INSUFFICIENT_SAMPLES,
-    IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL,
-    IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE,
-    IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN,
-    IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE,
-} identify_inductance_failure_t;
-
-/** @brief Captured values used to diagnose one injection polarity. */
+/** @brief Final resistance measurement. */
 typedef struct {
-    identify_inductance_failure_t eFailure;
-    foc_scalar_t qDeltaCurrentPu;
-    int32_t lDeltaCurrentAdcCodeEq;
-    uint32_t wAverageBusMillivolt;
-    int32_t lCommandVoltageMillivolt;
-    int32_t lNetVoltageMillivolt;
-    int32_t lAverageCurrentMilliamp;
-} identify_inductance_polarity_diagnostic_t;
-
-/** @brief Last complete inductance calculation, including rejected data. */
-typedef struct {
-    bool bValid;
-    uint32_t wResistanceMilliohm;
-    foc_scalar_t qMinimumDeltaPu;
-    identify_inductance_polarity_diagnostic_t tPositive;
-    identify_inductance_polarity_diagnostic_t tNegative;
-} identify_inductance_diagnostic_t;
-#endif
-
-/** @brief Diagnostic values captured by one resistance identification run. */
-typedef struct {
-#if FOC_APP_LOG_RESISTANCE_ID
-    foc_scalar_t aqVoltageLevelPu[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-    foc_scalar_t aqAverageVoltageDPu[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-    foc_scalar_t aqAverageCurrentPu[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-#if FOC_APP_LOG_RESISTANCE_ID
-    uint32_t aawAverageAd[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT][3];
-    foc_duty_abc_t atAverageDuty[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-#endif
-    foc_scalar_t qDeltaCurrentPu;
-    uint32_t wVoltageBaseMillivolt;
-    uint32_t wCurrentBaseMilliamp;
-#endif
-    uint32_t wResistanceMilliohm;
+    foc_scalar_t qResistancePu;
 } identify_resistance_result_t;
 
-/** @brief Caller-owned state for the Phase 1 Ld child PT. */
+/** @brief Tagged result returned once by identify_Run(). Values stay in PU. */
 typedef struct {
-    identify_inductance_result_t tResult;
-#if FOC_APP_LOG_INDUCTANCE_ID
-    identify_inductance_diagnostic_t tDiagnostic;
-#endif
+    identify_operation_t eOperation;
+    union {
+        identify_resistance_result_t tResistance;
+        identify_inductance_result_t tInductance;
+    } tValue;
+} identify_result_t;
+
+/** @brief Immutable injection plan during an active capture. */
+typedef struct {
     uint32_t wHalfPeriodCycles;
     uint32_t wCaptureStartCycle;
     uint32_t wTimeoutMs;
-    foc_dq_t atCommand[2];
+    foc_ab_t atCommand[2]; /**< PWM modulation ratios, not model voltage PU. */
     foc_scalar_t qMaxCurrent;
-    foc_scalar_t qMaxSpeed;
+    foc_scalar_t qMaxTransverseCurrent;
     foc_scalar_t qMinDelta;
     uint16_t hwCaptureTarget;
     uint16_t hwHalfCycleTarget;
-    uint16_t hwMotionFaultLimit;
-    uint32_t wCurrentBaseMilliamp;
-    uint32_t wResistanceMilliohm;
-#if defined(FOC_NUMERIC_FLOAT)
-    float fVoltageScale;
-    float fSlopeScale;
-#endif
+    uint16_t hwTransverseFaultLimit;
+    foc_scalar_t qResistancePu;
+    foc_scalar_t qCaptureTimePu; /**< (N-1) Ts_pu. */
+} identify_inductance_plan_t;
+
+/** @brief ISR-owned capture, published after bBatchReady's barrier.
+ * @note FIXED accumulators store summed Q15 samples without rescaling.
+ * At most 32767*65535 signed int32 samples/polarity fit in int64. */
+typedef struct {
+    uint32_t wPhaseCycle;
+    uint16_t hwTransverseFaultCount;
+    uint16_t hwHalfCycle;
+    uint16_t hwCaptureSampleCount;
+    uint16_t hwPositiveHalfCount;
+    uint16_t hwNegativeHalfCount;
+    foc_scalar_t qFirstCurrent;
+    foc_scalar_t qLastCurrent;
+    identify_accumulator_t u_window_sum;
+    identify_accumulator_t i_window_sum;
+    identify_accumulator_t di_positive_sum;
+    identify_accumulator_t di_negative_sum;
+    identify_accumulator_t i_positive_sum;
+    identify_accumulator_t i_negative_sum;
+    identify_accumulator_t u_positive_sum;
+    identify_accumulator_t u_negative_sum;
+} identify_inductance_capture_t;
+
+/** @brief Per-instance Ld flow, plan, capture and retained PU result. */
+typedef struct {
+    identify_inductance_result_t tResult;
+    identify_inductance_plan_t tPlan;
+    identify_inductance_capture_t tCapture;
     uint8_t chRunPt;
     int64_t lStateTimestamp;
     volatile bool bActive;
     volatile bool bBatchReady;
     volatile bool bError;
     volatile foc_result_t eIsrResult;
-    uint32_t wPhaseCycle;
-    uint16_t hwMotionFaultCount;
-    uint16_t hwHalfCycle;
-    uint16_t hwCaptureSampleCount;
-    uint16_t hwPositiveHalfCount;
-    uint16_t hwNegativeHalfCount;
-    uint32_t wWindowVoltageSumMillivolt;
-    foc_scalar_t qFirstCurrent;
-    foc_scalar_t qLastCurrent;
-#if defined(FOC_NUMERIC_FLOAT)
-    float fWindowCurrentSum;
-    float fPositiveDeltaSum;
-    float fNegativeDeltaSum;
-    float fPositiveCurrentSum;
-    float fNegativeCurrentSum;
-#else
-    int64_t lWindowCurrentSum;
-    int64_t lPositiveDeltaSum;
-    int64_t lNegativeDeltaSum;
-    int64_t lPositiveCurrentSum;
-    int64_t lNegativeCurrentSum;
-#endif
-    uint64_t ullPositiveVoltageSumMillivolt;
-    uint64_t ullNegativeVoltageSumMillivolt;
     bool bResultPending;
 } identify_inductance_t;
 
@@ -224,41 +232,55 @@ typedef struct {
     uint8_t chVoltageLevel;
     volatile uint16_t hwIsrDivider;
     volatile uint16_t hwCaptureSampleCount;
-    volatile foc_scalar_t qCurrentSum;
-    volatile foc_scalar_t qVoltageSum;
+    volatile identify_accumulator_t qCurrentSum;
+    volatile identify_accumulator_t qVoltageSum;
+    volatile foc_scalar_t qLatestCurrentAlphaPu;
     foc_scalar_t aqAverageCurrent[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-    foc_scalar_t aqAverageVoltageD[
+    foc_scalar_t aqAverageVoltageAlpha[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
-#if FOC_APP_LOG_RESISTANCE_ID
-    uint32_t awAdSum[3];
-    foc_duty_abc_t tDutySum;
-    foc_scalar_t qDeltaCurrent;
-    uint32_t wVoltageBaseMillivolt;
-    uint32_t wCurrentBaseMilliamp;
-#endif
-    uint32_t wResistanceMilliohm;
+    foc_scalar_t qResistancePu;
     int64_t lStateTimestamp;
-    bool bMotorStarted;
+    volatile bool bMotorStarted;
     volatile bool bBatchReady;
     volatile bool bResultPending;
 } identify_resistance_t;
+
+/** @brief R/L-only alignment preparation; future rotating tests are separate. */
+typedef struct {
+    uint8_t chRunPt;
+    int64_t lDeadline;
+    bool bReady;
+} identify_stationary_t;
 
 /** @brief Caller-owned parameter identification parent object. */
 typedef struct {
     volatile identify_state_t eState;
     foc_result_t eLastResult;
     volatile identify_operation_t eOperation;
+#if IDENTIFY_LOG_ACTIVE
+    identify_operation_t eFailureOperation;
+    identify_failure_cause_t eFailureCause;
+    foc_result_t eFailureResult;
+    volatile bool bFailureLogPending;
+#endif
     identify_resistance_t tResistance;
     identify_inductance_t tInductance;
+    identify_stationary_t tStationary;
+    foc_scalar_t qResistancePu; /**< Active model, updated by successful R. */
+    foc_scalar_t qSamplePeriodPu; /**< omega_base / F_HF. */
+    float fResistanceBaseMilliohm; /**< Foreground display scale only. */
+    float fInductanceBaseMicroHenry; /**< Foreground display scale only. */
 } identify_t;
 
 /**
  * @brief Initialize one identification object.
  * @param ptThis Caller-owned identification object.
+ * @param ptConfig Model and shared bases, consumed only during Init.
  * @return FOC_RESULT_OK or an argument error.
  */
-foc_result_t identify_Init(identify_t *ptThis);
+foc_result_t identify_Init(identify_t *ptThis,
+                            const identify_cfg_t *ptConfig);
 
 /**
  * @brief Start the two-level resistance identification flow.
@@ -280,52 +302,53 @@ foc_result_t identify_StartInductance(
 /**
  * @brief Record one high-frequency current sample when capture is active.
  * @param ptThis Identification object.
- * @param ptMotor Motor object that owns PWM and fault state.
- * @param ptSample Synchronized sample produced after motor_IsrStep().
+ * @param ptSample Synchronized PU data, never a Motor pointer.
+ * @param ptRequest Caller submits this request in the same ISR.
  * @return None.
  */
-void identify_IsrStep(identify_t *ptThis,
-                      motor_t *ptMotor,
-                      const identify_isr_sample_t *ptSample);
+void identify_ResistanceIsrStep(identify_t *ptThis,
+    const identify_resistance_sample_t *ptSample,
+    identify_isr_request_t *ptRequest);
+
+/** @brief Consume only Ld data; submit the returned request in the same ISR.
+ * @param ptThis Identification object. @param ptSample Immutable Ld PU data.
+ * @param ptRequest Caller-owned control request. @return None. */
+void identify_InductanceIsrStep(identify_t *ptThis,
+    const identify_inductance_sample_t *ptSample,
+    identify_isr_request_t *ptRequest);
+
+/** @brief Snapshot the active capture operation for typed ISR dispatch.
+ * @param ptThis Identification object. @return NONE when idle or null.
+ * @note ISR-only; foreground uses identify_GetStatus(). */
+identify_operation_t identify_ActiveOperationIsr(const identify_t *ptThis);
+
+/** @brief Latch an ISR failure; output is deferred to identify_Run().
+ * @param ptThis Identification object.
+ * @param eCause Compact diagnostic reason.
+ * @param eResult Failure result returned by the rejected operation.
+ * @return None. */
+void identify_AbortIsr(identify_t *ptThis,
+    identify_failure_cause_t eCause, foc_result_t eResult);
+
+/** @brief Convert a result PU for foreground display, without consuming it.
+ * @param ptThis Initialized object owning the display bases.
+ * @param eQuantity RESISTANCE yields mOhm; INDUCTANCE yields microhenry.
+ * @param qValuePu Positive result on the shared model base.
+ * @param pwPhysical Rounded physical value; not fed back to the algorithm.
+ * @return Conversion status; no conversion or logging occurs in ISR. */
+foc_result_t identify_ResultToPhysical(const identify_t *ptThis,
+    identify_operation_t eQuantity, foc_scalar_t qValuePu,
+    uint32_t *pwPhysical);
 
 /**
  * @brief Advance the foreground identification state machine.
  * @param ptThis Identification object.
  * @param ptMotor Motor object controlled by this identification run.
+ * @param ptResult Completed tagged PU result, or NONE while busy/error.
  * @return FOC_RESULT_OK, FOC_RESULT_BUSY, or a measurement error.
  */
-foc_result_t identify_Run(identify_t *ptThis, motor_t *ptMotor);
-
-/**
- * @brief Copy and consume a completed resistance result.
- * @param ptThis Identification object.
- * @param ptResult Output measurement and scaling diagnostics.
- * @return FOC_RESULT_OK, FOC_RESULT_BUSY, or an argument error.
- */
-foc_result_t identify_GetResistance(identify_t *ptThis,
-                                    identify_resistance_result_t *ptResult);
-
-/**
- * @brief Copy and consume a completed Ld result.
- * @param ptThis Identification object.
- * @param ptResult Output result.
- * @return FOC_RESULT_OK, FOC_RESULT_BUSY, or an argument error.
- */
-foc_result_t identify_GetInductance(
-    identify_t *ptThis,
-    identify_inductance_result_t *ptResult);
-
-#if FOC_APP_LOG_INDUCTANCE_ID
-/**
- * @brief Copy the most recent inductance calculation diagnostics.
- * @param ptThis Identification object.
- * @param ptDiagnostic Destination diagnostic snapshot.
- * @return FOC_RESULT_OK when a calculation was captured, otherwise BUSY.
- */
-foc_result_t identify_GetInductanceDiagnostic(
-    const identify_t *ptThis,
-    identify_inductance_diagnostic_t *ptDiagnostic);
-#endif
+foc_result_t identify_Run(identify_t *ptThis, motor_t *ptMotor,
+                          identify_result_t *ptResult);
 
 /**
  * @brief Stop identification and the controlled Motor.

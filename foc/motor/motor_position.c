@@ -35,7 +35,7 @@ static bool _motor_position_SmoQualified(
     const motor_electrical_feedback_t *ptObserved)
 {
     const foc_observer_output_t *ptRaw =
-        &ptPosition->tObserver.tOutput;
+        &ptPosition->tEstimates.tSmo.tEstimate;
     foc_scalar_t qAngleError = FOC_ZERO;
     foc_scalar_t qSpeedError = FOC_ZERO;
     foc_scalar_t qRawSpeedPu = FOC_ZERO;
@@ -43,8 +43,9 @@ static bool _motor_position_SmoQualified(
 
     if (!ptRaw->bValid || !ptObserved->bValid ||
         !foc_scalar_is_finite(ptObserved->qElectricalSpeedPu) ||
-        !foc_scalar_is_finite(ptRaw->qSignalStrengthPu) ||
-        ptRaw->qSignalStrengthPu < ptPosition->tSmo.qMinimumBemfPu ||
+        !foc_scalar_is_finite(ptPosition->tEstimates.tSmo.qBemfStrengthPu) ||
+        ptPosition->tEstimates.tSmo.qBemfStrengthPu <
+            ptPosition->tSmo.qMinimumBemfPu ||
         foc_abs(ptForced->qElectricalSpeedPu) <
             ptPosition->tSmo.qMinimumSpeedPu) {
         return false;
@@ -54,9 +55,7 @@ static bool _motor_position_SmoQualified(
     qSpeedError = foc_abs(foc_sub_sat(
         ptObserved->qElectricalSpeedPu,
         ptForced->qElectricalSpeedPu));
-    qRawSpeedPu = foc_mul_wide(
-        ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->tSmo.qObserverSpeedGain);
+    qRawSpeedPu = ptRaw->qElectricalSpeedPu;
     qAllowedSpeedError = foc_mul_pu(
         foc_abs(ptForced->qElectricalSpeedPu),
         ptPosition->tSmo.qMaximumSpeedErrorRatio);
@@ -74,19 +73,16 @@ static void _motor_position_FilterSmoSpeed(
     motor_position_t *ptPosition)
 {
     const foc_observer_output_t *ptRaw =
-        &ptPosition->tObserver.tOutput;
+        &ptPosition->tEstimates.tSmo.tEstimate;
     foc_scalar_t qRawSpeedPu = FOC_ZERO;
 
     if (!ptRaw->bValid || !foc_scalar_is_finite(
-            ptRaw->qElectricalSpeedTurnsPerSecond)) {
+            ptRaw->qElectricalSpeedPu)) {
         ptPosition->tSmo.bObserverSpeedReady = false;
         return;
     }
-    qRawSpeedPu = foc_mul_wide(
-        ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->tSmo.qObserverSpeedGain);
-    if (!foc_scalar_is_finite(qRawSpeedPu) ||
-        foc_abs(qRawSpeedPu) > FOC_ONE) {
+    qRawSpeedPu = ptRaw->qElectricalSpeedPu;
+    if (foc_abs(qRawSpeedPu) > FOC_ONE) {
         ptPosition->tSmo.bObserverSpeedReady = false;
         return;
     }
@@ -96,7 +92,7 @@ static void _motor_position_FilterSmoSpeed(
     } else {
         ptPosition->tSmo.qObserverSpeedFilteredPu = foc_add_sat(
             ptPosition->tSmo.qObserverSpeedFilteredPu,
-            foc_mul_pu(FOC_SCALAR(0.02f),
+            foc_mul_pu(ptPosition->tSmo.qSpeedFilterAlpha,
                 foc_sub_sat(qRawSpeedPu,
                     ptPosition->tSmo.qObserverSpeedFilteredPu)));
     }
@@ -159,14 +155,12 @@ static foc_result_t _motor_position_SmoActiveStep(
     foc_scalar_t qRawSpeedPu = FOC_ZERO;
     foc_scalar_t qRawDeviationLimit = FOC_ZERO;
     const foc_observer_output_t *ptRaw =
-        &ptPosition->tObserver.tOutput;
+        &ptPosition->tEstimates.tSmo.tEstimate;
 
     qStepAngle = foc_abs(foc_angle_diff(
         ptObserved->tElectricalAngle,
         ptPosition->tHandoff.tPreviousObserverAngle));
-    qRawSpeedPu = foc_mul_wide(
-        ptRaw->qElectricalSpeedTurnsPerSecond,
-        ptPosition->tSmo.qObserverSpeedGain);
+    qRawSpeedPu = ptRaw->qElectricalSpeedPu;
     qRawDeviationLimit = foc_mul_pu(
         foc_abs(ptObserved->qElectricalSpeedPu),
         ptPosition->tSmo.qMaximumSpeedErrorRatio);
@@ -175,8 +169,9 @@ static foc_result_t _motor_position_SmoActiveStep(
     if (!ptObserved->bValid ||
         !foc_scalar_is_finite(ptObserved->qElectricalSpeedPu) ||
         !foc_scalar_is_finite(qRawSpeedPu) ||
-        !foc_scalar_is_finite(ptRaw->qSignalStrengthPu) ||
-        ptRaw->qSignalStrengthPu < ptPosition->tSmo.qMinimumBemfPu ||
+        !foc_scalar_is_finite(ptPosition->tEstimates.tSmo.qBemfStrengthPu) ||
+        ptPosition->tEstimates.tSmo.qBemfStrengthPu <
+            ptPosition->tSmo.qMinimumBemfPu ||
         foc_abs(ptObserved->qElectricalSpeedPu) <
             ptPosition->tSmo.qMinimumSpeedPu ||
         foc_abs(ptObserved->qElectricalSpeedPu) > FOC_ONE ||
@@ -204,7 +199,7 @@ static foc_result_t _motor_position_SelectSmo(
     const motor_electrical_feedback_t *ptForced =
         &ptSample->tHardDragCandidate;
     const foc_observer_output_t *ptRaw =
-        &ptPosition->tObserver.tOutput;
+        &ptPosition->tEstimates.tSmo.tEstimate;
     bool bQualified = false;
 
     if (ptPosition->tHandoff.eFeedbackState ==
@@ -296,7 +291,7 @@ static foc_result_t _motor_position_ConfigureTakeover(
     }
     if (ptConfig->eSource != MOTOR_POSITION_SOURCE_HARD_DRAG ||
         ptConfig->wControlFrequencyHz == 0U ||
-        foc_to_float(ptConfig->qElectricalSpeedBaseTurnsPerSecond) >=
+        foc_to_float(ptConfig->qElectricalSpeedBaseHz) >=
             (float)ptConfig->wControlFrequencyHz / 2.0f ||
         ptConfig->wQualificationSteps == 0U ||
         ptConfig->wBlendSteps == 0U ||
@@ -314,9 +309,15 @@ static foc_result_t _motor_position_ConfigureTakeover(
         return FOC_RESULT_INVALID_ARGUMENT;
     }
     ptPosition->tHandoff.bObserverTakeover = true;
+    /* Preserve alpha=0.02 at 20 kHz; derive once for a changed ISR rate. */
+    ptPosition->tSmo.qSpeedFilterAlpha = foc_from_float(1.0f -
+        powf(0.98f, 20000.0f / (float)ptConfig->wControlFrequencyHz));
+    if (ptPosition->tSmo.qSpeedFilterAlpha <= FOC_ZERO) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
     ptPosition->tSmo.wAngleLeadAtOnePuBam32 = (uint32_t)llround(
         (double)foc_to_float(
-            ptConfig->qElectricalSpeedBaseTurnsPerSecond) *
+            ptConfig->qElectricalSpeedBaseHz) *
         4294967296.0 /
         (double)ptConfig->wControlFrequencyHz);
     ptPosition->tHandoff.wMaxBlendCorrectionBam32 = 0x100000000ULL / 720U;
@@ -346,10 +347,7 @@ static foc_result_t _motor_position_ConfigureTakeover(
         ptConfig->qMaximumAngleErrorTurns;
     ptPosition->tHandoff.qBlendWeightStep = foc_from_float(
         1.0f / (float)ptConfig->wBlendSteps);
-    if (ptPosition->tHandoff.qBlendWeightStep == FOC_ZERO ||
-        foc_div_checked(FOC_ONE,
-            ptConfig->qElectricalSpeedBaseTurnsPerSecond,
-            &ptPosition->tSmo.qObserverSpeedGain) != FOC_RESULT_OK) {
+    if (ptPosition->tHandoff.qBlendWeightStep == FOC_ZERO) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     return FOC_RESULT_OK;
@@ -366,7 +364,7 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
         return FOC_RESULT_NULL;
     }
     if (ptConfig->chPolePairs == 0U ||
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond <= FOC_ZERO ||
+        ptConfig->qElectricalSpeedBaseHz <= FOC_ZERO ||
         ptConfig->eSource > MOTOR_POSITION_SOURCE_HARD_DRAG ||
         (ptConfig->eSource == MOTOR_POSITION_SOURCE_SENSOR &&
          ptConfig->tSensor.pContext == NULL)) {
@@ -387,7 +385,7 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
     ptPosition->eSource = ptConfig->eSource;
     qPolePairs = foc_from_float((float)ptConfig->chPolePairs);
     eResult = foc_div_checked(
-        qPolePairs, ptConfig->qElectricalSpeedBaseTurnsPerSecond,
+        qPolePairs, ptConfig->qElectricalSpeedBaseHz,
         &ptPosition->qMechanicalToElectricalSpeedPuGain);
     if (eResult != FOC_RESULT_OK ||
         ptPosition->qMechanicalToElectricalSpeedPuGain <= FOC_ZERO) {
@@ -402,12 +400,45 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
-    eResult = foc_observer_Init(&ptPosition->tObserver,
-                                ptConfig->ptMotorParams,
-                                &ptConfig->tObserverCfg);
+    {
+        const motor_params_t *params = ptConfig->ptMotorParams;
+        const foc_electrical_model_t model = {
+            .wResistanceMilliohm = params->wResistanceMilliohm,
+            .wInductanceDMicroHenry = params->wInductanceDMicroHenry,
+            .wInductanceQMicroHenry = params->wInductanceQMicroHenry,
+            .wVoltageBaseMillivolt = params->wVoltageBaseMillivolt,
+            .wCurrentBaseMilliamp = params->wCurrentBaseMilliamp,
+        };
+        foc_observer_cfg_t observer_cfg = ptConfig->tObserverCfg;
+
+        /* Position supplies the one control-chain base; no second default. */
+        observer_cfg.tSmo.qElectricalSpeedBaseHz =
+            ptConfig->qElectricalSpeedBaseHz;
+        eResult = foc_observer_Init(&ptPosition->tObserver,
+                                    &model, &observer_cfg);
+    }
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
+#endif
+    return FOC_RESULT_OK;
+}
+
+foc_result_t motor_position_CheckStartupBudget(
+    const motor_position_t *ptPosition, uint32_t wSteps)
+{
+    if (ptPosition == NULL) {
+        return FOC_RESULT_NULL;
+    }
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    const motor_position_handoff_t *plan = &ptPosition->tHandoff;
+    if (plan->bObserverTakeover &&
+        (wSteps <= plan->wQualificationSteps ||
+         wSteps - plan->wQualificationSteps <= plan->wMaxBlendSteps)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+#else
+    (void)wSteps;
 #endif
     return FOC_RESULT_OK;
 }
@@ -477,13 +508,17 @@ void motor_position_ObserverStep(
         ptPosition->wLastRunGeneration = ptSample->wRunGeneration;
         _motor_position_ResetHandoff(ptPosition);
     }
-    tObserverInput.ptCurrentAlphaBeta = &ptSample->tCurrentAlphaBeta;
-    tObserverInput.ptVoltageModelAlphaBeta =
+    if (!ptSample->bVoltageModelValid) {
+        motor_position_ResetObserver(ptPosition);
+        return;
+    }
+    tObserverInput.tSmo.ptCurrentAlphaBeta = &ptSample->tCurrentAlphaBeta;
+    tObserverInput.tSmo.ptVoltageModelAlphaBeta =
         &ptSample->tVoltageModelAlphaBeta;
     eResult = foc_observer_Step(&ptPosition->tObserver,
-                                 &tObserverInput);
+                                 &tObserverInput, &ptPosition->tEstimates);
     if (eResult != FOC_RESULT_OK) {
-        ptPosition->tObserver.tOutput.bValid = false;
+        ptPosition->tEstimates.tSmo.tEstimate.bValid = false;
     }
     if (ptPosition->tHandoff.bObserverTakeover) {
         _motor_position_FilterSmoSpeed(ptPosition);
@@ -539,6 +574,7 @@ void motor_position_ResetObserver(motor_position_t *ptPosition)
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     if (ptPosition != NULL) {
         foc_observer_Reset(&ptPosition->tObserver);
+        ptPosition->tEstimates = (foc_observer_estimates_t){0};
         ptPosition->tSmo.bObserverSpeedReady = false;
         ptPosition->tSmo.qObserverSpeedFilteredPu = FOC_ZERO;
     }

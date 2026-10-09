@@ -29,13 +29,24 @@
 #include "foc_types.h"
 
 /**
+ * @brief Ideal stationary voltage from an effective PWM interval and bus PU.
+ * @param ptDuty Prior interval duty ratios, each in [0,1].
+ * @param qBusPu Measured bus voltage / shared voltage base, may exceed 1 PU.
+ * @param ptVoltage Output model voltage PU, excluding deadtime/device drops.
+ * @return Checked model status; caller owns interval/sample alignment.
+ */
+foc_result_t foc_modulation_ModelVoltageAlphaBeta(const foc_duty_abc_t *ptDuty,
+    foc_scalar_t qBusPu, foc_ab_t *ptVoltage);
+
+/**
  * @brief  SVPWM 调制，将 αβ 电压转换为三相占空比
  * @param  ptVoltage  αβ 轴电压输入
  * @param  ptDuty     输出的三相占空比（U/V/W）
+ * @param  pbSaturated 可选：本拍占空比达到或超出 [0, 1] 边界
  * @return            FOC_RESULT_OK 或错误码
  */
 foc_result_t foc_svpwm(const foc_ab_t *ptVoltage,
-                       foc_duty_abc_t *ptDuty);
+                       foc_duty_abc_t *ptDuty, bool *pbSaturated);
 /**
  * @brief  SPWM 调制，将 αβ 电压转换为三相占空比
  * @param  ptVoltage  αβ 轴电压输入

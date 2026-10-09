@@ -30,9 +30,12 @@
 #define FOC_ENABLE_HFI                    0
 #endif
 
-/* Observer implementation selected for this FOC build. */
+/* Compile-time algorithm set. Each implemented bit owns independent state.
+ * Keep the existing BACKEND option name for target/build compatibility.
+ */
 #define FOC_OBSERVER_BACKEND_NONE          0
 #define FOC_OBSERVER_BACKEND_SMO           1
+#define FOC_OBSERVER_BACKEND_HFI           2
 
 #ifndef FOC_OBSERVER_BACKEND
 #if FOC_ENABLE_SMO
@@ -42,12 +45,18 @@
 #endif
 #endif
 
-#if (FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE) && \
-    (FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_SMO)
-#error "Unsupported FOC_OBSERVER_BACKEND"
+#if FOC_ENABLE_HFI || (FOC_OBSERVER_BACKEND & FOC_OBSERVER_BACKEND_HFI)
+#error "HFI requires an estimator, injection path, and Position policy"
 #endif
 
-#if (FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO) && !FOC_ENABLE_SMO
+#if (FOC_OBSERVER_BACKEND & ~FOC_OBSERVER_BACKEND_SMO) != 0
+#error "Unsupported FOC_OBSERVER_BACKEND algorithm set"
+#endif
+
+#define FOC_OBSERVER_HAS_SMO                                                    \
+    ((FOC_OBSERVER_BACKEND & FOC_OBSERVER_BACKEND_SMO) != 0)
+
+#if FOC_OBSERVER_HAS_SMO && !FOC_ENABLE_SMO
 #error "SMO observer backend requires FOC_ENABLE_SMO=1"
 #endif
 

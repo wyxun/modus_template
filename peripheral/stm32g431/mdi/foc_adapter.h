@@ -75,16 +75,10 @@ MDI_INLINE uint32_t mdi_g431_foc_duty_q16(foc_scalar_t qDuty)
 
 /** @brief Submit one complete normalized three-phase duty frame. */
 MDI_INLINE foc_result_t mdi_g431_foc_set_duty(
-    const foc_duty_abc_t *ptDuty, foc_port_pwm_phase_t *ptPhase)
+    const foc_duty_abc_t *ptDuty)
 {
     MDI_PWM_DutyFrame(bridge) tDuty;
     mdi_status_t eStatus;
-#if !defined(__NO_USE_LOG__)
-    uint32_t wDirectionBefore = 0U;
-    uint32_t wDirectionAfter = 0U;
-#else
-    (void)ptPhase;
-#endif
 
     if (ptDuty == NULL) {
         return FOC_RESULT_NULL;
@@ -96,16 +90,6 @@ MDI_INLINE foc_result_t mdi_g431_foc_set_duty(
     if (eStatus != MDI_OK) {
         return mdi_g431_foc_status(eStatus);
     }
-#if !defined(__NO_USE_LOG__)
-    if (ptPhase != NULL) {
-        wDirectionBefore = TIM1->CR1 & TIM_CR1_DIR;
-        ptPhase->wCounter = TIM1->CNT;
-        wDirectionAfter = TIM1->CR1 & TIM_CR1_DIR;
-        ptPhase->wTriggerCounter = TIM1->CCR4;
-        ptPhase->bCountingDown = wDirectionAfter != 0U;
-        ptPhase->bValid = wDirectionBefore == wDirectionAfter;
-    }
-#endif
     /* Bridge CCR preload is disabled; UG here restarts center-aligned TIM1. */
     return FOC_RESULT_OK;
 }
@@ -208,9 +192,7 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
 #undef FOC_PORT_SAMPLE_CURRENT
 #define FOC_PORT_SAMPLE_CURRENT(P) mdi_g431_foc_sample_current(P)
 #undef FOC_PORT_SET_DUTY
-#define FOC_PORT_SET_DUTY(P) mdi_g431_foc_set_duty((P), NULL)
-#undef FOC_PORT_SET_DUTY_CAPTURE
-#define FOC_PORT_SET_DUTY_CAPTURE(P, S) mdi_g431_foc_set_duty((P), (S))
+#define FOC_PORT_SET_DUTY(P) mdi_g431_foc_set_duty(P)
 #undef FOC_PORT_SAMPLE_DCBUS_RAW
 #define FOC_PORT_SAMPLE_DCBUS_RAW(P) mdi_g431_foc_sample_dcbus_raw(P)
 #undef FOC_PORT_START_ADC_TRIGGER
@@ -229,10 +211,10 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
  * removes the per-cycle motor position provider dispatch. */
 #define FOC_POSITION_STATIC_BINDING 1
 #undef FOC_SENSOR_POSITION_GET
-#define FOC_SENSOR_POSITION_GET(P, T, O) \
+#define FOC_SENSOR_POSITION_GET(P, T, O)                                        \
     foc_encoder_GetPosition((P)->pSensorState, (T), (O))
 #undef FOC_SENSOR_POSITION_CAPTURE_ZERO
-#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O) \
+#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O)                               \
     foc_encoder_CaptureZero((P)->pSensorState, (T), (O))
 
 #endif /* STM32G431_MDI_FOC_ADAPTER_H */

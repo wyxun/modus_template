@@ -23,14 +23,6 @@ typedef enum {
     FOC_PORT_ADC_CHANNEL_DCBUS = 0U
 } foc_port_adc_channel_e;
 
-/** @brief Timer phase captured after the final PWM compare write. */
-typedef struct {
-    uint32_t wCounter;
-    uint32_t wTriggerCounter;
-    bool bCountingDown;
-    bool bValid;
-} foc_port_pwm_phase_t;
-
 #define FOC_PORT_ADC_SAMPLE_INVALID UINT32_MAX
 
 /* Optional math-accelerator bindings.  They are macros so a target can map
@@ -55,8 +47,8 @@ foc_result_t foc_SetDuty(const foc_duty_abc_t *ptDuty);
  * @brief Read the latest raw DC-bus ADC count.
  * @param eChannel Logical ADC channel; currently DC bus only.
  * @return Right-aligned ADC count or FOC_PORT_ADC_SAMPLE_INVALID.
- * @note The target adapter owns sampling; voltage conversion belongs to the
- *       application layer.
+ * @note The target adapter owns sampling; Motor applies board scaling and
+ *       normalizes the resulting voltage to its configured pu base.
  */
 uint32_t foc_SampleDcBusRaw(foc_port_adc_channel_e eChannel);
 
@@ -102,9 +94,6 @@ foc_result_t foc_PwmClearFault(void);
 #endif
 #ifndef FOC_PORT_SET_DUTY
 #define FOC_PORT_SET_DUTY(P) foc_SetDuty(P)
-#endif
-#ifndef FOC_PORT_SET_DUTY_CAPTURE
-#define FOC_PORT_SET_DUTY_CAPTURE(P, S) FOC_PORT_SET_DUTY(P)
 #endif
 #ifndef FOC_PORT_SAMPLE_DCBUS_RAW
 #define FOC_PORT_SAMPLE_DCBUS_RAW(C) foc_SampleDcBusRaw(C)

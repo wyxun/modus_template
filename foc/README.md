@@ -26,10 +26,11 @@ flowchart LR
     ENC[Encoder] -->|机械角度 / 速度| POS
     POS -->|唯一电角反馈<br/>θe、速度 PU、有效标志| CTRL[Motor Control]
     CTRL --> CORE[FOC Core]
-    CORE --> PWM[PWM]
+    CORE -->|数学输出| CTRL
+    CTRL --> PWM[PWM]
 
     POS -.->|调用估算步骤| OBS[Observer / SMO]
-    OBS -.->|当前仅影子输出| POS
+    OBS -.->|候选及算法证据；支持强拖切 SMO| POS
     HALL[Hall] -.->|后续反馈候选| POS
     EST[SMO / HFI 估算器] -.->|后续角度候选| POS
     POS -.->|后续注入请求| CTRL

@@ -40,30 +40,58 @@
 typedef struct {
     foc_pid_t      tIdPi;
     foc_pid_t      tIqPi;
+    foc_scalar_t qVoltageLimitSquared;
+} foc_core_state_t;
+
+/* Future HFI injection boundary (no injection input exists yet):
+ * Motor supplies the PU injection request; Core combines it with the control
+ * voltage before final modulation, using one shared voltage budget/limit.
+ * Publish the applied waveform/phase and limiting status needed to pair
+ * subsequent samples with injection. Distinguish base control voltage from
+ * total model voltage and define their consumer-specific timing semantics.
+ * Core performs no HFI estimation or position-source selection.
+ */
+
+/** Read-only control result; no PI state is exposed to the orchestrator. */
+typedef struct {
     foc_ab_t       tCurrentAlphaBeta;
     foc_dq_t       tCurrent;
-    foc_dq_t       tVoltage;
-    foc_ab_t       tVoltageAlphaBeta;
+    foc_dq_t       tVoltage; /**< Modulation command, not measured voltage PU. */
+    foc_ab_t       tVoltageAlphaBeta; /**< Prior-to-clipping modulation. */
     foc_duty_abc_t tDuty;
     bool bPwmSaturated;
-} foc_core_state_t;
+    bool bVoltageLimited;
+} foc_core_output_t;
+
+/**
+ * @brief Initialize both current PI loops and the voltage limit criterion.
+ * @param ptState Core instance.
+ * @param ptPi Current PI configuration, copied by each loop.
+ * @param qVoltageLimit Modulation magnitude threshold; not a new clamp.
+ * @return Initialization result.
+ */
+foc_result_t foc_core_Init(foc_core_state_t *ptState,
+    const foc_pid_params_t *ptPi, foc_scalar_t qVoltageLimit);
 
 /**
  * @brief  复位核心状态和两个电流 PI
  * @param  ptState  核心状态指针
+ * @param  ptOutput 复位为零电压、中点占空比的输出
  */
-void foc_core_Reset(foc_core_state_t *ptState);
+void foc_core_Reset(foc_core_state_t *ptState, foc_core_output_t *ptOutput);
 
 /**
  * @brief  执行一次无硬件依赖的 FOC 数学核心
  * @param  ptState    核心状态
  * @param  ptCommand  控制命令和值参考
- * @param  ptInput    三相电流、角度和速度输入
+ * @param  ptInput    当前 alpha-beta 电流、电角度和电角速度 pu
+ * @param  ptOutput   本拍电流、电压、占空比及限幅结果
  * @return            FOC_RESULT_OK 或错误码
  */
 foc_result_t foc_core_step(foc_core_state_t *ptState,
                            const foc_core_command_t *ptCommand,
-                           const foc_core_input_t *ptInput);
+                           const foc_core_input_t *ptInput,
+                           foc_core_output_t *ptOutput);
 
 /**
  * @brief  Clarke 变换：三相电流 → αβ 坐标系

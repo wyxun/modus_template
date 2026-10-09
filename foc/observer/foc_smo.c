@@ -1,8 +1,8 @@
 /****************************************************************************
  * @file    foc_smo.c
- * @brief   Equal-inductance alpha-beta sliding-mode observer.
+ * @brief   Equal-inductance SMO PU recurrence; no physical-unit conversion.
  * @author  Codex
- * @date    2026-09-23
+ * @date    2026-10-09
  ****************************************************************************/
 
 #include "foc_smo.h"
@@ -15,14 +15,18 @@
 
 #include "foc_math.h"
 #include "internal/foc_units.h"
-#include "motor.h"
+
+/* Preserve separate multiply/add rounding in the original recurrence. */
+#if defined(__clang__)
+#pragma clang fp contract(off)
+#endif
 
 #if defined(FOC_NUMERIC_FIXED)
 #define SMO_ONE_BILLION       ((uint64_t)FOC_NANOSECONDS_PER_SECOND)
 #define SMO_TWO_BILLION       (2ULL * SMO_ONE_BILLION)
 #define SMO_ONE_MILLION       1000000ULL
 #else
-#define SMO_NANOSECONDS_PER_SECOND \
+#define SMO_NANOSECONDS_PER_SECOND                                              \
     ((float)FOC_NANOSECONDS_PER_SECOND)
 #define SMO_MILLI_PER_UNIT         1000.0f
 #define SMO_MICRO_PER_UNIT         1000000.0f
@@ -37,7 +41,7 @@
  * @param pwResult Product output.
  * @return true when the product fits uint64_t.
  */
-static bool smo_MultiplyU64(uint64_t wLeft,
+static bool _foc_smo_MultiplyU64(uint64_t wLeft,
                             uint64_t wRight,
                             uint64_t *pwResult)
 {
@@ -57,7 +61,7 @@ static bool smo_MultiplyU64(uint64_t wLeft,
  * @param pqValue Fixed scalar output.
  * @return true when the ratio is representable.
  */
-static bool smo_StoreFixedRatio(uint64_t wNumerator,
+static bool _foc_smo_StoreFixedRatio(uint64_t wNumerator,
                                 uint64_t wDenominator,
                                 bool bNegative,
                                 foc_scalar_t *pqValue)
@@ -94,13 +98,14 @@ static bool smo_StoreFixedRatio(uint64_t wNumerator,
 /**
  * @brief Store all fixed-point SMO coefficients.
  * @param ptExec Derived execution coefficients.
- * @param ptMotorParams Motor values and PU bases.
+ * @param ptModel Physical motor model and PU bases.
  * @param ptConfig SMO configuration.
+ * @param wSamplePeriodNanoseconds Rounded control interval in ns.
  * @return true when every coefficient is representable.
  */
-static bool smo_StoreFixedCoefficients(
+static bool _foc_smo_StoreFixedCoefficients(
     foc_smo_exec_t *ptExec,
-    const motor_params_t *ptMotorParams,
+    const foc_electrical_model_t *ptModel,
     const foc_smo_cfg_t *ptConfig,
     uint32_t wSamplePeriodNanoseconds)
 {
@@ -111,22 +116,24 @@ static bool smo_StoreFixedCoefficients(
     uint64_t wVoltageCurrentBase = 0U;
     uint64_t wFilterProduct = 0U;
     uint64_t wFilterDenominator = 0U;
+    uint64_t wSpeedNumerator = 0U;
+    uint64_t wSpeedDenominator = 0U;
 
-    if (!smo_MultiplyU64(ptMotorParams->wResistanceMilliohm,
+    if (!_foc_smo_MultiplyU64(ptModel->wResistanceMilliohm,
                         wSamplePeriodNanoseconds,
                         &wResistanceProduct) ||
-        !smo_MultiplyU64(SMO_ONE_MILLION,
-                         ptMotorParams->wInductanceDMicroHenry,
+        !_foc_smo_MultiplyU64(SMO_ONE_MILLION,
+                         ptModel->wInductanceDMicroHenry,
                          &wResistanceBase) ||
-        !smo_MultiplyU64(ptMotorParams->wVoltageBaseMillivolt,
+        !_foc_smo_MultiplyU64(ptModel->wVoltageBaseMillivolt,
                          wSamplePeriodNanoseconds,
                          &wVoltageProduct) ||
-        !smo_MultiplyU64(ptMotorParams->wCurrentBaseMilliamp,
-                         ptMotorParams->wInductanceDMicroHenry,
+        !_foc_smo_MultiplyU64(ptModel->wCurrentBaseMilliamp,
+                         ptModel->wInductanceDMicroHenry,
                          &wCurrentInductance) ||
-        !smo_MultiplyU64(1000U, wCurrentInductance,
+        !_foc_smo_MultiplyU64(1000U, wCurrentInductance,
                          &wVoltageCurrentBase) ||
-        !smo_MultiplyU64(ptConfig->wBemfCutoffRadiansPerSecond,
+        !_foc_smo_MultiplyU64(ptConfig->wBemfCutoffRadiansPerSecond,
                          wSamplePeriodNanoseconds,
                          &wFilterProduct)) {
         return false;
@@ -135,30 +142,37 @@ static bool smo_StoreFixedCoefficients(
         return false;
     }
     wFilterDenominator = SMO_TWO_BILLION + wFilterProduct;
+    if (!_foc_smo_MultiplyU64(SMO_ONE_BILLION, FOC_Q_SCALE,
+                         &wSpeedNumerator) ||
+        !_foc_smo_MultiplyU64(wSamplePeriodNanoseconds,
+                         (uint64_t)ptConfig->qElectricalSpeedBaseHz,
+                         &wSpeedDenominator)) {
+        return false;
+    }
     /* Init only: Gain1 = R / Ld * Ts. */
-    if (!smo_StoreFixedRatio(wResistanceProduct, wResistanceBase,
-                             false, &ptExec->qResistanceGain) ||
+    if (!_foc_smo_StoreFixedRatio(wResistanceProduct, wResistanceBase,
+                             false, &ptExec->kr) ||
         /* Init only: Gain0 = Vbase / (Ibase * Ld) * Ts. */
-        !smo_StoreFixedRatio(wVoltageProduct, wVoltageCurrentBase,
-                             false, &ptExec->qVoltageCurrentGain) ||
+        !_foc_smo_StoreFixedRatio(wVoltageProduct, wVoltageCurrentBase,
+                             false, &ptExec->ku) ||
         /* Init only: Fnum = wc * Ts / (2 + wc * Ts). */
-        !smo_StoreFixedRatio(wFilterProduct, wFilterDenominator,
-                             false, &ptExec->qBemfFilterNumerator) ||
+        !_foc_smo_StoreFixedRatio(wFilterProduct, wFilterDenominator,
+                             false, &ptExec->b0) ||
         /* Init only: Fden = (wc * Ts - 2) / (2 + wc * Ts). */
-        !smo_StoreFixedRatio(wFilterProduct < SMO_TWO_BILLION ?
+        !_foc_smo_StoreFixedRatio(wFilterProduct < SMO_TWO_BILLION ?
                              SMO_TWO_BILLION - wFilterProduct :
                              wFilterProduct - SMO_TWO_BILLION,
                              wFilterDenominator,
                               wFilterProduct < SMO_TWO_BILLION,
-                              &ptExec->qBemfFilterDenominator) ||
+                              &ptExec->a1) ||
         /* Init only: h = sliding voltage / voltage base. */
-        !smo_StoreFixedRatio(ptConfig->wSlidingGainMillivolt,
-                             ptMotorParams->wVoltageBaseMillivolt,
-                             false, &ptExec->qSlidingGain) ||
-        /* Init only: convert angle delta to turns per second. */
-        !smo_StoreFixedRatio(SMO_ONE_BILLION,
-                             wSamplePeriodNanoseconds,
-                             false, &ptExec->qSpeedConversionGain)) {
+        !_foc_smo_StoreFixedRatio(ptConfig->wSlidingGainMillivolt,
+                             ptModel->wVoltageBaseMillivolt,
+                             false, &ptExec->h) ||
+        /* Init only: convert angle delta in turns to electrical speed PU. */
+        !_foc_smo_StoreFixedRatio(wSpeedNumerator,
+                             wSpeedDenominator,
+                             false, &ptExec->speed_scale)) {
         return false;
     }
     return true;
@@ -170,7 +184,7 @@ static bool smo_StoreFixedCoefficients(
  * @param pqValue Output scalar.
  * @return true when the coefficient fits the scalar backend.
  */
-static bool smo_StoreCoefficient(float fValue, foc_scalar_t *pqValue)
+static bool _foc_smo_StoreCoefficient(float fValue, foc_scalar_t *pqValue)
 {
     if (pqValue == NULL || !foc_scalar_is_finite(fValue) ||
         !(fValue >= -65536.0f && fValue < 65536.0f)) {
@@ -183,84 +197,88 @@ static bool smo_StoreCoefficient(float fValue, foc_scalar_t *pqValue)
 /**
  * @brief Store all floating-point SMO coefficients.
  * @param ptExec Derived execution coefficients.
- * @param ptMotorParams Motor values and PU bases.
+ * @param ptModel Physical motor model and PU bases.
  * @param ptConfig SMO configuration.
+ * @param wSamplePeriodNanoseconds Rounded control interval in ns.
  * @return true when every coefficient is representable.
  */
-static bool smo_StoreFloatCoefficients(
+static bool _foc_smo_StoreFloatCoefficients(
     foc_smo_exec_t *ptExec,
-    const motor_params_t *ptMotorParams,
+    const foc_electrical_model_t *ptModel,
     const foc_smo_cfg_t *ptConfig,
     uint32_t wSamplePeriodNanoseconds)
 {
-    const float fSamplePeriod =
+    const float Ts =
         (float)wSamplePeriodNanoseconds /
         SMO_NANOSECONDS_PER_SECOND;
-    const float fVoltageBase =
-        (float)ptMotorParams->wVoltageBaseMillivolt /
+    const float Vb =
+        (float)ptModel->wVoltageBaseMillivolt /
         SMO_MILLI_PER_UNIT;
-    const float fCurrentBase =
-        (float)ptMotorParams->wCurrentBaseMilliamp /
+    const float Ib =
+        (float)ptModel->wCurrentBaseMilliamp /
         SMO_MILLI_PER_UNIT;
-    const float fResistance =
-        (float)ptMotorParams->wResistanceMilliohm /
+    const float Rs =
+        (float)ptModel->wResistanceMilliohm /
         SMO_MILLI_PER_UNIT;
-    const float fInductanceD =
-        (float)ptMotorParams->wInductanceDMicroHenry /
+    const float Ls =
+        (float)ptModel->wInductanceDMicroHenry /
         SMO_MICRO_PER_UNIT;
-    const float fFilterProduct =
-        (float)ptConfig->wBemfCutoffRadiansPerSecond * fSamplePeriod;
+    const float p =
+        (float)ptConfig->wBemfCutoffRadiansPerSecond * Ts;
     bool bStored = false;
 
     /* Init only: Gain0 = Vbase / (Ibase * Ld) * Ts. */
-    bStored = smo_StoreCoefficient(
-        (fVoltageBase / (fCurrentBase * fInductanceD)) *
-            fSamplePeriod, &ptExec->qVoltageCurrentGain);
+    bStored = _foc_smo_StoreCoefficient(
+        (Vb / (Ib * Ls)) *
+            Ts, &ptExec->ku);
     /* Init only: Gain1 = R / Ld * Ts. */
-    bStored = bStored && smo_StoreCoefficient(
-        (fResistance / fInductanceD) * fSamplePeriod,
-        &ptExec->qResistanceGain);
+    bStored = bStored && _foc_smo_StoreCoefficient(
+        (Rs / Ls) * Ts,
+        &ptExec->kr);
     /* Init only: Fnum = wc * Ts / (2 + wc * Ts). */
-    bStored = bStored && smo_StoreCoefficient(
-        fFilterProduct / (2.0f + fFilterProduct),
-        &ptExec->qBemfFilterNumerator);
+    bStored = bStored && _foc_smo_StoreCoefficient(
+        p / (2.0f + p),
+        &ptExec->b0);
     /* Init only: Fden = (wc * Ts - 2) / (2 + wc * Ts). */
-    bStored = bStored && smo_StoreCoefficient(
-        (fFilterProduct - 2.0f) / (2.0f + fFilterProduct),
-        &ptExec->qBemfFilterDenominator);
+    bStored = bStored && _foc_smo_StoreCoefficient(
+        (p - 2.0f) / (2.0f + p),
+        &ptExec->a1);
     /* Init only: h = sliding voltage / voltage base. */
-    bStored = bStored && smo_StoreCoefficient(
+    bStored = bStored && _foc_smo_StoreCoefficient(
         (float)ptConfig->wSlidingGainMillivolt /
-            (float)ptMotorParams->wVoltageBaseMillivolt,
-        &ptExec->qSlidingGain);
-    /* Init only: convert angle delta to turns per second. */
-    return bStored && smo_StoreCoefficient(
-        1.0f / fSamplePeriod, &ptExec->qSpeedConversionGain);
+            (float)ptModel->wVoltageBaseMillivolt,
+        &ptExec->h);
+    /* Init only: convert angle delta in turns to electrical speed PU. */
+    return bStored && _foc_smo_StoreCoefficient(
+        (1.0f / Ts) / ptConfig->qElectricalSpeedBaseHz,
+        &ptExec->speed_scale);
 }
 #endif
 
 /**
  * @brief Validate the equal-inductance model and physical inputs.
- * @param ptMotorParams Motor values and PU bases.
+ * @param ptModel Physical motor model and PU bases.
  * @param ptConfig SMO configuration.
  * @return true when all required values are valid.
  */
-static bool smo_ConfigValid(const motor_params_t *ptMotorParams,
+static bool _foc_smo_ConfigValid(const foc_electrical_model_t *ptModel,
                             const foc_smo_cfg_t *ptConfig)
 {
-    if (ptMotorParams == NULL || ptConfig == NULL ||
-        ptMotorParams->wResistanceMilliohm == 0U ||
-        ptMotorParams->wInductanceDMicroHenry == 0U ||
-        ptMotorParams->wInductanceDMicroHenry !=
-            ptMotorParams->wInductanceQMicroHenry ||
-        ptMotorParams->wVoltageBaseMillivolt == 0U ||
-        ptMotorParams->wCurrentBaseMilliamp == 0U ||
+    if (ptModel == NULL || ptConfig == NULL ||
+        ptModel->wResistanceMilliohm == 0U ||
+        ptModel->wInductanceDMicroHenry == 0U ||
+        ptModel->wInductanceDMicroHenry !=
+            ptModel->wInductanceQMicroHenry ||
+        ptModel->wVoltageBaseMillivolt == 0U ||
+        ptModel->wCurrentBaseMilliamp == 0U ||
         ptConfig->wSampleFrequencyHz == 0U ||
         ptConfig->wSampleFrequencyHz > FOC_NANOSECONDS_PER_SECOND ||
+        ptConfig->qElectricalSpeedBaseHz <= FOC_ZERO ||
+        !foc_scalar_is_finite(ptConfig->qElectricalSpeedBaseHz) ||
         ptConfig->wBemfCutoffRadiansPerSecond == 0U ||
         ptConfig->wSlidingGainMillivolt == 0U ||
         ptConfig->wSlidingGainMillivolt >
-            ptMotorParams->wVoltageBaseMillivolt ||
+            ptModel->wVoltageBaseMillivolt ||
 #if defined(FOC_NUMERIC_FLOAT)
         !foc_scalar_is_finite(ptConfig->qCurrentEstimateLimit) ||
 #endif
@@ -272,83 +290,14 @@ static bool smo_ConfigValid(const motor_params_t *ptMotorParams,
 }
 
 /**
- * @brief Update one axis using the simple SMO current model.
- * @param ptExec Validated execution coefficients.
- * @param ptAxis Axis state.
- * @param qMeasured Measured current in PU.
- * @param qVoltage Prior-interval model voltage in PU.
- * @return None.
- */
-static void smo_AxisStep(const foc_smo_exec_t *ptExec,
-                         foc_smo_axis_t *ptAxis,
-                         foc_scalar_t qMeasured,
-                         foc_scalar_t qVoltage)
-{
-    foc_scalar_t qInput = foc_mul_wide(
-        ptExec->qVoltageCurrentGain, qVoltage);
-    foc_scalar_t qError = FOC_ZERO;
-    foc_scalar_t qSwitch = FOC_ZERO;
-
-    /* Use prior sliding voltage for current correction; filter for angle. */
-    qInput = foc_sub_sat(qInput, foc_mul_wide(
-        ptExec->qResistanceGain, ptAxis->qCurrentEstimate));
-    qInput = foc_sub_sat(qInput, foc_mul_wide(
-        ptExec->qVoltageCurrentGain,
-        ptAxis->qPreviousSlidingVoltage));
-    if (ptAxis->bIntegratorFrozen) {
-        if (foc_mul_wide(qInput, ptAxis->qCurrentEstimate) <
-                FOC_ZERO ||
-            foc_abs(ptAxis->qCurrentEstimate) <
-                ptExec->qCurrentEstimateLimit) {
-            ptAxis->bIntegratorFrozen = false;
-        }
-    } else {
-        foc_scalar_t qDelta = foc_mul_wide(
-            foc_add_sat(qInput, ptAxis->qPreviousDerivative),
-            FOC_HALF);
-
-        ptAxis->qCurrentEstimate = foc_add_sat(
-            ptAxis->qCurrentEstimate, qDelta);
-        if (ptAxis->qCurrentEstimate >
-            ptExec->qCurrentEstimateLimit) {
-            ptAxis->qCurrentEstimate =
-                ptExec->qCurrentEstimateLimit;
-            ptAxis->bIntegratorFrozen = true;
-        } else if (ptAxis->qCurrentEstimate <
-                   FOC_ZERO - ptExec->qCurrentEstimateLimit) {
-            ptAxis->qCurrentEstimate =
-                FOC_ZERO - ptExec->qCurrentEstimateLimit;
-            ptAxis->bIntegratorFrozen = true;
-        }
-    }
-    ptAxis->qPreviousDerivative = qInput;
-    qError = foc_sub_sat(ptAxis->qCurrentEstimate, qMeasured);
-    if (qError > FOC_ZERO) {
-        qSwitch = ptExec->qSlidingGain;
-    } else if (qError < FOC_ZERO) {
-        qSwitch = FOC_ZERO - ptExec->qSlidingGain;
-    } else {
-        qSwitch = FOC_ZERO;
-    }
-    /* Trapezoidal low-pass filtering of the sliding voltage. */
-    ptAxis->qBemf = foc_sub_sat(
-        foc_mul_wide(ptExec->qBemfFilterNumerator,
-                     foc_add_sat(qSwitch,
-                                 ptAxis->qPreviousSlidingVoltage)),
-        foc_mul_wide(ptExec->qBemfFilterDenominator,
-                     ptAxis->qBemf));
-    ptAxis->qPreviousSlidingVoltage = qSwitch;
-}
-
-/**
  * @brief Initialize the simple SMO and its PU coefficients.
  * @param ptSmo SMO state to initialize.
- * @param ptMotorParams Motor values and PU bases.
+ * @param ptModel Physical motor model and PU bases.
  * @param ptConfig Sample frequency and SMO parameters.
  * @return FOC_RESULT_OK or an argument/range error.
  */
 foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
-                          const motor_params_t *ptMotorParams,
+                          const foc_electrical_model_t *ptModel,
                           const foc_smo_cfg_t *ptConfig)
 {
     foc_smo_exec_t tExec = {0};
@@ -359,10 +308,10 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
         return FOC_RESULT_NULL;
     }
     *ptSmo = (foc_smo_t){0};
-    if (ptMotorParams == NULL || ptConfig == NULL) {
+    if (ptModel == NULL || ptConfig == NULL) {
         return FOC_RESULT_NULL;
     }
-    if (!smo_ConfigValid(ptMotorParams, ptConfig)) {
+    if (!_foc_smo_ConfigValid(ptModel, ptConfig)) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
     wSamplePeriodNanoseconds =
@@ -370,20 +319,129 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
          (ptConfig->wSampleFrequencyHz / 2U)) /
         ptConfig->wSampleFrequencyHz;
 #if defined(FOC_NUMERIC_FIXED)
-    bStored = smo_StoreFixedCoefficients(
-        &tExec, ptMotorParams, ptConfig, wSamplePeriodNanoseconds);
+    bStored = _foc_smo_StoreFixedCoefficients(
+        &tExec, ptModel, ptConfig, wSamplePeriodNanoseconds);
 #else
-    bStored = smo_StoreFloatCoefficients(
-        &tExec, ptMotorParams, ptConfig, wSamplePeriodNanoseconds);
+    bStored = _foc_smo_StoreFloatCoefficients(
+        &tExec, ptModel, ptConfig, wSamplePeriodNanoseconds);
 #endif
     if (!bStored) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
-    tExec.qCurrentEstimateLimit = ptConfig->qCurrentEstimateLimit;
+    tExec.i_limit = ptConfig->qCurrentEstimateLimit;
     ptSmo->tExec = tExec;
     ptSmo->bInitialized = true;
     return FOC_RESULT_OK;
 }
+
+#if defined(FOC_NUMERIC_FLOAT)
+/**
+ * @brief Advance one stationary axis; read old history before committing it.
+ * @param c Validated PU execution coefficients.
+ * @param s Instance-owned current and sliding-voltage history.
+ * @param i Current sample in PU.
+ * @param u Model voltage in PU over the preceding control interval.
+ * @return None.
+ * @note A frozen integrator resumes on the sample AFTER release, as before.
+ */
+static void _foc_smo_AxisStep(const foc_smo_exec_t *c,
+                              foc_smo_axis_t *s,
+                              foc_scalar_t i, foc_scalar_t u)
+{
+    foc_scalar_t d = (c->ku * u - c->kr * s->i_hat) - c->ku * s->z_prev;
+    foc_scalar_t err = FOC_ZERO;
+    foc_scalar_t z = FOC_ZERO;
+
+    /* d already includes Ts: ku*u - kr*i_hat - ku*z_prev. */
+    if (s->frozen) {
+        if (d * s->i_hat < FOC_ZERO || fabsf(s->i_hat) < c->i_limit) {
+            s->frozen = false;
+        }
+    } else {
+        /* Trapezoidal integration: i_hat += (d + d_prev) / 2. */
+        foc_scalar_t di = (d + s->d_prev) * 0.5f;
+
+        s->i_hat = s->i_hat + di;
+        if (s->i_hat > c->i_limit) {
+            s->i_hat = c->i_limit;
+            s->frozen = true;
+        } else if (s->i_hat < FOC_ZERO - c->i_limit) {
+            s->i_hat = FOC_ZERO - c->i_limit;
+            s->frozen = true;
+        } else {
+            /* Remain inside the configured estimate bound. */
+        }
+    }
+    err = s->i_hat - i;
+    if (err > FOC_ZERO) {
+        z = c->h;
+    } else if (err < FOC_ZERO) {
+        z = FOC_ZERO - c->h;
+    } else {
+        z = FOC_ZERO;
+    }
+    /* e_hat = b0*(z + z_prev) - a1*e_hat; raw z feeds the model. */
+    s->e_hat = c->b0 * (z + s->z_prev) - c->a1 * s->e_hat;
+    s->d_prev = d;
+    s->z_prev = z;
+}
+#else
+/**
+ * @brief Advance one stationary axis; read old history before committing it.
+ * @param c Validated PU execution coefficients.
+ * @param s Instance-owned current and sliding-voltage history.
+ * @param i Current sample in PU.
+ * @param u Model voltage in PU over the preceding control interval.
+ * @return None.
+ * @note A frozen integrator resumes on the sample AFTER release, as before.
+ */
+static void _foc_smo_AxisStep(const foc_smo_exec_t *c,
+                              foc_smo_axis_t *s,
+                              foc_scalar_t i, foc_scalar_t u)
+{
+    foc_scalar_t d = foc_mul_wide(c->ku, u);
+    foc_scalar_t err = FOC_ZERO;
+    foc_scalar_t z = FOC_ZERO;
+
+    /* d already includes Ts: ku*u - kr*i_hat - ku*z_prev. */
+    d = foc_sub_sat(d, foc_mul_wide(c->kr, s->i_hat));
+    d = foc_sub_sat(d, foc_mul_wide(c->ku, s->z_prev));
+    if (s->frozen) {
+        if (foc_mul_wide(d, s->i_hat) < FOC_ZERO ||
+            foc_abs(s->i_hat) < c->i_limit) {
+            s->frozen = false;
+        }
+    } else {
+        /* Trapezoidal integration: i_hat += (d + d_prev) / 2. */
+        foc_scalar_t di = foc_mul_wide(foc_add_sat(d, s->d_prev), FOC_HALF);
+
+        s->i_hat = foc_add_sat(s->i_hat, di);
+        if (s->i_hat > c->i_limit) {
+            s->i_hat = c->i_limit;
+            s->frozen = true;
+        } else if (s->i_hat < FOC_ZERO - c->i_limit) {
+            s->i_hat = FOC_ZERO - c->i_limit;
+            s->frozen = true;
+        } else {
+            /* Remain inside the configured estimate bound. */
+        }
+    }
+    err = foc_sub_sat(s->i_hat, i);
+    if (err > FOC_ZERO) {
+        z = c->h;
+    } else if (err < FOC_ZERO) {
+        z = FOC_ZERO - c->h;
+    } else {
+        z = FOC_ZERO;
+    }
+    /* e_hat = b0*(z + z_prev) - a1*e_hat; raw z feeds the model. */
+    s->e_hat = foc_sub_sat(
+        foc_mul_wide(c->b0, foc_add_sat(z, s->z_prev)),
+        foc_mul_wide(c->a1, s->e_hat));
+    s->d_prev = d;
+    s->z_prev = z;
+}
+#endif
 
 /**
  * @brief Clear dynamic SMO and angle-speed history.
@@ -402,26 +460,69 @@ void foc_smo_Reset(foc_smo_t *ptSmo)
 }
 
 /**
- * @brief Run one simple SMO sample and calculate angle-derived speed.
- * @param ptSmo Observer state.
- * @param ptCurrentAlphaBeta Current PU sample.
- * @param ptVoltageAlphaBeta Prior-interval model voltage.
- * @param ptOutput Electrical angle, speed, and basic validity.
- * @return FOC_RESULT_OK, NULL, or INVALID_ARGUMENT.
+ * @brief Publish angle and electrical speed PU from filtered back-EMF.
+ * @param ptSmo Observer history and execution coefficients.
+ * @param ptOutput Result; bValid only indicates nonzero EMF.
+ * @return FOC_RESULT_OK.
  */
-foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
-                          const foc_ab_t *ptCurrentAlphaBeta,
-                          const foc_ab_t *ptVoltageAlphaBeta,
-                          foc_smo_output_t *ptOutput)
+static foc_result_t _foc_smo_OutputStep(foc_smo_t *ptSmo,
+                                       foc_smo_output_t *ptOutput)
 {
     foc_scalar_t qAngleDelta = FOC_ZERO;
     foc_angle_t tElectricalAngle = {0U};
 
-    if (ptSmo == NULL || ptCurrentAlphaBeta == NULL ||
-        ptVoltageAlphaBeta == NULL || ptOutput == NULL) {
+    if (ptSmo->tAxis[0].e_hat == FOC_ZERO &&
+        ptSmo->tAxis[1].e_hat == FOC_ZERO) {
+        ptSmo->bHasPreviousElectricalAngle = false;
+        *ptOutput = (foc_smo_output_t){0};
+        return FOC_RESULT_OK;
+    }
+#if defined(FOC_NUMERIC_FLOAT)
+    tElectricalAngle = foc_angle_from_turns(
+        atan2f(FOC_ZERO - ptSmo->tAxis[0].e_hat,
+               ptSmo->tAxis[1].e_hat) * SMO_RADIANS_TO_TURNS_F);
+#else
+    tElectricalAngle = foc_angle_atan2(
+        FOC_ZERO - ptSmo->tAxis[0].e_hat,
+        ptSmo->tAxis[1].e_hat);
+#endif
+    ptOutput->tEstimate.qElectricalSpeedPu = FOC_ZERO;
+    if (ptSmo->bHasPreviousElectricalAngle) {
+        qAngleDelta = foc_angle_diff(
+            tElectricalAngle, ptSmo->tPreviousElectricalAngle);
+        ptOutput->tEstimate.qElectricalSpeedPu = foc_mul_wide(
+            qAngleDelta, ptSmo->tExec.speed_scale);
+    }
+    ptSmo->tPreviousElectricalAngle = tElectricalAngle;
+    ptSmo->bHasPreviousElectricalAngle = true;
+    ptOutput->tEstimate.tElectricalAngle = tElectricalAngle;
+    ptOutput->qBemfStrengthPu = foc_add_sat(
+        foc_abs(ptSmo->tAxis[0].e_hat),
+        foc_abs(ptSmo->tAxis[1].e_hat));
+    ptOutput->tEstimate.bValid = true;
+    return FOC_RESULT_OK;
+}
+
+/**
+ * @brief Run one simple SMO sample and calculate angle-derived speed.
+ * @param ptSmo Observer state.
+ * @param ptInput Current i[k] and prior-interval model voltage, both PU.
+ * @param ptOutput Electrical angle, speed PU, and basic validity.
+ * @return FOC_RESULT_OK, NULL, or INVALID_ARGUMENT.
+ */
+foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
+                          const foc_smo_input_t *ptInput,
+                          foc_smo_output_t *ptOutput)
+{
+    if (ptSmo == NULL || ptInput == NULL || ptOutput == NULL) {
         if (ptOutput != NULL) {
             *ptOutput = (foc_smo_output_t){0};
         }
+        return FOC_RESULT_NULL;
+    }
+    if (ptInput->ptCurrentAlphaBeta == NULL ||
+        ptInput->ptVoltageModelAlphaBeta == NULL) {
+        *ptOutput = (foc_smo_output_t){0};
         return FOC_RESULT_NULL;
     }
     if (!ptSmo->bInitialized) {
@@ -429,49 +530,20 @@ foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
         return FOC_RESULT_INVALID_ARGUMENT;
     }
 #if defined(FOC_NUMERIC_FLOAT)
-    if (!foc_scalar_is_finite(ptCurrentAlphaBeta->qAlpha) ||
-        !foc_scalar_is_finite(ptCurrentAlphaBeta->qBeta) ||
-        !foc_scalar_is_finite(ptVoltageAlphaBeta->qAlpha) ||
-        !foc_scalar_is_finite(ptVoltageAlphaBeta->qBeta)) {
+    if (!foc_scalar_is_finite(ptInput->ptCurrentAlphaBeta->qAlpha) ||
+        !foc_scalar_is_finite(ptInput->ptCurrentAlphaBeta->qBeta) ||
+        !foc_scalar_is_finite(ptInput->ptVoltageModelAlphaBeta->qAlpha) ||
+        !foc_scalar_is_finite(ptInput->ptVoltageModelAlphaBeta->qBeta)) {
         foc_smo_Reset(ptSmo);
         *ptOutput = (foc_smo_output_t){0};
         return FOC_RESULT_INVALID_ARGUMENT;
     }
 #endif
-    smo_AxisStep(&ptSmo->tExec, &ptSmo->tAxis[0],
-                 ptCurrentAlphaBeta->qAlpha,
-                 ptVoltageAlphaBeta->qAlpha);
-    smo_AxisStep(&ptSmo->tExec, &ptSmo->tAxis[1],
-                 ptCurrentAlphaBeta->qBeta,
-                 ptVoltageAlphaBeta->qBeta);
-    if (ptSmo->tAxis[0].qBemf == FOC_ZERO &&
-        ptSmo->tAxis[1].qBemf == FOC_ZERO) {
-        ptSmo->bHasPreviousElectricalAngle = false;
-        *ptOutput = (foc_smo_output_t){0};
-        return FOC_RESULT_OK;
-    }
-#if defined(FOC_NUMERIC_FLOAT)
-    tElectricalAngle = foc_angle_from_turns(
-        atan2f(FOC_ZERO - ptSmo->tAxis[0].qBemf,
-               ptSmo->tAxis[1].qBemf) * SMO_RADIANS_TO_TURNS_F);
-#else
-    tElectricalAngle = foc_angle_atan2(
-        FOC_ZERO - ptSmo->tAxis[0].qBemf,
-        ptSmo->tAxis[1].qBemf);
-#endif
-    ptOutput->qElectricalSpeedTurnsPerSecond = FOC_ZERO;
-    if (ptSmo->bHasPreviousElectricalAngle) {
-        qAngleDelta = foc_angle_diff(
-            tElectricalAngle, ptSmo->tPreviousElectricalAngle);
-        ptOutput->qElectricalSpeedTurnsPerSecond = foc_mul_wide(
-            qAngleDelta, ptSmo->tExec.qSpeedConversionGain);
-    }
-    ptSmo->tPreviousElectricalAngle = tElectricalAngle;
-    ptSmo->bHasPreviousElectricalAngle = true;
-    ptOutput->tElectricalAngle = tElectricalAngle;
-    ptOutput->qSignalStrengthPu = foc_add_sat(
-        foc_abs(ptSmo->tAxis[0].qBemf),
-        foc_abs(ptSmo->tAxis[1].qBemf));
-    ptOutput->bValid = true;
-    return FOC_RESULT_OK;
+    _foc_smo_AxisStep(&ptSmo->tExec, &ptSmo->tAxis[0],
+                 ptInput->ptCurrentAlphaBeta->qAlpha,
+                 ptInput->ptVoltageModelAlphaBeta->qAlpha);
+    _foc_smo_AxisStep(&ptSmo->tExec, &ptSmo->tAxis[1],
+                 ptInput->ptCurrentAlphaBeta->qBeta,
+                 ptInput->ptVoltageModelAlphaBeta->qBeta);
+    return _foc_smo_OutputStep(ptSmo, ptOutput);
 }

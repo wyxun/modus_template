@@ -20,7 +20,7 @@
 #endif
 
 #ifndef FOC_CURRENT_COUNTS_PER_BASE
-#define FOC_CURRENT_COUNTS_PER_BASE           1390U
+#define FOC_CURRENT_COUNTS_PER_BASE           119U
 #endif
 
 #ifndef FOC_CURRENT_SAMPLE_INVERTED

@@ -15,16 +15,16 @@
 
 /* Motor nameplate and identified electrical parameters. */
 #define MOTOR_CONFIG_POLE_PAIRS                            7U
-#define MOTOR_CONFIG_RESISTANCE_MILLIOHM                   2740U
-#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               800U
-#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               800U
+#define MOTOR_CONFIG_RESISTANCE_MILLIOHM                   2550U
+#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               860U
+#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               860U
 
 /* Drive bases. HF frequency itself is supplied by the selected target. */
 #define MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT                12000U
-#define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    200.0f
+#define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    400.0f
 
 /* Position source: SENSOR or HARD_DRAG. Hard drag is disabled at zero Hz. */
-#define MOTOR_CONFIG_POSITION_SOURCE                       \
+#define MOTOR_CONFIG_POSITION_SOURCE                                            \
     MOTOR_POSITION_SOURCE_HARD_DRAG
 #define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
 
@@ -32,32 +32,36 @@
  * repeated bench data establishes reliable thresholds for this motor. */
 #define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     10000U
 #define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  60000U
-#define MOTOR_CONFIG_STARTUP_IQ_PU                          0.02f
-#define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.001f
+#define MOTOR_CONFIG_STARTUP_IQ_PU                          0.06f
+#define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.0005f
 #define MOTOR_CONFIG_OBSERVER_TAKEOVER                      true
 #define MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER                 false
 #define MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS           4000U
 #define MOTOR_CONFIG_OBSERVER_BLEND_STEPS                   400U
 #define MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU                   0.13f
-#define MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU                  0.15f
+#define MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU                  0.075f
 #define MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO         0.10f
 #define MOTOR_CONFIG_OBSERVER_MAX_ANGLE_ERROR_TURNS         0.125f
 
 /* Operating limits and current/speed controller tuning. */
-#define MOTOR_CONFIG_MAX_SPEED_REFERENCE_PU                200.0f
-#define MOTOR_CONFIG_MAX_PHASE_CURRENT_PU                  1.0f
+/* Physical electrical Hz; App binding converts this limit to speed pu. */
+#define MOTOR_CONFIG_MAX_SPEED_ELECTRICAL_HZ                303.333333f
+#define MOTOR_CONFIG_MAX_PHASE_CURRENT_PU                  0.14f
 #define MOTOR_CONFIG_MAX_MODULATION_PU                     0.5773502692f
 #define MOTOR_CONFIG_PI_GAIN_INTEGER                       0
-#define MOTOR_CONFIG_CURRENT_PI_KP_PU                      0.20f
-#define MOTOR_CONFIG_CURRENT_PI_KI_TS_PU                   0.005f
+/* 12 V, 3.5 A base: 300 Hz current-loop model, 50 us control period. */
+#define MOTOR_CONFIG_CURRENT_PI_KP_PU                      0.472810f
+#define MOTOR_CONFIG_CURRENT_PI_KI_TS_PU                   0.070097f
 #define MOTOR_CONFIG_CURRENT_PI_KD_OVER_TS_PU              0.0f
 #define MOTOR_CONFIG_CURRENT_PI_OUTPUT_MIN_PU              -0.55f
 #define MOTOR_CONFIG_CURRENT_PI_OUTPUT_MAX_PU              0.55f
 #define MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MIN_PU          -0.50f
 #define MOTOR_CONFIG_CURRENT_PI_INTEGRATOR_MAX_PU          0.50f
-#define MOTOR_CONFIG_SPEED_PI_KP_PU                        0.20f
-#define MOTOR_CONFIG_SPEED_PI_KI_TS_PU                     0.005f
-#define MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PU                0.0f
+/* Gains per electrical Hz; App binding multiplies by the speed base.
+ * Bare 2804 rotor: J=3.7e-6 kg*m^2, 5 Hz natural frequency, damping=1. */
+#define MOTOR_CONFIG_SPEED_PI_KP_PER_ELECTRICAL_HZ           0.001622326f
+#define MOTOR_CONFIG_SPEED_PI_KI_TS_PER_ELECTRICAL_HZ        0.00002548343f
+#define MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PER_ELECTRICAL_HZ   0.0f
 #define MOTOR_CONFIG_SPEED_PI_OUTPUT_MIN_PU                -0.10f
 #define MOTOR_CONFIG_SPEED_PI_OUTPUT_MAX_PU                0.10f
 #define MOTOR_CONFIG_SPEED_PI_INTEGRATOR_MIN_PU            -0.10f
@@ -65,7 +69,7 @@
 #define MOTOR_CONFIG_ADC_CALIBRATION_TIMEOUT_SECONDS       0.1f
 #define MOTOR_CONFIG_ALIGN_TIME_SECONDS                    1.5f 
 #define MOTOR_CONFIG_SPEED_LOOP_FREQUENCY_HZ               1000U
-#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.005f
+#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.06f
 
 /* Position sensor setup; used only when FOC_PORT_HAS_POSITION is enabled. */
 #define MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA            0.25f
@@ -79,13 +83,13 @@
 
 /* Debug identification routine settings. */
 #define MOTOR_CONFIG_IDENTIFY_LD_FREQUENCY_HZ              1000U
-#define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_DELAY             1U
-#define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_SAMPLES           4U
-#define MOTOR_CONFIG_IDENTIFY_LD_HALF_CYCLES               4U
-#define MOTOR_CONFIG_IDENTIFY_LD_MODULATION_PU             0.10f
-#define MOTOR_CONFIG_IDENTIFY_LD_MAX_CURRENT_PU            0.02f
-#define MOTOR_CONFIG_IDENTIFY_LD_MIN_DELTA_PU              0.001f
-#define MOTOR_CONFIG_IDENTIFY_LD_MAX_SPEED_PU              0.01f
-#define MOTOR_CONFIG_IDENTIFY_LD_MOTION_CYCLES             1U
+#define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_DELAY             2U
+#define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_SAMPLES           8U
+#define MOTOR_CONFIG_IDENTIFY_LD_HALF_CYCLES               20U
+#define MOTOR_CONFIG_IDENTIFY_LD_MODULATION_PU             0.06f
+#define MOTOR_CONFIG_IDENTIFY_LD_MAX_CURRENT_PU            0.10f
+#define MOTOR_CONFIG_IDENTIFY_LD_MIN_DELTA_PU              0.025f
+#define MOTOR_CONFIG_IDENTIFY_LD_MAX_TRANSVERSE_CURRENT_PU 0.025f
+#define MOTOR_CONFIG_IDENTIFY_LD_TRANSVERSE_CYCLES          1U
 
 #endif /* MOTOR_CONFIG_H */

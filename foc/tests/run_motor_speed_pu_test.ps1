@@ -4,6 +4,7 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_speed_pu_test.c"),
     (Join-Path $repoRoot "foc/tests/motor_realtime_test_port.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/motor/motor_position.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
@@ -17,7 +18,7 @@ $includePaths = @(
     "modus/src", "modus/src/mdi", "modus/src/arch",
     "modus/src/arch/cortex-m", "modus/src/utilities",
     "modus/lib/plooc", "modus/lib/perf_counter", "foc", "foc/math",
-    "foc/hal", "foc/motor", "foc/middleware", "foc/control",
+    "foc/hal", "foc/motor", "foc/middleware", "foc/control", "foc/modulation",
     "foc/observer"
 )
 $includeArgs = @($includePaths | ForEach-Object {

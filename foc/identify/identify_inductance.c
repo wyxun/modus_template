@@ -1,6 +1,6 @@
 /****************************************************************************
  * @file    identify_inductance.c
- * @brief   Phase 1 d-axis incremental-inductance identification.
+ * @brief   Incremental Ld along the aligned stationary alpha axis.
  ****************************************************************************/
 
 #include "identify_inductance.h"
@@ -9,41 +9,23 @@
 #include <math.h>
 #include <stddef.h>
 
+#if IDENTIFY_LOG_ACTIVE
+#include "mdebug/util_debug.h"
+#endif
 #include "perf_counter.h"
+#include "motor.h"
 
 #define IDENTIFY_INDUCTANCE_TIMEOUT_MARGIN_MS (500U)
 
-#ifndef FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES
-#define FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES  (1U)
-#endif
-
-#ifndef FOC_DCBUS_MODULATION_NUM
-#define FOC_DCBUS_MODULATION_NUM              (1U)
-#endif
-
-#ifndef FOC_DCBUS_MODULATION_DEN
-#define FOC_DCBUS_MODULATION_DEN              (1U)
-#endif
+/* Request at k -> PWM at k+1 -> completed-interval sample at k+2. */
+#define FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES  (2U)
 
 typedef struct {
     uint16_t hwHalfCount;
-    uint64_t ullVoltageSumMillivolt;
-#if defined(FOC_NUMERIC_FLOAT)
-    float fDeltaSum;
-    float fCurrentSum;
-#else
-    int64_t lDeltaSum;
-    int64_t lCurrentSum;
-#endif
+    identify_accumulator_t u_sum;
+    identify_accumulator_t di_sum;
+    identify_accumulator_t i_sum;
 } identify_inductance_polarity_t;
-
-typedef struct {
-    int64_t lInductanceMicroHenry;
-#if FOC_APP_LOG_INDUCTANCE_ID
-    int64_t lVoltageMillivolt;
-    int64_t lCurrentMilliamp;
-#endif
-} identify_inductance_calculated_t;
 
 static uint32_t _identify_inductance_HalfPeriod(uint32_t wFrequencyHz)
 {
@@ -73,16 +55,14 @@ static bool _identify_inductance_ConfigValid(
         ptConfig->hwCaptureSampleCount < 2U ||
         ptConfig->hwHalfCycleCount < 4U ||
         (ptConfig->hwHalfCycleCount & 1U) != 0U ||
-        ptConfig->hwMotionFaultCycles == 0U ||
+        ptConfig->hwTransverseFaultCycles == 0U ||
         ptConfig->wInjectionFrequencyHz > (FOC_HF_ISR_HZ / 2U) ||
         ptConfig->hwCaptureDelayCycles <
             (FOC_IDENTIFY_COMMAND_PIPELINE_CYCLES +
              FOC_DCBUS_SAMPLE_DELAY_CYCLES)) {
         return false;
     }
-    if ((FOC_HF_ISR_HZ % (2U * ptConfig->wInjectionFrequencyHz)) != 0U ||
-        (uint64_t)ptConfig->hwCaptureSampleCount *
-            FOC_DCBUS_MAX_MILLIVOLT > UINT32_MAX) {
+    if ((FOC_HF_ISR_HZ % (2U * ptConfig->wInjectionFrequencyHz)) != 0U) {
         return false;
     }
     wHalfPeriod = _identify_inductance_HalfPeriod(
@@ -94,7 +74,7 @@ static bool _identify_inductance_ConfigValid(
     if (!foc_scalar_is_finite(ptConfig->qModulationAmplitude) ||
         !foc_scalar_is_finite(ptConfig->qMaxIdentificationCurrent) ||
         !foc_scalar_is_finite(ptConfig->qMinCurrentDelta) ||
-        !foc_scalar_is_finite(ptConfig->qMaxElectricalSpeedPu)) {
+        !foc_scalar_is_finite(ptConfig->qMaxTransverseCurrentPu)) {
         return false;
     }
     if (ptConfig->qModulationAmplitude <= FOC_ZERO ||
@@ -103,23 +83,13 @@ static bool _identify_inductance_ConfigValid(
         ptConfig->qMaxIdentificationCurrent > FOC_ONE ||
         ptConfig->qMinCurrentDelta <= FOC_ZERO ||
         ptConfig->qMinCurrentDelta >= ptConfig->qMaxIdentificationCurrent ||
-        ptConfig->qMaxElectricalSpeedPu <= FOC_ZERO ||
-        ptConfig->qMaxElectricalSpeedPu > FOC_ONE) {
+        ptConfig->qMaxTransverseCurrentPu <= FOC_ZERO ||
+        ptConfig->qMaxTransverseCurrentPu >
+            ptConfig->qMaxIdentificationCurrent) {
         return false;
     }
     *pwHalfPeriod = wHalfPeriod;
     return true;
-}
-
-static bool _identify_inductance_BusConfigured(void)
-{
-#if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_NOMINAL
-    return FOC_DCBUS_NOMINAL_MILLIVOLT != 0U;
-#elif FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
-    return true;
-#else
-    return false;
-#endif
 }
 
 static void _identify_inductance_Prepare(
@@ -127,130 +97,118 @@ static void _identify_inductance_Prepare(
     uint32_t wHalfPeriod,
     identify_inductance_t *ptInductance)
 {
-    ptInductance->wHalfPeriodCycles = wHalfPeriod;
-    ptInductance->wCaptureStartCycle = ptConfig->hwCaptureDelayCycles;
-    ptInductance->wTimeoutMs = _identify_inductance_TimeoutMs(
+    ptInductance->tPlan.wHalfPeriodCycles = wHalfPeriod;
+    ptInductance->tPlan.wCaptureStartCycle = ptConfig->hwCaptureDelayCycles;
+    ptInductance->tPlan.wTimeoutMs = _identify_inductance_TimeoutMs(
         wHalfPeriod, ptConfig->hwHalfCycleCount);
-    ptInductance->atCommand[0].qD = ptConfig->qModulationAmplitude;
-    ptInductance->atCommand[1].qD = -ptConfig->qModulationAmplitude;
-    ptInductance->qMaxCurrent = ptConfig->qMaxIdentificationCurrent;
-    ptInductance->qMaxSpeed = ptConfig->qMaxElectricalSpeedPu;
-    ptInductance->qMinDelta = ptConfig->qMinCurrentDelta;
-    ptInductance->hwCaptureTarget = ptConfig->hwCaptureSampleCount;
-    ptInductance->hwHalfCycleTarget = ptConfig->hwHalfCycleCount;
-    ptInductance->hwMotionFaultLimit = ptConfig->hwMotionFaultCycles;
-#if defined(FOC_NUMERIC_FLOAT)
-    ptInductance->fVoltageScale = foc_to_float(
-        ptConfig->qModulationAmplitude) *
-        (float)FOC_DCBUS_MODULATION_NUM /
-        (float)FOC_DCBUS_MODULATION_DEN;
-#endif
+    ptInductance->tPlan.atCommand[0].qAlpha = ptConfig->qModulationAmplitude;
+    ptInductance->tPlan.atCommand[1].qAlpha = -ptConfig->qModulationAmplitude;
+    ptInductance->tPlan.qMaxCurrent = ptConfig->qMaxIdentificationCurrent;
+    ptInductance->tPlan.qMaxTransverseCurrent = ptConfig->qMaxTransverseCurrentPu;
+    ptInductance->tPlan.qMinDelta = ptConfig->qMinCurrentDelta;
+    ptInductance->tPlan.hwCaptureTarget = ptConfig->hwCaptureSampleCount;
+    ptInductance->tPlan.hwHalfCycleTarget = ptConfig->hwHalfCycleCount;
+    ptInductance->tPlan.hwTransverseFaultLimit =
+        ptConfig->hwTransverseFaultCycles;
+
 }
 
-static void _identify_inductance_ResetCapture(identify_t *ptThis)
+static void _identify_inductance_ResetCapture(identify_inductance_t *ptInductance)
 {
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
+    identify_inductance_capture_t *capture = &ptInductance->tCapture;
 
-    ptInductance->hwCaptureSampleCount = 0U;
-    ptInductance->wWindowVoltageSumMillivolt = 0U;
-    ptInductance->qFirstCurrent = FOC_ZERO;
-    ptInductance->qLastCurrent = FOC_ZERO;
-#if defined(FOC_NUMERIC_FLOAT)
-    ptInductance->fWindowCurrentSum = 0.0f;
-#else
-    ptInductance->lWindowCurrentSum = 0;
-#endif
-}
-
-static void _identify_inductance_FailIsr(identify_t *ptThis,
-                                         motor_t *ptMotor,
-                                         foc_result_t eResult)
-{
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
-
-    if (!ptInductance->bError) {
-        ptInductance->eIsrResult = eResult;
-    }
-    ptInductance->bError = true;
-    ptInductance->bActive = false;
-    __perfc_sync_barrier__();
-    ptInductance->bBatchReady = true;
-    motor_IdentificationAbortIsr(ptMotor, MOTOR_FAULT_IDENTIFICATION);
+    capture->hwCaptureSampleCount = 0U;
+    capture->u_window_sum = 0;
+    capture->qFirstCurrent = FOC_ZERO;
+    capture->qLastCurrent = FOC_ZERO;
+    capture->i_window_sum = 0;
 }
 
 static foc_result_t _identify_inductance_FailForeground(
     identify_t *ptThis,
     motor_t *ptMotor,
-    foc_result_t eResult)
+    foc_result_t eResult,
+    const char *pchStage)
 {
     identify_inductance_t *ptInductance = &ptThis->tInductance;
+    perfc_global_interrupt_status_t tIrqState = 0U;
+#if IDENTIFY_LOG_ACTIVE
+    bool bReportFailure = false;
+#endif
 
+    tIrqState = perfc_port_disable_global_interrupt();
+#if IDENTIFY_LOG_ACTIVE
+    bReportFailure = !ptInductance->bError;
+#endif
     if (!ptInductance->bError) {
         ptInductance->eIsrResult = eResult;
     }
     ptInductance->bError = true;
     ptInductance->bActive = false;
     ptInductance->bBatchReady = false;
-    if (ptMotor != NULL) {
-        motor_Stop(ptMotor);
-    }
     eResult = ptInductance->eIsrResult;
     ptThis->eLastResult = eResult;
     ptThis->eState = IDENTIFY_STATE_ERROR;
     ptThis->eOperation = IDENTIFY_OPERATION_NONE;
+    perfc_port_resume_global_interrupt(tIrqState);
+#if IDENTIFY_LOG_ACTIVE
+    if (bReportFailure) {
+        MLOGF(W, "identify Ld %s failed rc=%d\r\n", pchStage,
+              (int)eResult);
+    }
+#else
+    (void)pchStage;
+#endif
+    if (ptMotor != NULL) {
+        motor_Stop(ptMotor);
+    }
     return eResult;
 }
 
-static void _identify_inductance_AddWindowCurrent(
-    identify_inductance_t *ptInductance,
-    foc_scalar_t qCurrent)
+static identify_failure_cause_t _identify_inductance_FailureCause(
+    const identify_inductance_sample_t *ptSample,
+    const identify_inductance_plan_t *ptPlan)
 {
-#if defined(FOC_NUMERIC_FLOAT)
-    ptInductance->fWindowCurrentSum += qCurrent;
-#else
-    ptInductance->lWindowCurrentSum += (int64_t)qCurrent;
-#endif
+    bool bFinite = foc_scalar_is_finite(ptSample->tCurrentPu.qAlpha) &&
+        foc_scalar_is_finite(ptSample->tCurrentPu.qBeta) &&
+        foc_scalar_is_finite(ptSample->qVoltageModelAlphaPu);
+
+    if (!ptSample->bValid || !bFinite) {
+        return IDENTIFY_FAILURE_CAUSE_INVALID_SAMPLE;
+    }
+    if (ptSample->bPwmSaturated) {
+        return IDENTIFY_FAILURE_CAUSE_PWM_SATURATED;
+    }
+    if (ptSample->tCurrentPu.qAlpha > ptPlan->qMaxCurrent ||
+        ptSample->tCurrentPu.qAlpha < -ptPlan->qMaxCurrent ||
+        ptSample->tCurrentPu.qBeta > ptPlan->qMaxCurrent ||
+        ptSample->tCurrentPu.qBeta < -ptPlan->qMaxCurrent) {
+        return IDENTIFY_FAILURE_CAUSE_OVERCURRENT;
+    }
+    return IDENTIFY_FAILURE_CAUSE_NONE;
 }
 
-static __attribute__((always_inline)) inline void
-_identify_inductance_SaveHalfCycle(identify_t *ptThis)
+/** @brief Commit a completed half-window to its polarity accumulator.
+ * @param ptInductance Ld state. @return None.
+ * @note Fixed sums are int64 Q15; at most 32767*65535 samples/polarity. */
+static void _identify_inductance_SaveHalfCycle(
+    identify_inductance_t *ptInductance)
 {
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
-    bool bPositive = (ptInductance->hwHalfCycle & 1U) == 0U;
+    identify_inductance_capture_t *capture = &ptInductance->tCapture;
+    identify_accumulator_t di =
+        (identify_accumulator_t)capture->qLastCurrent -
+        (identify_accumulator_t)capture->qFirstCurrent;
 
-#if defined(FOC_NUMERIC_FLOAT)
-    float fDelta = ptInductance->qLastCurrent -
-                   ptInductance->qFirstCurrent;
-    if (bPositive) {
-        ptInductance->fPositiveDeltaSum += fDelta;
-        ptInductance->fPositiveCurrentSum +=
-            ptInductance->fWindowCurrentSum;
+    if ((capture->hwHalfCycle & 1U) == 0U) {
+        capture->hwPositiveHalfCount++;
+        capture->di_positive_sum += di;
+        capture->i_positive_sum += capture->i_window_sum;
+        capture->u_positive_sum += capture->u_window_sum;
     } else {
-        ptInductance->fNegativeDeltaSum += fDelta;
-        ptInductance->fNegativeCurrentSum +=
-            ptInductance->fWindowCurrentSum;
-    }
-#else
-    int64_t lDelta = (int64_t)ptInductance->qLastCurrent -
-                     (int64_t)ptInductance->qFirstCurrent;
-    if (bPositive) {
-        ptInductance->lPositiveDeltaSum += lDelta;
-        ptInductance->lPositiveCurrentSum +=
-            ptInductance->lWindowCurrentSum;
-    } else {
-        ptInductance->lNegativeDeltaSum += lDelta;
-        ptInductance->lNegativeCurrentSum +=
-            ptInductance->lWindowCurrentSum;
-    }
-#endif
-    if (bPositive) {
-        ptInductance->hwPositiveHalfCount++;
-        ptInductance->ullPositiveVoltageSumMillivolt +=
-            ptInductance->wWindowVoltageSumMillivolt;
-    } else {
-        ptInductance->hwNegativeHalfCount++;
-        ptInductance->ullNegativeVoltageSumMillivolt +=
-            ptInductance->wWindowVoltageSumMillivolt;
+        capture->hwNegativeHalfCount++;
+        capture->di_negative_sum += di;
+        capture->i_negative_sum += capture->i_window_sum;
+        capture->u_negative_sum += capture->u_window_sum;
     }
 }
 
@@ -262,276 +220,113 @@ static bool _identify_inductance_MotorReady(const motor_t *ptMotor)
         return false;
     }
     return tStatus.eState == MOTOR_STATE_RUNNING && tStatus.bPwmEnabled &&
-           tStatus.eMode == FOC_MODE_VOLTAGE;
+           tStatus.eMode == FOC_MODE_VOLTAGE && tStatus.bIdentificationActive &&
+           tStatus.wFaults == MOTOR_FAULT_NONE;
 }
 
 static bool _identify_inductance_CopyBatch(
-    identify_t *ptThis,
+    identify_inductance_t *ptInductance,
     identify_inductance_polarity_t *ptPositive,
     identify_inductance_polarity_t *ptNegative)
 {
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
+    identify_inductance_capture_t *capture = &ptInductance->tCapture;
 
     if (!ptInductance->bBatchReady) {
         return false;
     }
     __perfc_sync_barrier__();
-    ptPositive->hwHalfCount = ptInductance->hwPositiveHalfCount;
-    ptNegative->hwHalfCount = ptInductance->hwNegativeHalfCount;
-    ptPositive->ullVoltageSumMillivolt =
-        ptInductance->ullPositiveVoltageSumMillivolt;
-    ptNegative->ullVoltageSumMillivolt =
-        ptInductance->ullNegativeVoltageSumMillivolt;
-#if defined(FOC_NUMERIC_FLOAT)
-    ptPositive->fDeltaSum = ptInductance->fPositiveDeltaSum;
-    ptNegative->fDeltaSum = ptInductance->fNegativeDeltaSum;
-    ptPositive->fCurrentSum = ptInductance->fPositiveCurrentSum;
-    ptNegative->fCurrentSum = ptInductance->fNegativeCurrentSum;
-#else
-    ptPositive->lDeltaSum = ptInductance->lPositiveDeltaSum;
-    ptNegative->lDeltaSum = ptInductance->lNegativeDeltaSum;
-    ptPositive->lCurrentSum = ptInductance->lPositiveCurrentSum;
-    ptNegative->lCurrentSum = ptInductance->lNegativeCurrentSum;
-#endif
+    ptPositive->hwHalfCount = capture->hwPositiveHalfCount;
+    ptNegative->hwHalfCount = capture->hwNegativeHalfCount;
+    ptPositive->u_sum = capture->u_positive_sum;
+    ptNegative->u_sum = capture->u_negative_sum;
+    ptPositive->di_sum = capture->di_positive_sum;
+    ptNegative->di_sum = capture->di_negative_sum;
+    ptPositive->i_sum = capture->i_positive_sum;
+    ptNegative->i_sum = capture->i_negative_sum;
     ptInductance->bBatchReady = false;
     return true;
 }
 
+/** @brief l_pu = (u_mean - r_pu*i_mean) * dt_pu / delta(i).
+ * @param ptPolarity Captured signed voltage/current in one polarity.
+ * @param plan PU resistance and capture interval.
+ * @param pqResult Positive inductance PU.
+ * @return Validity/range status. */
 static foc_result_t _identify_inductance_CalculatePolarity(
     const identify_inductance_polarity_t *ptPolarity,
-    const identify_inductance_t *ptInductance,
-    bool bPositive,
-    identify_inductance_calculated_t *ptResult
-#if FOC_APP_LOG_INDUCTANCE_ID
-    , identify_inductance_polarity_diagnostic_t *ptDiagnostic
-#endif
-    )
+    const identify_inductance_plan_t *plan,
+    foc_scalar_t *pqResult)
 {
-    uint32_t wSamplesPerPolarity = 0U;
+    uint32_t n = (uint32_t)ptPolarity->hwHalfCount *
+                 plan->hwCaptureTarget;
+    foc_scalar_t di = FOC_ZERO;
+    foc_scalar_t i = FOC_ZERO;
+    foc_scalar_t u = FOC_ZERO;
 
-    if (ptPolarity == NULL || ptInductance == NULL || ptResult == NULL
-#if FOC_APP_LOG_INDUCTANCE_ID
-        || ptDiagnostic == NULL
-#endif
-       ) {
+    if (ptPolarity->hwHalfCount < 2U || n == 0U) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
-#if FOC_APP_LOG_INDUCTANCE_ID
-    ptDiagnostic->eFailure =
-        IDENTIFY_INDUCTANCE_FAILURE_INSUFFICIENT_SAMPLES;
-#endif
-    if (ptPolarity->hwHalfCount < 2U ||
-        ptInductance->hwCaptureTarget == 0U) {
-        return FOC_RESULT_INVALID_ARGUMENT;
+    di = (foc_scalar_t)(ptPolarity->di_sum / ptPolarity->hwHalfCount);
+    i = (foc_scalar_t)(ptPolarity->i_sum / n);
+    u = (foc_scalar_t)(ptPolarity->u_sum / n);
+    if (foc_abs(di) < plan->qMinDelta || di == FOC_ZERO) {
+        return FOC_RESULT_OUT_OF_RANGE;
     }
-    wSamplesPerPolarity = (uint32_t)ptPolarity->hwHalfCount *
-                          ptInductance->hwCaptureTarget;
 #if defined(FOC_NUMERIC_FLOAT)
     {
-        float fDelta = ptPolarity->fDeltaSum /
-                       (float)ptPolarity->hwHalfCount;
-        float fCurrent = ptPolarity->fCurrentSum /
-                          (float)wSamplesPerPolarity;
-        float fVoltage = (float)ptPolarity->ullVoltageSumMillivolt /
-                          (float)wSamplesPerPolarity *
-                          ptInductance->fVoltageScale;
-        float fMeanCurrent = fCurrent *
-                              (float)ptInductance->wCurrentBaseMilliamp;
-        float fNet = (bPositive ? fVoltage : -fVoltage) -
-                      (float)ptInductance->wResistanceMilliohm *
-                      fMeanCurrent / 1000.0f;
-        float fSlope = fDelta * ptInductance->fSlopeScale;
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptDiagnostic->qDeltaCurrentPu = foc_from_float(fDelta);
-        ptDiagnostic->lDeltaCurrentAdcCodeEq = (int32_t)(
-            fDelta * (float)FOC_CURRENT_COUNTS_PER_BASE +
-            (fDelta >= 0.0f ? 0.5f : -0.5f));
-        ptDiagnostic->wAverageBusMillivolt = (uint32_t)(
-            (float)ptPolarity->ullVoltageSumMillivolt /
-            (float)wSamplesPerPolarity + 0.5f);
-        ptDiagnostic->lCommandVoltageMillivolt = (int32_t)(
-            (bPositive ? fVoltage : -fVoltage) +
-            (bPositive ? 0.5f : -0.5f));
-        ptDiagnostic->lNetVoltageMillivolt = (int32_t)(
-            fNet + (fNet >= 0.0f ? 0.5f : -0.5f));
-        ptDiagnostic->lAverageCurrentMilliamp = (int32_t)(
-            fMeanCurrent + (fMeanCurrent >= 0.0f ? 0.5f : -0.5f));
-#endif
-        if (fabsf(fDelta) < foc_to_float(ptInductance->qMinDelta)) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL;
-#endif
+        float net = u - plan->qResistancePu * i;
+        float l = net * plan->qCaptureTimePu / di;
+
+        if (!isfinite(l) || l <= 0.0f) {
             return FOC_RESULT_OUT_OF_RANGE;
         }
-        if (fSlope == 0.0f) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE;
-#endif
-            return FOC_RESULT_OUT_OF_RANGE;
-        }
-        if (fNet * fSlope <= 0.0f) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN;
-#endif
-            return FOC_RESULT_OUT_OF_RANGE;
-        }
-        fNet = fNet * 1000000.0f / fSlope;
-        if (!isfinite(fNet) || fNet <= 0.0f ||
-            fNet > (float)INT64_MAX) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE;
-#endif
-            return FOC_RESULT_OUT_OF_RANGE;
-        }
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptDiagnostic->eFailure = IDENTIFY_INDUCTANCE_FAILURE_NONE;
-#endif
-        ptResult->lInductanceMicroHenry = (int64_t)(fNet + 0.5f);
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptResult->lVoltageMillivolt = (int64_t)(fVoltage + 0.5f);
-        ptResult->lCurrentMilliamp = (int64_t)(fMeanCurrent +
-                                               (fMeanCurrent >= 0.0f ?
-                                                0.5f : -0.5f));
-#endif
+        *pqResult = l;
     }
 #else
     {
-        int64_t lSamples = (int64_t)wSamplesPerPolarity;
-        int64_t lDelta = ptPolarity->lDeltaSum /
-                         (int64_t)ptPolarity->hwHalfCount;
-        int64_t lCurrent = ptPolarity->lCurrentSum / lSamples;
-        int64_t lBus = (int64_t)(ptPolarity->ullVoltageSumMillivolt /
-                                 (uint64_t)lSamples);
-        int64_t lVoltage = lBus * ptInductance->atCommand[0].qD /
-                            FOC_Q_SCALE;
-        lVoltage = lVoltage * FOC_DCBUS_MODULATION_NUM /
-                   FOC_DCBUS_MODULATION_DEN;
-        int64_t lMeanCurrent = lCurrent *
-                                ptInductance->wCurrentBaseMilliamp /
-                                FOC_Q_SCALE;
-        int64_t lNet = (bPositive ? lVoltage : -lVoltage) -
-                        ((int64_t)ptInductance->wResistanceMilliohm *
-                         lMeanCurrent / 1000);
-        int64_t lSlope = lDelta *
-                          ptInductance->wCurrentBaseMilliamp *
-                          FOC_HF_ISR_HZ /
-                          (FOC_Q_SCALE *
-                           (ptInductance->hwCaptureTarget - 1U));
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptDiagnostic->qDeltaCurrentPu = (foc_scalar_t)lDelta;
-        ptDiagnostic->lDeltaCurrentAdcCodeEq = (int32_t)(
-            lDelta * FOC_CURRENT_COUNTS_PER_BASE / FOC_Q_SCALE);
-        ptDiagnostic->wAverageBusMillivolt = (uint32_t)lBus;
-        ptDiagnostic->lCommandVoltageMillivolt = (int32_t)(
-            bPositive ? lVoltage : -lVoltage);
-        ptDiagnostic->lNetVoltageMillivolt = (int32_t)lNet;
-        ptDiagnostic->lAverageCurrentMilliamp = (int32_t)lMeanCurrent;
-#endif
-        if ((lDelta < 0 ? -lDelta : lDelta) <
-            ptInductance->qMinDelta) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL;
-#endif
+        /* Q15 products stay wide: r may exceed 1 pu (no clamped mul). */
+        int64_t net = (int64_t)u -
+            (int64_t)plan->qResistancePu * i / FOC_Q_SCALE;
+        int64_t l = 0;
+
+        if (net == 0 || (net > 0) != (di > 0) ||
+            net > INT32_MAX || net < INT32_MIN) {
             return FOC_RESULT_OUT_OF_RANGE;
         }
-        if (lSlope == 0) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE;
-#endif
+        l = net * plan->qCaptureTimePu / di;
+        if (l <= 0 || l > INT32_MAX) {
             return FOC_RESULT_OUT_OF_RANGE;
         }
-        if ((lNet > 0) != (lSlope > 0)) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN;
-#endif
-            return FOC_RESULT_OUT_OF_RANGE;
-        }
-        lNet = lNet * 1000000 / lSlope;
-        if (lNet <= 0) {
-#if FOC_APP_LOG_INDUCTANCE_ID
-            ptDiagnostic->eFailure =
-                IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE;
-#endif
-            return FOC_RESULT_OUT_OF_RANGE;
-        }
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptDiagnostic->eFailure = IDENTIFY_INDUCTANCE_FAILURE_NONE;
-#endif
-        ptResult->lInductanceMicroHenry = lNet;
-#if FOC_APP_LOG_INDUCTANCE_ID
-        ptResult->lVoltageMillivolt = lVoltage;
-        ptResult->lCurrentMilliamp = lMeanCurrent;
-#endif
+        *pqResult = (foc_scalar_t)l;
     }
 #endif
     return FOC_RESULT_OK;
 }
 
+/** @brief Average independently estimated positive/negative inductance PU.
+ * @param ptInductance Ld state. @param ptOutput Result PU.
+ * @return Measurement status. */
 static foc_result_t _identify_inductance_Calculate(
-    identify_t *ptThis,
-    identify_inductance_result_t *ptOutput)
+    identify_inductance_t *ptInductance, identify_inductance_result_t *ptOutput)
 {
-    identify_inductance_polarity_t tPositive = {0};
-    identify_inductance_polarity_t tNegative = {0};
-    identify_inductance_calculated_t tPositiveResult = {0};
-    identify_inductance_calculated_t tNegativeResult = {0};
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
-    foc_result_t ePositive = FOC_RESULT_OK;
-    foc_result_t eNegative = FOC_RESULT_OK;
+    identify_inductance_polarity_t positive = {0};
+    identify_inductance_polarity_t negative = {0};
+    foc_scalar_t lp = FOC_ZERO;
+    foc_scalar_t ln = FOC_ZERO;
 
-    if (ptOutput == NULL || !_identify_inductance_CopyBatch(
-            ptThis, &tPositive, &tNegative)) {
+    if (!_identify_inductance_CopyBatch(ptInductance, &positive, &negative)) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
-#if FOC_APP_LOG_INDUCTANCE_ID
-    ptInductance->tDiagnostic = (identify_inductance_diagnostic_t){
-        .bValid = true,
-        .wResistanceMilliohm = ptInductance->wResistanceMilliohm,
-        .qMinimumDeltaPu = ptInductance->qMinDelta,
-    };
-    ePositive = _identify_inductance_CalculatePolarity(
-        &tPositive, ptInductance, true, &tPositiveResult,
-        &ptInductance->tDiagnostic.tPositive);
-    eNegative = _identify_inductance_CalculatePolarity(
-        &tNegative, ptInductance, false, &tNegativeResult,
-        &ptInductance->tDiagnostic.tNegative);
+    if (_identify_inductance_CalculatePolarity(
+            &positive, &ptInductance->tPlan, &lp) != FOC_RESULT_OK ||
+        _identify_inductance_CalculatePolarity(
+            &negative, &ptInductance->tPlan, &ln) != FOC_RESULT_OK) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
+#if defined(FOC_NUMERIC_FLOAT)
+    ptOutput->qInductanceDPu = (lp + ln) * 0.5f;
 #else
-    ePositive = _identify_inductance_CalculatePolarity(
-        &tPositive, ptInductance, true, &tPositiveResult);
-    eNegative = _identify_inductance_CalculatePolarity(
-        &tNegative, ptInductance, false, &tNegativeResult);
-#endif
-    if (ePositive != FOC_RESULT_OK || eNegative != FOC_RESULT_OK) {
-        return FOC_RESULT_OUT_OF_RANGE;
-    }
-    if (tPositiveResult.lInductanceMicroHenry <= 0 ||
-        tNegativeResult.lInductanceMicroHenry <= 0 ||
-        ((uint64_t)tPositiveResult.lInductanceMicroHenry +
-         (uint64_t)tNegativeResult.lInductanceMicroHenry) / 2U >
-            UINT32_MAX) {
-        return FOC_RESULT_OUT_OF_RANGE;
-    }
-    ptOutput->wInductanceDMicroHenry = (uint32_t)(
-        ((uint64_t)tPositiveResult.lInductanceMicroHenry +
-         (uint64_t)tNegativeResult.lInductanceMicroHenry) / 2U);
-#if FOC_APP_LOG_INDUCTANCE_ID
-    ptOutput->wEffectiveVoltageMillivolt = (uint32_t)(
-        ((uint64_t)tPositiveResult.lVoltageMillivolt +
-         (uint64_t)tNegativeResult.lVoltageMillivolt) / 2U);
-    ptOutput->lMeanCurrentMilliamp = (int32_t)(
-        (tPositiveResult.lCurrentMilliamp +
-         tNegativeResult.lCurrentMilliamp) / 2);
-    ptOutput->wInjectionFrequencyHz = FOC_HF_ISR_HZ /
-        (2U * ptInductance->wHalfPeriodCycles);
-    ptOutput->hwCaptureSampleCount = ptInductance->hwCaptureTarget;
-    ptOutput->hwHalfCycleCount = ptInductance->hwHalfCycleTarget;
+    ptOutput->qInductanceDPu = (foc_scalar_t)(((int64_t)lp + ln) / 2);
 #endif
     return FOC_RESULT_OK;
 }
@@ -552,9 +347,6 @@ foc_result_t _identify_inductance_Start(
     }
     if (!_identify_inductance_ConfigValid(ptConfig, &wHalfPeriod)) {
         return FOC_RESULT_INVALID_ARGUMENT;
-    }
-    if (!_identify_inductance_BusConfigured()) {
-        return FOC_RESULT_DISABLED;
     }
     if (ptThis->eState == IDENTIFY_STATE_ERROR ||
         ptThis->eLastResult != FOC_RESULT_OK) {
@@ -577,83 +369,93 @@ foc_result_t _identify_inductance_Start(
     return FOC_RESULT_OK;
 }
 
-void _identify_inductance_IsrStep(
-    identify_t *ptThis,
-    motor_t *ptMotor,
-    const identify_isr_sample_t *ptSample)
+/** @brief Pure Ld capture; failures are latched by the public ISR adapter.
+ * @param ptInductance Own state. @param ptSample PU input.
+ * @param ptRequest Caller-owned request. @return Failure category. */
+static identify_failure_cause_t _identify_inductance_CaptureStep(
+    identify_inductance_t *ptInductance,
+    const identify_inductance_sample_t *ptSample,
+    identify_isr_request_t *ptRequest)
 {
-    identify_inductance_t *ptInductance = &ptThis->tInductance;
-
+    if (ptInductance == NULL || ptSample == NULL || ptRequest == NULL) {
+        return IDENTIFY_FAILURE_CAUSE_INVALID_SAMPLE;
+    }
     if (!ptInductance->bActive || ptInductance->bBatchReady) {
-        return;
+        return IDENTIFY_FAILURE_CAUSE_NONE;
     }
-    if (ptSample->bMotorFault || !ptSample->bAngleValid ||
-        !ptSample->bDcBusValid ||
-        ptSample->wDcBusMillivolt > FOC_DCBUS_MAX_MILLIVOLT ||
-        ptSample->bPwmSaturated ||
-        ptSample->qCurrentD > ptInductance->qMaxCurrent ||
-        ptSample->qCurrentD < -ptInductance->qMaxCurrent ||
-        ptSample->qCurrentQ > ptInductance->qMaxCurrent ||
-        ptSample->qCurrentQ < -ptInductance->qMaxCurrent) {
-        _identify_inductance_FailIsr(ptThis, ptMotor, FOC_RESULT_SAFETY);
-        return;
+    identify_inductance_capture_t *capture = &ptInductance->tCapture;
+    const identify_inductance_plan_t *plan = &ptInductance->tPlan;
+    identify_failure_cause_t cause =
+        _identify_inductance_FailureCause(ptSample, plan);
+    if (cause != IDENTIFY_FAILURE_CAUSE_NONE) {
+        return cause;
     }
-    if (ptSample->qElectricalSpeedPu > ptInductance->qMaxSpeed ||
-        ptSample->qElectricalSpeedPu < -ptInductance->qMaxSpeed) {
-        ptInductance->hwMotionFaultCount++;
-        if (ptInductance->hwMotionFaultCount >=
-            ptInductance->hwMotionFaultLimit) {
-            _identify_inductance_FailIsr(ptThis, ptMotor,
-                                         FOC_RESULT_SAFETY);
+    if (ptSample->tCurrentPu.qBeta > plan->qMaxTransverseCurrent ||
+        ptSample->tCurrentPu.qBeta < -plan->qMaxTransverseCurrent) {
+        capture->hwTransverseFaultCount++;
+        if (capture->hwTransverseFaultCount >= plan->hwTransverseFaultLimit) {
+            return IDENTIFY_FAILURE_CAUSE_TRANSVERSE_CURRENT;
         }
-        return;
+    } else {
+        capture->hwTransverseFaultCount = 0U;
     }
-    ptInductance->hwMotionFaultCount = 0U;
-    if (ptInductance->wPhaseCycle == 0U &&
-        motor_IdentificationApplyIsr(
-            ptMotor, &ptInductance->atCommand[
-                ptInductance->hwHalfCycle & 1U]) != FOC_RESULT_OK) {
-        _identify_inductance_FailIsr(ptThis, ptMotor, FOC_RESULT_SAFETY);
-        return;
+    if (capture->wPhaseCycle == 0U) {
+        ptRequest->tModulationCommand =
+            plan->atCommand[capture->hwHalfCycle & 1U];
+        ptRequest->bSetModulation = true;
     }
-    if ((ptInductance->wPhaseCycle - ptInductance->wCaptureStartCycle) <
-        ptInductance->hwCaptureTarget) {
-        if (ptInductance->hwCaptureSampleCount == 0U) {
-            ptInductance->qFirstCurrent = ptSample->qCurrentD;
+    if ((capture->wPhaseCycle - plan->wCaptureStartCycle) <
+        plan->hwCaptureTarget) {
+        if (capture->hwCaptureSampleCount == 0U) {
+            capture->qFirstCurrent = ptSample->tCurrentPu.qAlpha;
         }
-        ptInductance->qLastCurrent = ptSample->qCurrentD;
-        _identify_inductance_AddWindowCurrent(ptInductance,
-                                              ptSample->qCurrentD);
-        ptInductance->wWindowVoltageSumMillivolt +=
-            ptSample->wDcBusMillivolt;
-        ptInductance->hwCaptureSampleCount++;
+        capture->qLastCurrent = ptSample->tCurrentPu.qAlpha;
+        capture->i_window_sum += ptSample->tCurrentPu.qAlpha;
+        capture->u_window_sum += ptSample->qVoltageModelAlphaPu;
+        capture->hwCaptureSampleCount++;
     }
-    if (ptInductance->wPhaseCycle + 1U >=
-        ptInductance->wHalfPeriodCycles) {
-        if (ptInductance->hwCaptureSampleCount !=
-            ptInductance->hwCaptureTarget) {
-            _identify_inductance_FailIsr(ptThis, ptMotor,
-                                         FOC_RESULT_SAFETY);
-            return;
+    if (capture->wPhaseCycle + 1U >= plan->wHalfPeriodCycles) {
+        if (capture->hwCaptureSampleCount != plan->hwCaptureTarget) {
+            return IDENTIFY_FAILURE_CAUSE_INCOMPLETE_CAPTURE;
         }
-        _identify_inductance_SaveHalfCycle(ptThis);
-        ptInductance->hwHalfCycle++;
-        ptInductance->wPhaseCycle = 0U;
-        _identify_inductance_ResetCapture(ptThis);
-        if (ptInductance->hwHalfCycle >= ptInductance->hwHalfCycleTarget) {
-            if (motor_IdentificationApplyIsr(
-                    ptMotor, &(foc_dq_t){FOC_ZERO, FOC_ZERO}) != FOC_RESULT_OK) {
-                _identify_inductance_FailIsr(
-                    ptThis, ptMotor, FOC_RESULT_SAFETY);
-                return;
-            }
+        _identify_inductance_SaveHalfCycle(ptInductance);
+        capture->hwHalfCycle++;
+        capture->wPhaseCycle = 0U;
+        _identify_inductance_ResetCapture(ptInductance);
+        if (capture->hwHalfCycle >= plan->hwHalfCycleTarget) {
+            ptRequest->tModulationCommand = (foc_ab_t){0};
+            ptRequest->bSetModulation = true;
             ptInductance->bActive = false;
             __perfc_sync_barrier__();
             ptInductance->bBatchReady = true;
         }
+        return IDENTIFY_FAILURE_CAUSE_NONE;
+    }
+    capture->wPhaseCycle++;
+    return IDENTIFY_FAILURE_CAUSE_NONE;
+}
+
+/** @brief Dispatch Ld capture and latch only the parent's lifecycle failure.
+ * @param ptThis Scheduler. @param ptSample Ld sample. @param ptRequest Request.
+ * @return None. */
+void identify_InductanceIsrStep(identify_t *ptThis,
+    const identify_inductance_sample_t *ptSample,
+    identify_isr_request_t *ptRequest)
+{
+    if (ptRequest == NULL) {
         return;
     }
-    ptInductance->wPhaseCycle++;
+    *ptRequest = (identify_isr_request_t){0};
+    if (ptThis != NULL &&
+        ptThis->eOperation != IDENTIFY_OPERATION_INDUCTANCE) {
+        return;
+    }
+    identify_failure_cause_t cause = _identify_inductance_CaptureStep(
+        ptThis == NULL ? NULL : &ptThis->tInductance, ptSample, ptRequest);
+    if (cause != IDENTIFY_FAILURE_CAUSE_NONE) {
+        identify_AbortIsr(ptThis, cause, FOC_RESULT_SAFETY);
+        ptRequest->bAbort = true;
+    }
 }
 
 fsm_rt_t _identify_inductance_RunPt(identify_t *ptThis,
@@ -662,55 +464,59 @@ fsm_rt_t _identify_inductance_RunPt(identify_t *ptThis,
     identify_inductance_t *ptInductance = &ptThis->tInductance;
     motor_status_t tStatus = {0};
     foc_result_t eResult = FOC_RESULT_OK;
+    const char *pchFailureStage = "calculate";
 
     PERFC_PT_BEGIN(ptInductance->chRunPt)
     eResult = motor_GetStatus(ptMotor, &tStatus);
-    if (eResult != FOC_RESULT_OK || tStatus.eState != MOTOR_STATE_IDLE ||
-        tStatus.bPwmEnabled || tStatus.wFaults != MOTOR_FAULT_NONE ||
-        !tStatus.bElectricalZeroValid ||
-        ptInductance->atCommand[0].qD >
+    if (eResult != FOC_RESULT_OK || tStatus.eState != MOTOR_STATE_RUNNING ||
+        !tStatus.bPwmEnabled || tStatus.wFaults != MOTOR_FAULT_NONE ||
+        !tStatus.bIdentificationActive ||
+        tStatus.eMode != FOC_MODE_VOLTAGE ||
+        ptInductance->tPlan.atCommand[0].qAlpha >
             ptMotor->tLimits.qMaxModulation ||
-        ptInductance->qMaxCurrent > ptMotor->tLimits.qMaxPhaseCurrent) {
+        ptInductance->tPlan.qMaxCurrent > ptMotor->tLimits.qMaxPhaseCurrent) {
         eResult = eResult == FOC_RESULT_OK ? FOC_RESULT_SAFETY : eResult;
-        _identify_inductance_FailForeground(ptThis, ptMotor, eResult);
-    } else if (ptMotor->wCurrentBaseMilliamp == 0U ||
-               ptMotor->tParams.wResistanceMilliohm == 0U) {
-        _identify_inductance_FailForeground(ptThis, ptMotor,
-                                            FOC_RESULT_INVALID_ARGUMENT);
+        _identify_inductance_FailForeground(ptThis, ptMotor, eResult,
+                                            "motor-ready");
     } else {
-        ptInductance->wCurrentBaseMilliamp = ptMotor->wCurrentBaseMilliamp;
-        ptInductance->wResistanceMilliohm =
-            ptMotor->tParams.wResistanceMilliohm;
-#if defined(FOC_NUMERIC_FLOAT)
-        ptInductance->fSlopeScale =
-            (float)ptInductance->wCurrentBaseMilliamp * FOC_HF_ISR_HZ /
-            (float)(ptInductance->hwCaptureTarget - 1U);
-#endif
-        eResult = motor_Start(ptMotor, FOC_MODE_VOLTAGE);
-        if (eResult != FOC_RESULT_OK) {
-            _identify_inductance_FailForeground(ptThis, ptMotor, eResult);
-        } else {
-            ptInductance->bActive = true;
+        double dt = (double)foc_to_float(ptThis->qSamplePeriodPu) *
+                    (double)(ptInductance->tPlan.hwCaptureTarget - 1U);
+        if (dt >= 65535.0) {
+            _identify_inductance_FailForeground(ptThis, ptMotor,
+                                               FOC_RESULT_OUT_OF_RANGE,
+                                               "capture-window");
+            return fsm_rt_err;
         }
+        ptInductance->tPlan.qCaptureTimePu = foc_from_float((float)dt);
+        ptInductance->tPlan.qResistancePu = ptThis->qResistancePu;
+        __perfc_sync_barrier__();
+        ptInductance->bActive = true;
     }
+    ptInductance->lStateTimestamp = 0;
+    (void)perfc_is_time_out_ms(ptInductance->tPlan.wTimeoutMs,
+        &ptInductance->lStateTimestamp, false);
     PERFC_PT_WAIT_UNTIL(ptInductance->bError ||
                         ptInductance->bBatchReady ||
                         !_identify_inductance_MotorReady(ptMotor) ||
-                         perfc_is_time_out_ms(ptInductance->wTimeoutMs,
+                         perfc_is_time_out_ms(ptInductance->tPlan.wTimeoutMs,
                                              &ptInductance->lStateTimestamp,
                                              false))
     if (ptInductance->bError) {
         eResult = ptInductance->eIsrResult;
+        pchFailureStage = "isr";
     } else if (!_identify_inductance_MotorReady(ptMotor)) {
         eResult = FOC_RESULT_SAFETY;
+        pchFailureStage = "motor-fault";
     } else if (!ptInductance->bBatchReady) {
         eResult = FOC_RESULT_BUSY;
+        pchFailureStage = "capture-timeout";
     } else {
         eResult = _identify_inductance_Calculate(
-            ptThis, &ptInductance->tResult);
+            ptInductance, &ptInductance->tResult);
     }
     if (eResult != FOC_RESULT_OK) {
-        _identify_inductance_FailForeground(ptThis, ptMotor, eResult);
+        _identify_inductance_FailForeground(ptThis, ptMotor, eResult,
+                                            pchFailureStage);
         return fsm_rt_err;
     }
     ptInductance->bResultPending = true;
@@ -742,7 +548,7 @@ void _identify_inductance_Reset(identify_t *ptThis)
     ptThis->tInductance = (identify_inductance_t){0};
 }
 
-foc_result_t identify_GetInductance(
+foc_result_t _identify_inductance_TakeResult(
     identify_t *ptThis,
     identify_inductance_result_t *ptResult)
 {
@@ -761,19 +567,3 @@ foc_result_t identify_GetInductance(
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;
 }
-
-#if FOC_APP_LOG_INDUCTANCE_ID
-foc_result_t identify_GetInductanceDiagnostic(
-    const identify_t *ptThis,
-    identify_inductance_diagnostic_t *ptDiagnostic)
-{
-    if (ptThis == NULL || ptDiagnostic == NULL) {
-        return FOC_RESULT_NULL;
-    }
-    if (!ptThis->tInductance.tDiagnostic.bValid) {
-        return FOC_RESULT_BUSY;
-    }
-    *ptDiagnostic = ptThis->tInductance.tDiagnostic;
-    return FOC_RESULT_OK;
-}
-#endif

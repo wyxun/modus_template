@@ -19,6 +19,7 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_break_fault_test.c"),
     (Join-Path $repoRoot "foc/tests/motor_realtime_test_port.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
@@ -42,6 +43,7 @@ $includeArgs = @(
     "-I$(Join-Path $repoRoot 'foc/motor')",
     "-I$(Join-Path $repoRoot 'foc/middleware')",
     "-I$(Join-Path $repoRoot 'foc/control')",
+    "-I$(Join-Path $repoRoot 'foc/modulation')",
     "-I$(Join-Path $repoRoot 'foc/observer')"
 )
 
@@ -56,6 +58,8 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
         "-DFOC_OFFSET_CALIB_TIMES=1U",
         "-DFOC_TEST_EXTERNAL_FAULT_PORT=1",
+        "-DFOC_TEST_EXTERNAL_PWM_STOP=1",
+        "-DFOC_TEST_EXTERNAL_ADC_TRIGGER=1",
         "-DFOC_TRIG_BACKEND=1", $backendDefine
     ) + $includeArgs + $sourceFiles + @("-lm", "-o", $testExe)
 

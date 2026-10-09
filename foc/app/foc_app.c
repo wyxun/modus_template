@@ -8,37 +8,37 @@
 #include "foc_app.h"
 #include "foc_debug.h"
 
-#include "foc_port.h"
+#include "foc_port_config.h"
 
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_NONE && \
+#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_NONE &&                        \
     MOTOR_CONFIG_OBSERVER_TAKEOVER
 #error "Observer takeover requires an observer backend"
 #endif
 
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-#define FOC_APP_INIT_OBSERVER_CONFIG                         \
-    .tObserverCfg = {                                                       \
-        .tSmo = {                                                           \
-            .wBemfCutoffRadiansPerSecond =                                  \
-                MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND,            \
-            .wSlidingGainMillivolt =                                        \
-                MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT,                    \
-            .qCurrentEstimateLimit = FOC_SCALAR(                            \
-                MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU),                \
-        },                                                                  \
-    },                                                                    \
-    .bObserverTakeover = MOTOR_CONFIG_OBSERVER_TAKEOVER,                    \
-    .bObserverAutoTakeover = MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER,          \
-    .wObserverQualificationSteps =                                         \
-        MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS,                          \
-    .wObserverBlendSteps = MOTOR_CONFIG_OBSERVER_BLEND_STEPS,              \
-    .qObserverMinBemfPu = FOC_SCALAR(                                       \
-        MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU),                                  \
-    .qObserverMinSpeedPu = FOC_SCALAR(                                      \
-        MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU),                                 \
-    .qObserverMaxSpeedErrorRatio = FOC_SCALAR(                              \
-        MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO),                        \
-    .qObserverMaxAngleErrorTurns = FOC_SCALAR(                              \
+#define FOC_APP_INIT_OBSERVER_CONFIG                                            \
+    .tObserverCfg = {                                                           \
+        .tSmo = {                                                               \
+            .wBemfCutoffRadiansPerSecond =                                      \
+                MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND,                \
+            .wSlidingGainMillivolt =                                            \
+                MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT,                        \
+            .qCurrentEstimateLimit = FOC_SCALAR(                                \
+                MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU),                    \
+        },                                                                      \
+    },                                                                          \
+    .bObserverTakeover = MOTOR_CONFIG_OBSERVER_TAKEOVER,                        \
+    .bObserverAutoTakeover = MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER,               \
+    .wObserverQualificationSteps =                                              \
+        MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS,                              \
+    .wObserverBlendSteps = MOTOR_CONFIG_OBSERVER_BLEND_STEPS,                   \
+    .qObserverMinBemfPu = FOC_SCALAR(                                           \
+        MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU),                                     \
+    .qObserverMinSpeedPu = FOC_SCALAR(                                          \
+        MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU),                                    \
+    .qObserverMaxSpeedErrorRatio = FOC_SCALAR(                                  \
+        MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO),                           \
+    .qObserverMaxAngleErrorTurns = FOC_SCALAR(                                  \
         MOTOR_CONFIG_OBSERVER_MAX_ANGLE_ERROR_TURNS),
 #else
 #define FOC_APP_INIT_OBSERVER_CONFIG
@@ -47,45 +47,42 @@
 #if FOC_PORT_HAS_POSITION
 #if !defined(FOC_ENCODER_STATIC_BINDING)
 extern const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface;
-#define FOC_APP_INIT_ENCODER_CONFIG                    \
-    .tEncoderCfg = {                                                  \
-        .qSpeedFilterAlpha = FOC_SCALAR(                              \
-            MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA),                 \
-        .fInvalidTimeoutSeconds = \
-            MOTOR_CONFIG_ENCODER_INVALID_TIMEOUT_SECONDS,             \
-        .bDirectionInvert = MOTOR_CONFIG_ENCODER_DIRECTION_INVERT,    \
-        .ptSensor = &g_tFocEncoderSensorInterface,                    \
+#define FOC_APP_INIT_ENCODER_CONFIG                                             \
+    .tEncoderCfg = {                                                            \
+        .qSpeedFilterAlpha = FOC_SCALAR(                                        \
+            MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA),                           \
+        .fInvalidTimeoutSeconds =                                               \
+            MOTOR_CONFIG_ENCODER_INVALID_TIMEOUT_SECONDS,                       \
+        .bDirectionInvert = MOTOR_CONFIG_ENCODER_DIRECTION_INVERT,              \
+        .ptSensor = &g_tFocEncoderSensorInterface,                              \
     },
 #else
-#define FOC_APP_INIT_ENCODER_CONFIG                    \
-    .tEncoderCfg = {                                                  \
-        .qSpeedFilterAlpha = FOC_SCALAR(                              \
-            MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA),                 \
-        .fInvalidTimeoutSeconds = \
-            MOTOR_CONFIG_ENCODER_INVALID_TIMEOUT_SECONDS,             \
-        .bDirectionInvert = MOTOR_CONFIG_ENCODER_DIRECTION_INVERT,    \
+#define FOC_APP_INIT_ENCODER_CONFIG                                             \
+    .tEncoderCfg = {                                                            \
+        .qSpeedFilterAlpha = FOC_SCALAR(                                        \
+            MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA),                           \
+        .fInvalidTimeoutSeconds =                                               \
+            MOTOR_CONFIG_ENCODER_INVALID_TIMEOUT_SECONDS,                       \
+        .bDirectionInvert = MOTOR_CONFIG_ENCODER_DIRECTION_INVERT,              \
     },
 #endif
 #else
-#define FOC_APP_INIT_ENCODER_CONFIG \
+#define FOC_APP_INIT_ENCODER_CONFIG                                             \
     .tEncoderCfg = {0},
 #endif
 
-#define FOC_APP_INIT_CONFIG                                 \
-    .tMotorCfg = FOC_APP_INIT_MOTOR_CONFIG,                 \
-    .ePositionSource = MOTOR_CONFIG_POSITION_SOURCE,       \
-    FOC_APP_INIT_OBSERVER_CONFIG                            \
-    FOC_APP_INIT_ENCODER_CONFIG                             \
-    .wVoltageBaseMillivolt = MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT,          \
-    .wHighFrequencyIsrHz = FOC_HF_ISR_HZ,                   \
-    .qElectricalSpeedBaseTurnsPerSecond =                                  \
+#define FOC_APP_INIT_CONFIG                                                     \
+    .tMotorCfg = FOC_APP_INIT_MOTOR_CONFIG,                                     \
+    .ePositionSource = MOTOR_CONFIG_POSITION_SOURCE,                            \
+    FOC_APP_INIT_OBSERVER_CONFIG                                                \
+    FOC_APP_INIT_ENCODER_CONFIG                                                 \
+    .wVoltageBaseMillivolt = MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT,               \
+    .wHighFrequencyIsrHz = FOC_HF_ISR_HZ,                                       \
+    .qElectricalSpeedBaseHz =                                                   \
         FOC_SCALAR(MOTOR_CONFIG_BASE_ELECTRICAL_HZ),
-
-
 
 #include <stddef.h>
 #include <stdint.h>
-#include <math.h>
 
 #include "foc_config.h"
 #include "internal/foc_units.h"
@@ -97,85 +94,6 @@ static modus_base_t s_tFocAppBase;
 extern foc_app_t tFocApp;
 static int foc_app_Clock(uintptr_t wObjectAddr);
 static int foc_app_Run(uintptr_t wObjectAddr);
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-static bool foc_app_GetHfAverage(foc_app_t *ptThis,
-                                 uint32_t *pwAverageTicks);
-static void foc_app_ReportHfAverage(foc_app_t *ptThis);
-#endif
-#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
-     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
-      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
-    !defined(__NO_USE_LOG__)
-static void foc_app_ReportDiagnostics(foc_app_t *ptThis);
-#endif
-
-#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
-    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
-    !defined(__NO_USE_LOG__)
-/**
- * @brief Accumulate same-cycle SMO signal and tracking quality.
- * @param ptThis Application object owning the ISR statistics.
- * @param ptSample Current sample used by the observer.
- * @return None.
- * @note Called only from the HF ISR; no logging or square root here.
- */
-static void foc_app_AccumulateSmoDiagnostic(
-    foc_app_t *ptThis, const motor_position_sample_t *ptSample)
-{
-    const foc_smo_t *ptSmo = &ptThis->tPosition.tObserver.tSmo;
-    float fBemfAlpha = 0.0f;
-    float fBemfBeta = 0.0f;
-    float fCurrentErrorAlpha = 0.0f;
-    float fCurrentErrorBeta = 0.0f;
-    float fBemfSquare = 0.0f;
-    float fCurrentErrorSquare = 0.0f;
-    foc_scalar_t qAngleError = FOC_ZERO;
-    uint32_t wBin = 0U;
-    uint32_t wSector = 0U;
-
-    if (ptThis->tMotor.eState != MOTOR_STATE_RUNNING ||
-        !ptThis->tMotor.tInput.bAngleValid ||
-        !ptThis->tPosition.tObserver.tOutput.bValid) {
-        return;
-    }
-    fBemfAlpha = foc_to_float(ptSmo->tAxis[0].qBemf);
-    fBemfBeta = foc_to_float(ptSmo->tAxis[1].qBemf);
-    fCurrentErrorAlpha =
-        foc_to_float(ptSmo->tAxis[0].qCurrentEstimate) -
-        foc_to_float(ptSample->tCurrentAlphaBeta.qAlpha);
-    fCurrentErrorBeta =
-        foc_to_float(ptSmo->tAxis[1].qCurrentEstimate) -
-        foc_to_float(ptSample->tCurrentAlphaBeta.qBeta);
-    qAngleError = foc_angle_diff(
-        ptThis->tPosition.tObserver.tOutput.tElectricalAngle,
-        ptThis->tMotor.tInput.tElectricalAngle);
-    fBemfSquare = fBemfAlpha * fBemfAlpha +
-                  fBemfBeta * fBemfBeta;
-    fCurrentErrorSquare =
-        fCurrentErrorAlpha * fCurrentErrorAlpha +
-        fCurrentErrorBeta * fCurrentErrorBeta;
-    ptThis->tHfStats.fBemfSquareTotal += fBemfSquare;
-    ptThis->tHfStats.fCurrentErrorSquareTotal += fCurrentErrorSquare;
-    ptThis->tHfStats.wSmoDiagnosticSampleCount++;
-    wBin = fBemfSquare < 0.0025f ? 0U :
-           fBemfSquare < 0.0081f ? 1U :
-           fBemfSquare < 0.0169f ? 2U : 3U;
-    wSector = (uint32_t)(
-        ptThis->tMotor.tInput.tElectricalAngle.wBam32 >> 29);
-    ptThis->tHfStats.awSmoBinSampleCount[wBin]++;
-    if (wBin == 0U) {
-        ptThis->tHfStats.awSmoSectorLowCount[wSector]++;
-    }
-    if (foc_abs(qAngleError) > FOC_SCALAR(0.25f)) {
-        ptThis->tHfStats.wSmoLargeAngleErrorCount++;
-        ptThis->tHfStats.fSmoBadBemfSquareTotal += fBemfSquare;
-        ptThis->tHfStats.fSmoBadCurrentSquareTotal +=
-            fCurrentErrorSquare;
-        ptThis->tHfStats.awSmoBinBadCount[wBin]++;
-        ptThis->tHfStats.awSmoSectorBadCount[wSector]++;
-    }
-}
-#endif
 
 static uint32_t foc_app_GetControlPeriodNanoseconds(uint32_t wFrequencyHz)
 {
@@ -187,37 +105,42 @@ static uint32_t foc_app_GetControlPeriodNanoseconds(uint32_t wFrequencyHz)
            wFrequencyHz;
 }
 
-static foc_result_t foc_app_SampleDcBusMillivolt(uint32_t *pwMillivolt)
+#if IDENTIFY_LOG_ACTIVE
+/** @brief Log one completed tagged Identify result in physical units.
+ * @param ptIdentify Result conversion context. @param ptResult PU result.
+ * @return None; called only from the foreground Run step. */
+static void foc_app_ReportIdentifyResult(const identify_t *ptIdentify,
+    const identify_result_t *ptResult)
 {
-    if (pwMillivolt == NULL) {
-        return FOC_RESULT_NULL;
-    }
-#if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_NOMINAL
-    *pwMillivolt = FOC_DCBUS_NOMINAL_MILLIVOLT;
-#elif FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
-    uint32_t wRaw = FOC_PORT_SAMPLE_DCBUS_RAW(
-        FOC_PORT_ADC_CHANNEL_DCBUS);
-    int64_t llMillivolt = 0;
+    uint32_t wPhysical = 0U;
+    foc_result_t eResult = FOC_RESULT_DISABLED;
 
-    if (wRaw == FOC_PORT_ADC_SAMPLE_INVALID ||
-        FOC_DCBUS_MV_PER_COUNT_DEN == 0U) {
-        return FOC_RESULT_SAFETY;
+    if (ptIdentify == NULL || ptResult == NULL) {
+        return;
     }
-    llMillivolt = ((int64_t)wRaw * FOC_DCBUS_MV_PER_COUNT_NUM) /
-                  FOC_DCBUS_MV_PER_COUNT_DEN +
-                  FOC_DCBUS_OFFSET_MILLIVOLT;
-    if (llMillivolt <= 0 ||
-        llMillivolt > FOC_DCBUS_MAX_MILLIVOLT) {
-        return FOC_RESULT_OUT_OF_RANGE;
+    switch (ptResult->eOperation) {
+    case IDENTIFY_OPERATION_RESISTANCE:
+        eResult = identify_ResultToPhysical(ptIdentify,
+            IDENTIFY_OPERATION_RESISTANCE,
+            ptResult->tValue.tResistance.qResistancePu, &wPhysical);
+        if (eResult == FOC_RESULT_OK) {
+            MLOGF(I, "identify R=%lu mOhm\r\n", (unsigned long)wPhysical);
+        }
+        break;
+    case IDENTIFY_OPERATION_INDUCTANCE:
+        eResult = identify_ResultToPhysical(ptIdentify,
+            IDENTIFY_OPERATION_INDUCTANCE,
+            ptResult->tValue.tInductance.qInductanceDPu, &wPhysical);
+        if (eResult == FOC_RESULT_OK) {
+            MLOGF(I, "identify Ld=%lu uH\r\n", (unsigned long)wPhysical);
+        }
+        break;
+    case IDENTIFY_OPERATION_NONE:
+    default:
+        break;
     }
-    *pwMillivolt = (uint32_t)llMillivolt;
-#else
-    return FOC_RESULT_DISABLED;
-#endif
-    return (*pwMillivolt > 0U &&
-            *pwMillivolt <= FOC_DCBUS_MAX_MILLIVOLT)
-        ? FOC_RESULT_OK : FOC_RESULT_OUT_OF_RANGE;
 }
+#endif
 
 static modus_base_cfg_t s_tFocAppBaseCfg = {
     .wId = FOC_APP,
@@ -289,13 +212,13 @@ static foc_result_t foc_app_BindMotorConfig(
     *ptMotorConfig = ptConfig->tMotorCfg;
     ptMotorConfig->tParams.wVoltageBaseMillivolt =
         ptConfig->wVoltageBaseMillivolt;
-    ptMotorConfig->qElectricalSpeedBaseTurnsPerSecond =
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond;
+    ptMotorConfig->qElectricalSpeedBaseHz =
+        ptConfig->qElectricalSpeedBaseHz;
     ptMotorConfig->wControlFrequencyHz =
         ptConfig->wHighFrequencyIsrHz;
     eResult = foc_div_checked(
         ptMotorConfig->tLimits.qMaxSpeedReference,
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond,
+        ptConfig->qElectricalSpeedBaseHz,
         &ptMotorConfig->tLimits.qMaxSpeedReference);
     if (eResult != FOC_RESULT_OK ||
         ptMotorConfig->tLimits.qMaxSpeedReference <= FOC_ZERO ||
@@ -304,16 +227,16 @@ static foc_result_t foc_app_BindMotorConfig(
     }
     eResult = foc_app_ScaleSpeedGain(
         &ptMotorConfig->tSpeedPiParams.tKp,
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+        ptConfig->qElectricalSpeedBaseHz);
     if (eResult == FOC_RESULT_OK) {
         eResult = foc_app_ScaleSpeedGain(
             &ptMotorConfig->tSpeedPiParams.tKiTs,
-            ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+            ptConfig->qElectricalSpeedBaseHz);
     }
     if (eResult == FOC_RESULT_OK) {
         eResult = foc_app_ScaleSpeedGain(
             &ptMotorConfig->tSpeedPiParams.tKdOverTs,
-            ptConfig->qElectricalSpeedBaseTurnsPerSecond);
+            ptConfig->qElectricalSpeedBaseHz);
     }
     if (eResult != FOC_RESULT_OK) {
         return eResult;
@@ -360,7 +283,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         ptConfig->wHighFrequencyIsrHz);
     if (ptConfig->wVoltageBaseMillivolt == 0U ||
         wControlPeriodNanoseconds == 0U ||
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond <= FOC_ZERO) {
+        ptConfig->qElectricalSpeedBaseHz <= FOC_ZERO) {
         return MODUS_EFAIL;
     }
     eResult = foc_app_BindMotorConfig(ptConfig, &tMotorConfig);
@@ -384,8 +307,8 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     }
     tPositionConfig.chPolePairs = tMotorConfig.tParams.chPolePairs;
     tPositionConfig.eSource = ptConfig->ePositionSource;
-    tPositionConfig.qElectricalSpeedBaseTurnsPerSecond =
-        ptConfig->qElectricalSpeedBaseTurnsPerSecond;
+    tPositionConfig.qElectricalSpeedBaseHz =
+        ptConfig->qElectricalSpeedBaseHz;
     tPositionConfig.wControlFrequencyHz =
         ptConfig->wHighFrequencyIsrHz;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
@@ -427,18 +350,20 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         (tMotorConfig.wStartupRampSteps == 0U ||
          tMotorConfig.wStartupMaxRunSteps <=
              tMotorConfig.wStartupRampSteps ||
-         tMotorConfig.wStartupMaxRunSteps -
-             tMotorConfig.wStartupRampSteps <=
-             ptConfig->wObserverQualificationSteps ||
-         tMotorConfig.wStartupMaxRunSteps -
-             tMotorConfig.wStartupRampSteps -
-             ptConfig->wObserverQualificationSteps <=
-             ptThis->tPosition.tHandoff.wMaxBlendSteps)) {
+         motor_position_CheckStartupBudget(&ptThis->tPosition,
+             tMotorConfig.wStartupMaxRunSteps -
+             tMotorConfig.wStartupRampSteps) != FOC_RESULT_OK)) {
         motor_Stop(&ptThis->tMotor);
         return (int)FOC_RESULT_INVALID_ARGUMENT;
     }
 #endif
-    eResult = identify_Init(&ptThis->tIdentify);
+    identify_cfg_t tIdentifyConfig = {
+        .wVoltageBaseMillivolt = ptConfig->wVoltageBaseMillivolt,
+        .wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP,
+        .wResistanceMilliohm = tMotorConfig.tParams.wResistanceMilliohm,
+        .qElectricalSpeedBaseHz = ptConfig->qElectricalSpeedBaseHz,
+    };
+    eResult = identify_Init(&ptThis->tIdentify, &tIdentifyConfig);
     if (eResult != FOC_RESULT_OK) {
         motor_Stop(&ptThis->tMotor);
         return (int)eResult;
@@ -466,108 +391,12 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
-#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
-static const char *foc_app_InductanceFailureName(
-    identify_inductance_failure_t eFailure)
-{
-    switch (eFailure) {
-    case IDENTIFY_INDUCTANCE_FAILURE_NONE:
-        return "ok";
-    case IDENTIFY_INDUCTANCE_FAILURE_INSUFFICIENT_SAMPLES:
-        return "samples";
-    case IDENTIFY_INDUCTANCE_FAILURE_DELTA_TOO_SMALL:
-        return "delta-small";
-    case IDENTIFY_INDUCTANCE_FAILURE_ZERO_SLOPE:
-        return "slope-zero";
-    case IDENTIFY_INDUCTANCE_FAILURE_VOLTAGE_SLOPE_SIGN:
-        return "V-slope-sign";
-    case IDENTIFY_INDUCTANCE_FAILURE_INVALID_INDUCTANCE:
-        return "L-invalid";
-    default:
-        return "unknown";
-    }
-}
-
-static void foc_app_ReportInductanceDiagnostic(
-    const identify_t *ptIdentify)
-{
-    identify_inductance_diagnostic_t tDiagnostic = {0};
-    const identify_inductance_polarity_diagnostic_t *ptPositive = NULL;
-    const identify_inductance_polarity_diagnostic_t *ptNegative = NULL;
-
-    if (identify_GetInductanceDiagnostic(
-            ptIdentify, &tDiagnostic) != FOC_RESULT_OK) {
-        return;
-    }
-    ptPositive = &tDiagnostic.tPositive;
-    ptNegative = &tDiagnostic.tNegative;
-    MLOGF(I, "identify Ld cfg R=%lu mOhm minDelta=%.4f pu\r\n",
-          (unsigned long)tDiagnostic.wResistanceMilliohm,
-          (double)foc_to_float(tDiagnostic.qMinimumDeltaPu));
-    MLOGF(I, "identify Ld + dId=%.5f pu/%ld cntEq vbus=%lu mV "
-          "VdCmdEq=%ld net=%ld mV I=%ld mA fail=%s\r\n",
-          (double)foc_to_float(ptPositive->qDeltaCurrentPu),
-          (long)ptPositive->lDeltaCurrentAdcCodeEq,
-          (unsigned long)ptPositive->wAverageBusMillivolt,
-          (long)ptPositive->lCommandVoltageMillivolt,
-          (long)ptPositive->lNetVoltageMillivolt,
-          (long)ptPositive->lAverageCurrentMilliamp,
-          foc_app_InductanceFailureName(ptPositive->eFailure));
-    MLOGF(I, "identify Ld - dId=%.5f pu/%ld cntEq vbus=%lu mV "
-          "VdCmdEq=%ld net=%ld mV I=%ld mA fail=%s\r\n",
-          (double)foc_to_float(ptNegative->qDeltaCurrentPu),
-          (long)ptNegative->lDeltaCurrentAdcCodeEq,
-          (unsigned long)ptNegative->wAverageBusMillivolt,
-          (long)ptNegative->lCommandVoltageMillivolt,
-          (long)ptNegative->lNetVoltageMillivolt,
-          (long)ptNegative->lAverageCurrentMilliamp,
-          foc_app_InductanceFailureName(ptNegative->eFailure));
-}
-#endif
-
-#if FOC_APP_LOG_ADC_OFFSETS && !defined(__NO_USE_LOG__)
-/**
- * @brief Print the calibrated three-phase ADC offsets once.
- * @param ptThis FOC App object.
- * @return None.
- * @note Runs in the foreground after calibration; snapshots with IRQs masked.
- */
-static void foc_app_ReportAdcOffsets(foc_app_t *ptThis)
-{
-    uint32_t wOffsetU = 0U;
-    uint32_t wOffsetV = 0U;
-    uint32_t wOffsetW = 0U;
-    bool bCalibrated = false;
-    perfc_global_interrupt_status_t tIrqState = 0U;
-
-    if (ptThis->bAdcOffsetReported) {
-        return;
-    }
-    tIrqState = perfc_port_disable_global_interrupt();
-    bCalibrated = ptThis->tMotor.tCalib.bIsCalibrated;
-    if (bCalibrated) {
-        wOffsetU = ptThis->tMotor.tCalib.wOffsetU;
-        wOffsetV = ptThis->tMotor.tCalib.wOffsetV;
-        wOffsetW = ptThis->tMotor.tCalib.wOffsetW;
-        ptThis->bAdcOffsetReported = true;
-    }
-    perfc_port_resume_global_interrupt(tIrqState);
-    if (!bCalibrated) {
-        return;
-    }
-    MLOGF(I, "FOC ADC offset U/V/W=%lu/%lu/%lu counts\r\n",
-          (unsigned long)wOffsetU, (unsigned long)wOffsetV,
-          (unsigned long)wOffsetW);
-}
-#endif
-
 static int foc_app_Run(uintptr_t wObjectAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
     foc_result_t eResult = FOC_RESULT_OK;
     foc_result_t eIdentify = FOC_RESULT_OK;
-    identify_resistance_result_t tResistanceResult = {0};
-    identify_inductance_result_t tInductanceResult = {0};
+    identify_result_t tIdentifyResult = {0};
 
     if (ptThis == NULL) {
         return MODUS_EFAIL;
@@ -577,15 +406,6 @@ static int foc_app_Run(uintptr_t wObjectAddr)
         PERFC_PT_WAIT_UNTIL(__perfc_is_time_out(
             ptThis->lForegroundPeriodTicks,
             &ptThis->lForegroundTimestamp, true))
-#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
-     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
-      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
-    !defined(__NO_USE_LOG__)
-        foc_app_ReportDiagnostics(ptThis);
-#endif
-#if FOC_APP_LOG_ADC_OFFSETS && !defined(__NO_USE_LOG__)
-        foc_app_ReportAdcOffsets(ptThis);
-#endif
         motor_PollBreakFault(&ptThis->tMotor);
         foc_debug_CurrentStepRun(ptThis);
         if (!ptThis->bReady) {
@@ -593,118 +413,92 @@ static int foc_app_Run(uintptr_t wObjectAddr)
         }
         if (ptThis->bEncoderEnabled) {
             eResult = foc_encoder_Run(&ptThis->tEncoder);
-            if (eResult != FOC_RESULT_OK) {
-                continue;
-            }
         }
         eIdentify = identify_Run(&ptThis->tIdentify,
-                                 &ptThis->tMotor);
-        if (ptThis->tIdentify.eState == IDENTIFY_STATE_ERROR &&
-            ptThis->eLastIdentifyState != IDENTIFY_STATE_ERROR) {
-            MLOGF(W, "identify failed (%d)\r\n", (int)eIdentify);
-#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
-            foc_app_ReportInductanceDiagnostic(&ptThis->tIdentify);
-#endif
+                                 &ptThis->tMotor,
+                                 &tIdentifyResult);
+#if IDENTIFY_LOG_ACTIVE
+        if (eIdentify == FOC_RESULT_OK) {
+            foc_app_ReportIdentifyResult(&ptThis->tIdentify,
+                                         &tIdentifyResult);
         }
-        ptThis->eLastIdentifyState = ptThis->tIdentify.eState;
-        if (eIdentify == FOC_RESULT_OK &&
-            identify_GetResistance(&ptThis->tIdentify,
-                                   &tResistanceResult) == FOC_RESULT_OK) {
-#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
-            foc_debug_ReportResistance(&tResistanceResult);
 #endif
+        if (eIdentify != FOC_RESULT_OK && eIdentify != FOC_RESULT_BUSY) {
+            eResult = eIdentify;
         }
-        if (eIdentify == FOC_RESULT_OK &&
-            identify_GetInductance(&ptThis->tIdentify,
-                                   &tInductanceResult) == FOC_RESULT_OK) {
-#if FOC_APP_LOG_INDUCTANCE_ID && !defined(__NO_USE_LOG__)
-            foc_app_ReportInductanceDiagnostic(&ptThis->tIdentify);
-            MLOGF(I, "identify Ld=%lu uH freq=%lu Hz v=%lu mV "
-                  "i=%ld mA samples=%u halves=%u\r\n",
-                  (unsigned long)
-                      tInductanceResult.wInductanceDMicroHenry,
-                  (unsigned long)tInductanceResult.wInjectionFrequencyHz,
-                  (unsigned long)tInductanceResult.wEffectiveVoltageMillivolt,
-                  (long)tInductanceResult.lMeanCurrentMilliamp,
-                  (unsigned)tInductanceResult.hwCaptureSampleCount,
-                  (unsigned)tInductanceResult.hwHalfCycleCount);
-#endif
-        }
+        /* Each service advances independently; report failures afterwards. */
+        PERFC_PT_YIELD(eResult == FOC_RESULT_OK ? MODUS_SUCCESS : MODUS_EFAIL)
     }
     PERFC_PT_END()
     return MODUS_SUCCESS;
 }
 
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-/**
- * @brief Accumulate trigger-to-CCR latency and direct PWM bottom crossing.
- * @param ptThis Application owning Motor and timing statistics.
- * @return None.
- * @note TIM1 CH4 rises on the down-count at CCR4; the snapshot follows
- *       the three CCR writes in the same control cycle.
- */
-static void foc_app_RecordCcrTiming(foc_app_t *ptThis)
+/** @brief Assemble typed PU samples and submit same-ISR safety requests.
+ * @param ptApp App instance.
+ * @param ptSample Current alpha-beta PU sample. @param eControl Core status.
+ * @return None; control rejection latches Identify and Motor faults. */
+static void _foc_app_IdentifyStep(foc_app_t *ptApp,
+    const motor_position_sample_t *ptSample, foc_result_t eControl)
 {
-    const foc_port_pwm_phase_t *ptPhase =
-        &ptThis->tMotor.tPwmCommitPhase;
-    uint32_t wCcrLatencyTicks = 0U;
+    identify_operation_t eOperation =
+        identify_ActiveOperationIsr(&ptApp->tIdentify);
+    identify_isr_request_t request = {0};
+    bool valid = eControl == FOC_RESULT_OK && ptSample->bVoltageModelValid;
 
-    if (!ptPhase->bValid ||
-        ptPhase->wTriggerCounter == 0U ||
-        (ptPhase->bCountingDown &&
-         ptPhase->wCounter > ptPhase->wTriggerCounter) ||
-        (!ptPhase->bCountingDown &&
-         ptPhase->wCounter > UINT32_MAX -
-             ptPhase->wTriggerCounter)) {
-        ptThis->tHfStats.wCcrLatencyInvalidCount++;
+    if (eOperation == IDENTIFY_OPERATION_NONE) {
         return;
     }
-    if (ptPhase->bCountingDown) {
-        wCcrLatencyTicks = ptPhase->wTriggerCounter -
-            ptPhase->wCounter;
+    if (eOperation == IDENTIFY_OPERATION_RESISTANCE) {
+        identify_resistance_sample_t sample = {
+            .tCurrentPu = ptSample->tCurrentAlphaBeta,
+            .qVoltageModelAlphaPu = ptSample->tVoltageModelAlphaBeta.qAlpha,
+            .bValid = valid,
+            .bPwmSaturated = ptSample->bPwmSaturated,
+        };
+        identify_ResistanceIsrStep(&ptApp->tIdentify, &sample, &request);
+    } else if (eOperation == IDENTIFY_OPERATION_INDUCTANCE) {
+        identify_inductance_sample_t sample = {
+            .tCurrentPu = ptSample->tCurrentAlphaBeta,
+            .qVoltageModelAlphaPu = ptSample->tVoltageModelAlphaBeta.qAlpha,
+            .bValid = valid,
+            .bPwmSaturated = ptSample->bPwmSaturated,
+        };
+        identify_InductanceIsrStep(&ptApp->tIdentify, &sample, &request);
     } else {
-        wCcrLatencyTicks = ptPhase->wTriggerCounter +
-            ptPhase->wCounter;
+        return;
     }
-    ptThis->tHfStats.wCcrLatencyTicksTotal += wCcrLatencyTicks;
-    ptThis->tHfStats.wCcrLatencySampleCount++;
-    if (wCcrLatencyTicks > ptThis->tHfStats.wCcrLatencyMaxTicks) {
-        ptThis->tHfStats.wCcrLatencyMaxTicks = wCcrLatencyTicks;
-    }
-    if (!ptPhase->bCountingDown) {
-        ptThis->tHfStats.wCcrAfterBottomCount++;
-    } else {
-        if (ptPhase->wCounter <
-            ptThis->tHfStats.wCcrMinimumBottomMarginTicks) {
-            ptThis->tHfStats.wCcrMinimumBottomMarginTicks =
-                ptPhase->wCounter;
+    if (request.bAbort) {
+        motor_IdentificationAbortIsr(&ptApp->tMotor,
+                                     MOTOR_FAULT_IDENTIFICATION);
+    } else if (request.bSetModulation) {
+        foc_result_t eApply = motor_IdentificationApplyIsr(&ptApp->tMotor,
+            &request.tModulationCommand);
+        if (eApply != FOC_RESULT_OK) {
+            identify_AbortIsr(&ptApp->tIdentify,
+                IDENTIFY_FAILURE_CAUSE_CONTROL_REJECTED, eApply);
+            motor_IdentificationAbortIsr(&ptApp->tMotor,
+                                         MOTOR_FAULT_IDENTIFICATION);
         }
+    } else {
+        /* Capture-only step. */
     }
 }
-#endif
 
 void foc_app_HighFrequencyISR(void)
 {
     uint32_t wNowTick = 0U;
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-    int64_t lStartTicks = 0;
-    int64_t lElapsedTicks = 0;
-    uint32_t wElapsedTicks = 0U;
-#endif
     motor_position_sample_t tSample = {0};
     motor_electrical_feedback_t tFeedback = {0};
     motor_isr_phase_t ePhase = MOTOR_ISR_NO_CONTROL;
     foc_result_t ePosition = FOC_RESULT_OK;
+    foc_result_t eControl = FOC_RESULT_DISABLED;
 
     wNowTick = (uint32_t)get_system_ticks();
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-    lStartTicks = (int64_t)wNowTick;
-#endif
     if (tFocApp.bReady) {
-        if (tFocApp.tMotor.eState == MOTOR_STATE_ALIGN) {
+        ePhase = motor_IsrPrepare(&tFocApp.tMotor, &tSample);
+        if (tSample.bAlignActive) {
             motor_position_InvalidateZero(&tFocApp.tPosition);
         }
-        ePhase = motor_IsrPrepare(&tFocApp.tMotor, &tSample);
         if (ePhase == MOTOR_ISR_CONTROL_READY) {
             ePosition = FOC_POSITION_GET(&tFocApp.tPosition,
                                           wNowTick, &tSample,
@@ -712,369 +506,28 @@ void foc_app_HighFrequencyISR(void)
             motor_ApplyPositionEventIsr(&tFocApp.tMotor,
                 motor_position_TakeEvent(&tFocApp.tPosition),
                 tFeedback.qElectricalSpeedPu);
-            motor_IsrControlStep(&tFocApp.tMotor,
+            eControl = motor_IsrControlStep(&tFocApp.tMotor,
                 ePosition == FOC_RESULT_OK ? &tFeedback : NULL);
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-            if (ePosition == FOC_RESULT_OK &&
-                tFocApp.tMotor.eState == MOTOR_STATE_RUNNING &&
-                tFocApp.tMotor.bPwmEnabled) {
-                foc_app_RecordCcrTiming(&tFocApp);
-            }
-#endif
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-            if (ePosition == FOC_RESULT_OK) {
+            if (ePosition == FOC_RESULT_OK && eControl == FOC_RESULT_OK) {
                 motor_position_ObserverStep(&tFocApp.tPosition,
                                              &tSample);
-#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
-    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
-    !defined(__NO_USE_LOG__)
-                foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
-#endif
+            } else {
+                motor_position_ResetObserver(&tFocApp.tPosition);
             }
 #endif
+        } else if (ePhase == MOTOR_ISR_IDENTIFICATION_READY) {
+            eControl = motor_IsrControlStep(&tFocApp.tMotor, NULL);
         } else if (ePhase == MOTOR_ISR_CAPTURE_ZERO) {
             ePosition = motor_position_CaptureZero(
                 &tFocApp.tPosition, wNowTick);
             motor_CompleteAlignIsr(&tFocApp.tMotor, ePosition);
         }
-        // identify
-        identify_operation_t eIdentifyOperation =
-            tFocApp.tIdentify.eOperation;
-        if (eIdentifyOperation == IDENTIFY_OPERATION_RESISTANCE ||
-            eIdentifyOperation == IDENTIFY_OPERATION_INDUCTANCE) {
-            identify_isr_sample_t tIdentifySample = {
-                .qCurrentD = tFocApp.tMotor.tCore.tCurrent.qD,
-                .qVoltageD = tFocApp.tMotor.tCore.tVoltage.qD,
-            };
-            if (eIdentifyOperation == IDENTIFY_OPERATION_INDUCTANCE) {
-                tIdentifySample.qCurrentQ =
-                    tFocApp.tMotor.tCore.tCurrent.qQ;
-                tIdentifySample.qElectricalSpeedPu =
-                    tFocApp.tMotor.tInput.qElectricalSpeedPu;
-                tIdentifySample.bMotorFault =
-                    tFocApp.tMotor.eState == MOTOR_STATE_FAULT;
-                tIdentifySample.bAngleValid =
-                    tFocApp.tMotor.tInput.bAngleValid;
-                tIdentifySample.bPwmSaturated =
-                    tFocApp.tMotor.tCore.bPwmSaturated;
-                tIdentifySample.bDcBusValid =
-                    foc_app_SampleDcBusMillivolt(
-                        &tIdentifySample.wDcBusMillivolt) == FOC_RESULT_OK;
-            }
-
-            identify_IsrStep(&tFocApp.tIdentify, &tFocApp.tMotor,
-                             &tIdentifySample);
-        }
+        _foc_app_IdentifyStep(&tFocApp, &tSample, eControl);
     }
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     foc_debug_WaveformStep();
 #endif
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-    lElapsedTicks = get_system_ticks() - lStartTicks - (int64_t)g_nOffset;
-    if (lElapsedTicks > 0) {
-        wElapsedTicks = (uint32_t)lElapsedTicks;
-    } else {
-        wElapsedTicks = 0U;
-    }
-    tFocApp.tHfStats.wCycleTotal =
-        tFocApp.tHfStats.wCycleTotal + wElapsedTicks;
-    tFocApp.tHfStats.wSampleCount =
-        tFocApp.tHfStats.wSampleCount + 1U;
-#endif
 }
-
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-/**
- * @brief Copy and reset the high-frequency cycle window.
- * @param ptThis FOC App object.
- * @param pwAverageTicks Output average perf_counter ticks per ISR.
- * @return true when the window contains at least one sample.
- * @note Interrupts are masked only while copying and resetting the counters.
- */
-static bool foc_app_GetHfAverage(foc_app_t *ptThis,
-                                 uint32_t *pwAverageTicks)
-{
-    perfc_global_interrupt_status_t tIrqState = 0U;
-    uint32_t wCycleTotal = 0U;
-    uint32_t wSampleCount = 0U;
-
-    if (ptThis == NULL || pwAverageTicks == NULL) {
-        return false;
-    }
-    tIrqState = perfc_port_disable_global_interrupt();
-    wCycleTotal = ptThis->tHfStats.wCycleTotal;
-    wSampleCount = ptThis->tHfStats.wSampleCount;
-    ptThis->tHfStats.wCycleTotal = 0U;
-    ptThis->tHfStats.wSampleCount = 0U;
-    perfc_port_resume_global_interrupt(tIrqState);
-    if (wSampleCount == 0U) {
-        return false;
-    }
-    *pwAverageTicks = wCycleTotal / wSampleCount;
-    return true;
-}
-
-/**
- * @brief Report ADC trigger to PWM commit timing and bottom crossings.
- * @param ptThis FOC App object owning the ISR statistics.
- * @return None.
- * @note The late count uses captured timer direction, not rounded time.
- */
-static void foc_app_ReportCcrLatency(foc_app_t *ptThis)
-{
-    perfc_global_interrupt_status_t tIrqState = 0U;
-    uint32_t wTotalTicks = 0U;
-    uint32_t wSampleCount = 0U;
-    uint32_t wMaximumTicks = 0U;
-    uint32_t wAfterBottomCount = 0U;
-    uint32_t wInvalidCount = 0U;
-    uint32_t wMinimumMarginTicks = UINT32_MAX;
-    uint32_t wAverageTicks = 0U;
-    uint32_t wAverageMicroseconds = 0U;
-    uint32_t wMaximumMicroseconds = 0U;
-
-    tIrqState = perfc_port_disable_global_interrupt();
-    wTotalTicks = ptThis->tHfStats.wCcrLatencyTicksTotal;
-    wSampleCount = ptThis->tHfStats.wCcrLatencySampleCount;
-    wMaximumTicks = ptThis->tHfStats.wCcrLatencyMaxTicks;
-    wAfterBottomCount = ptThis->tHfStats.wCcrAfterBottomCount;
-    wInvalidCount = ptThis->tHfStats.wCcrLatencyInvalidCount;
-    wMinimumMarginTicks =
-        ptThis->tHfStats.wCcrMinimumBottomMarginTicks;
-    ptThis->tHfStats.wCcrLatencyTicksTotal = 0U;
-    ptThis->tHfStats.wCcrLatencySampleCount = 0U;
-    ptThis->tHfStats.wCcrLatencyMaxTicks = 0U;
-    ptThis->tHfStats.wCcrAfterBottomCount = 0U;
-    ptThis->tHfStats.wCcrLatencyInvalidCount = 0U;
-    ptThis->tHfStats.wCcrMinimumBottomMarginTicks = UINT32_MAX;
-    perfc_port_resume_global_interrupt(tIrqState);
-
-    if (wSampleCount == 0U && wInvalidCount == 0U) {
-        return;
-    }
-    if (wSampleCount > 0U) {
-        wAverageTicks = wTotalTicks / wSampleCount;
-    }
-    wAverageMicroseconds = (uint32_t)perfc_convert_ticks_to_us(
-        (int64_t)wAverageTicks);
-    wMaximumMicroseconds = (uint32_t)perfc_convert_ticks_to_us(
-        (int64_t)wMaximumTicks);
-    if (wMinimumMarginTicks == UINT32_MAX) {
-        wMinimumMarginTicks = 0U;
-    }
-    MLOGF(T, "FOC ADCtrig->CCR avg=%lu cyc/%lu us "
-          "max=%lu cyc/%lu us bottomLate=%lu/%lu "
-          "marginMin=%lu cyc bad=%lu\r\n",
-          (unsigned long)wAverageTicks,
-          (unsigned long)wAverageMicroseconds,
-          (unsigned long)wMaximumTicks,
-          (unsigned long)wMaximumMicroseconds,
-          (unsigned long)wAfterBottomCount,
-          (unsigned long)wSampleCount,
-          (unsigned long)wMinimumMarginTicks,
-          (unsigned long)wInvalidCount);
-}
-#endif /* FOC_APP_LOG_TIMING_DIAGNOSTICS */
-
-#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
-    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
-    !defined(__NO_USE_LOG__)
-/**
- * @brief Report SMO amplitude binning and electrical sector distributions.
- * @param pawBinBad Bad sample counts across the 4 amplitude bins.
- * @param pawBinSample Total sample counts across the 4 amplitude bins.
- * @param pawSectorBad Bad sample counts across the 8 electrical sectors.
- * @param pawSectorLow Low-amplitude sample counts across the 8 sectors.
- * @return None.
- */
-static void foc_app_ReportSmoDistribution(
-    const uint32_t pawBinBad[4],
-    const uint32_t pawBinSample[4],
-    const uint32_t pawSectorBad[8],
-    const uint32_t pawSectorLow[8])
-{
-    MLOGF(T, "SMO bin bad/tot [0]=%lu/%lu [1]=%lu/%lu "
-          "[2]=%lu/%lu [3]=%lu/%lu\r\n",
-          (unsigned long)pawBinBad[0],
-          (unsigned long)pawBinSample[0],
-          (unsigned long)pawBinBad[1],
-          (unsigned long)pawBinSample[1],
-          (unsigned long)pawBinBad[2],
-          (unsigned long)pawBinSample[2],
-          (unsigned long)pawBinBad[3],
-          (unsigned long)pawBinSample[3]);
-    MLOGF(T, "SMO sec err/low s0=%lu/%lu s1=%lu/%lu s2=%lu/%lu "
-          "s3=%lu/%lu s4=%lu/%lu s5=%lu/%lu s6=%lu/%lu s7=%lu/%lu\r\n",
-          (unsigned long)pawSectorBad[0],
-          (unsigned long)pawSectorLow[0],
-          (unsigned long)pawSectorBad[1],
-          (unsigned long)pawSectorLow[1],
-          (unsigned long)pawSectorBad[2],
-          (unsigned long)pawSectorLow[2],
-          (unsigned long)pawSectorBad[3],
-          (unsigned long)pawSectorLow[3],
-          (unsigned long)pawSectorBad[4],
-          (unsigned long)pawSectorLow[4],
-          (unsigned long)pawSectorBad[5],
-          (unsigned long)pawSectorLow[5],
-          (unsigned long)pawSectorBad[6],
-          (unsigned long)pawSectorLow[6],
-          (unsigned long)pawSectorBad[7],
-          (unsigned long)pawSectorLow[7]);
-}
-
-/**
- * @brief Report and reset one SMO quality window from foreground.
- * @param ptThis Application object owning the ISR statistics.
- * @return None.
- * @note The brief interrupt mask covers only the statistics snapshot.
- */
-static void foc_app_ReportSmoRms(foc_app_t *ptThis)
-{
-    perfc_global_interrupt_status_t tIrqState = 0U;
-    uint32_t wSampleCount = 0U;
-    uint32_t wLargeAngleErrorCount = 0U;
-    uint32_t wGoodCount = 0U;
-    float fBemfSquareTotal = 0.0f;
-    float fCurrentErrorSquareTotal = 0.0f;
-    float fBadBemfSquareTotal = 0.0f;
-    float fBadCurrentSquareTotal = 0.0f;
-    float fGoodBemfSquareTotal = 0.0f;
-    float fGoodCurrentSquareTotal = 0.0f;
-    float fBemfRms = 0.0f;
-    float fCurrentErrorRms = 0.0f;
-    uint32_t awBinSampleCount[4] = {0U};
-    uint32_t awBinBadCount[4] = {0U};
-    uint32_t awSectorBadCount[8] = {0U};
-    uint32_t awSectorLowCount[8] = {0U};
-    uint32_t wIndex = 0U;
-
-    if (ptThis == NULL) {
-        return;
-    }
-    tIrqState = perfc_port_disable_global_interrupt();
-    wSampleCount = ptThis->tHfStats.wSmoDiagnosticSampleCount;
-    wLargeAngleErrorCount =
-        ptThis->tHfStats.wSmoLargeAngleErrorCount;
-    fBemfSquareTotal = ptThis->tHfStats.fBemfSquareTotal;
-    fCurrentErrorSquareTotal =
-        ptThis->tHfStats.fCurrentErrorSquareTotal;
-    fBadBemfSquareTotal =
-        ptThis->tHfStats.fSmoBadBemfSquareTotal;
-    fBadCurrentSquareTotal =
-        ptThis->tHfStats.fSmoBadCurrentSquareTotal;
-    ptThis->tHfStats.wSmoDiagnosticSampleCount = 0U;
-    ptThis->tHfStats.wSmoLargeAngleErrorCount = 0U;
-    ptThis->tHfStats.fBemfSquareTotal = 0.0f;
-    ptThis->tHfStats.fCurrentErrorSquareTotal = 0.0f;
-    ptThis->tHfStats.fSmoBadBemfSquareTotal = 0.0f;
-    ptThis->tHfStats.fSmoBadCurrentSquareTotal = 0.0f;
-    for (wIndex = 0U; wIndex < 4U; wIndex++) {
-        awBinSampleCount[wIndex] =
-            ptThis->tHfStats.awSmoBinSampleCount[wIndex];
-        awBinBadCount[wIndex] =
-            ptThis->tHfStats.awSmoBinBadCount[wIndex];
-        ptThis->tHfStats.awSmoBinSampleCount[wIndex] = 0U;
-        ptThis->tHfStats.awSmoBinBadCount[wIndex] = 0U;
-    }
-    for (wIndex = 0U; wIndex < 8U; wIndex++) {
-        awSectorBadCount[wIndex] =
-            ptThis->tHfStats.awSmoSectorBadCount[wIndex];
-        awSectorLowCount[wIndex] =
-            ptThis->tHfStats.awSmoSectorLowCount[wIndex];
-        ptThis->tHfStats.awSmoSectorBadCount[wIndex] = 0U;
-        ptThis->tHfStats.awSmoSectorLowCount[wIndex] = 0U;
-    }
-    perfc_port_resume_global_interrupt(tIrqState);
-
-    if (wSampleCount == 0U) {
-        return;
-    }
-    fBemfRms = sqrtf(fBemfSquareTotal / (float)wSampleCount);
-    fCurrentErrorRms = sqrtf(
-        fCurrentErrorSquareTotal / (float)wSampleCount);
-    MLOGF(T, "SMO rms x1e4 e=%lu iErr=%lu err25=%lu/%lu\r\n",
-          (unsigned long)(fBemfRms * 10000.0f + 0.5f),
-          (unsigned long)(fCurrentErrorRms * 10000.0f + 0.5f),
-          (unsigned long)wLargeAngleErrorCount,
-          (unsigned long)wSampleCount);
-    wGoodCount = wSampleCount - wLargeAngleErrorCount;
-    fGoodBemfSquareTotal = fmaxf(
-        0.0f, fBemfSquareTotal - fBadBemfSquareTotal);
-    fGoodCurrentSquareTotal = fmaxf(
-        0.0f, fCurrentErrorSquareTotal - fBadCurrentSquareTotal);
-    MLOGF(T, "SMO cond x1e4 eBad=%lu eGood=%lu "
-          "iBad=%lu iGood=%lu\r\n",
-          (unsigned long)(wLargeAngleErrorCount == 0U ? 0.0f :
-              sqrtf(fBadBemfSquareTotal /
-                    (float)wLargeAngleErrorCount) * 10000.0f + 0.5f),
-          (unsigned long)(wGoodCount == 0U ? 0.0f :
-              sqrtf(fGoodBemfSquareTotal / (float)wGoodCount) *
-              10000.0f + 0.5f),
-          (unsigned long)(wLargeAngleErrorCount == 0U ? 0.0f :
-              sqrtf(fBadCurrentSquareTotal /
-                    (float)wLargeAngleErrorCount) * 10000.0f + 0.5f),
-          (unsigned long)(wGoodCount == 0U ? 0.0f :
-              sqrtf(fGoodCurrentSquareTotal / (float)wGoodCount) *
-              10000.0f + 0.5f));
-    foc_app_ReportSmoDistribution(awBinBadCount,
-                                  awBinSampleCount,
-                                  awSectorBadCount,
-                                  awSectorLowCount);
-}
-#endif
-
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS && !defined(__NO_USE_LOG__)
-/**
- * @brief Report the average ISR cycles once per second from foreground.
- * @param ptThis FOC App object.
- * @return None.
- */
-static void foc_app_ReportHfAverage(foc_app_t *ptThis)
-{
-    uint32_t wAverageTicks = 0U;
-    uint32_t wAverageMicroseconds = 0U;
-    uint32_t wDcBusMillivolt = 0U;
-    foc_result_t eDcBus = FOC_RESULT_DISABLED;
-
-    eDcBus = foc_app_SampleDcBusMillivolt(&wDcBusMillivolt);
-    if (!foc_app_GetHfAverage(ptThis, &wAverageTicks)) {
-        return;
-    }
-    wAverageMicroseconds = (uint32_t)perfc_convert_ticks_to_us(
-        (int64_t)wAverageTicks);
-    MLOGF(T, "FOC HF ISR avg=%lu cycles/%lu us vbus=%lu mV%s\r\n",
-          (unsigned long)wAverageTicks,
-          (unsigned long)wAverageMicroseconds,
-          (unsigned long)wDcBusMillivolt,
-          eDcBus == FOC_RESULT_OK ? "" : " (invalid)");
-    foc_app_ReportCcrLatency(ptThis);
-}
-#endif
-
-#if (FOC_APP_LOG_TIMING_DIAGNOSTICS || \
-     (FOC_APP_LOG_SMO_DIAGNOSTICS && \
-      FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO)) && \
-    !defined(__NO_USE_LOG__)
-/**
- * @brief Emit enabled periodic diagnostic groups once per second.
- * @param ptThis FOC App object owning diagnostic statistics.
- * @return None.
- */
-static void foc_app_ReportDiagnostics(foc_app_t *ptThis)
-{
-    if (ptThis == NULL || !perfc_is_time_out_ms(
-            1000U, &ptThis->tHfStats.lReportTimestamp, true)) {
-        return;
-    }
-#if FOC_APP_LOG_TIMING_DIAGNOSTICS
-    foc_app_ReportHfAverage(ptThis);
-#endif
-#if FOC_APP_LOG_SMO_DIAGNOSTICS && \
-    FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
-    foc_app_ReportSmoRms(ptThis);
-#endif
-}
-#endif
 
 MODUS_DECLARE_OBJECT(foc_app, FocApp, FOC_APP_INIT_CONFIG)

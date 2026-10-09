@@ -26,145 +26,167 @@
 
 extern foc_app_t tFocApp;
 
-#if FOC_APP_LOG_RESISTANCE_ID && !defined(__NO_USE_LOG__)
-/**
- * @brief Report measured resistance inputs and PWM/ADC averages.
- * @param ptResult Completed resistance-identification result.
- * @return None.
- */
-void foc_debug_ReportResistance(
-    const identify_resistance_result_t *ptResult)
-{
-    float afVoltagePu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afCurrentPu[IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afVoltageOutputPu[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afCurrentMilliamp[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float afVoltageOutputMillivolt[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT] = {0.0f};
-    float aafDutyPercent[
-        IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT][3] = {{0.0f}};
-    float fDeltaCurrentPu = 0.0f;
-    float fDeltaCurrentMilliamp = 0.0f;
-    uint8_t chLevel = 0U;
-
-    if (ptResult == NULL) {
-        return;
-    }
-    for (chLevel = 0U;
-         chLevel < IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT;
-         chLevel++) {
-        afVoltagePu[chLevel] = foc_to_float(
-            ptResult->aqVoltageLevelPu[chLevel]);
-        afCurrentPu[chLevel] = foc_to_float(
-            ptResult->aqAverageCurrentPu[chLevel]);
-        afVoltageOutputPu[chLevel] = foc_to_float(
-            ptResult->aqAverageVoltageDPu[chLevel]);
-        afVoltageOutputMillivolt[chLevel] = afVoltageOutputPu[chLevel] *
-            (float)ptResult->wVoltageBaseMillivolt;
-        afCurrentMilliamp[chLevel] = afCurrentPu[chLevel] *
-            (float)ptResult->wCurrentBaseMilliamp;
-        aafDutyPercent[chLevel][0U] = foc_to_float(
-            ptResult->atAverageDuty[chLevel].qU) * 100.0f;
-        aafDutyPercent[chLevel][1U] = foc_to_float(
-            ptResult->atAverageDuty[chLevel].qV) * 100.0f;
-        aafDutyPercent[chLevel][2U] = foc_to_float(
-            ptResult->atAverageDuty[chLevel].qW) * 100.0f;
-    }
-    fDeltaCurrentPu = foc_to_float(ptResult->qDeltaCurrentPu);
-    fDeltaCurrentMilliamp = fDeltaCurrentPu *
-        (float)ptResult->wCurrentBaseMilliamp;
-    MLOGF(I, "identify R VdRef=%.3f/%.3f pu VdCmd=%.3f/%.3f pu\r\n",
-          (double)afVoltagePu[0U], (double)afVoltagePu[1U],
-          (double)afVoltageOutputPu[0U],
-          (double)afVoltageOutputPu[1U]);
-    MLOGF(I, "identify R Id=%.4f/%.4f pu IdEq=%.1f/%.1f mA "
-          "dId=%.4f pu (%.1f mA) R=%lu mOhm bases=%lu mV/%lu mA\r\n",
-          (double)afCurrentPu[0U], (double)afCurrentPu[1U],
-          (double)afCurrentMilliamp[0U],
-          (double)afCurrentMilliamp[1U],
-          (double)fDeltaCurrentPu, (double)fDeltaCurrentMilliamp,
-          (unsigned long)ptResult->wResistanceMilliohm,
-          (unsigned long)ptResult->wVoltageBaseMillivolt,
-          (unsigned long)ptResult->wCurrentBaseMilliamp);
-    MLOGF(I, "identify R VdCmdEq=%.0f/%.0f mV (not measured)\r\n",
-          (double)afVoltageOutputMillivolt[0U],
-          (double)afVoltageOutputMillivolt[1U]);
-    MLOGF(I, "identify R duty%% 0.05 U/V/W=%.2f/%.2f/%.2f "
-          "| 0.10=%.2f/%.2f/%.2f\r\n",
-          (double)aafDutyPercent[0U][0U],
-          (double)aafDutyPercent[0U][1U],
-          (double)aafDutyPercent[0U][2U],
-          (double)aafDutyPercent[1U][0U],
-          (double)aafDutyPercent[1U][1U],
-          (double)aafDutyPercent[1U][2U]);
-    MLOGF(I, "identify R ADC mean 0.05 U/V/W=%lu/%lu/%lu "
-          "| 0.10=%lu/%lu/%lu\r\n",
-          (unsigned long)ptResult->aawAverageAd[0U][0U],
-          (unsigned long)ptResult->aawAverageAd[0U][1U],
-          (unsigned long)ptResult->aawAverageAd[0U][2U],
-          (unsigned long)ptResult->aawAverageAd[1U][0U],
-          (unsigned long)ptResult->aawAverageAd[1U][1U],
-          (unsigned long)ptResult->aawAverageAd[1U][2U]);
-}
-#endif
-
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 #define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
 
 typedef enum {
-    FOC_DEBUG_WAVEFORM_ENCODER_ANGLE = 0,
-    FOC_DEBUG_WAVEFORM_SMO_ANGLE,
-    FOC_DEBUG_WAVEFORM_ANGLE_ERROR,
-    FOC_DEBUG_WAVEFORM_IQ,
-    FOC_DEBUG_WAVEFORM_CHANNEL_COUNT,
-} foc_debug_waveform_channel_e;
+    FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE = 0,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE,
+    FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR,
+    FOC_DEBUG_WAVEFORM_SOURCE_IQ,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_BETA,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_ALPHA,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_BETA,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_ALPHA,
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_BETA,
+    FOC_DEBUG_WAVEFORM_SOURCE_COUNT,
+} foc_debug_waveform_source_e;
 
-static const char *const s_achWaveformNames[] = {
-    "Enc_mT",
-    "SMO_mT",
-    "Err_mT",
-    "Iq_mpu",
+typedef struct {
+    const char *pchName;
+    uint8_t chSource;
+} foc_debug_waveform_channel_t;
+
+static const foc_debug_waveform_channel_t s_atWaveformChannels[] = {
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_ANGLE
+    {"Enc_mT", FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
+    {"SMO_mT", FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
+    {"Err_mT", FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_IQ
+    {"Iq_mpu", FOC_DEBUG_WAVEFORM_SOURCE_IQ},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
+    {"Ealpha_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA
+    {"Ebeta_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_BETA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
+    {"IerrA_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_ALPHA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
+    {"IerrB_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_BETA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
+    {"Zalpha_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_ALPHA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
+    {"Zbeta_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_BETA},
+#endif
 };
 
-static const float s_afWaveformScales[] = {
-    1000.0f, 1000.0f, 1000.0f, 1000.0f,
-};
+static float s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_COUNT];
 
-static float s_afWaveformValues[FOC_DEBUG_WAVEFORM_CHANNEL_COUNT];
+_Static_assert(sizeof(s_atWaveformChannels) /
+                   sizeof(s_atWaveformChannels[0]) ==
+                   FOC_DEBUG_WAVEFORM_CHANNEL_COUNT,
+               "Waveform channels and switches must match");
 
 static void foc_debug_CaptureWaveform(const foc_app_t *ptThis)
 {
     const motor_t *ptMotor = NULL;
-    const foc_observer_output_t *ptObserverOutput = NULL;
 
     if (ptThis == NULL) {
         return;
     }
     ptMotor = &ptThis->tMotor;
-    s_afWaveformValues[FOC_DEBUG_WAVEFORM_IQ] =
-        foc_to_float(ptMotor->tCore.tCurrent.qQ);
-    s_afWaveformValues[FOC_DEBUG_WAVEFORM_ENCODER_ANGLE] =
+#if FOC_DEBUG_WAVEFORM_ENABLE_IQ
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_IQ] =
+        foc_to_float(ptMotor->tOutput.tCurrent.qQ);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_ANGLE
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE] =
         ptMotor->tInput.bAngleValid ?
         foc_angle_to_turns(ptMotor->tInput.tElectricalAngle) : -1.0f;
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO
-    ptObserverOutput = &ptThis->tPosition.tObserver.tOutput;
-    if (ptObserverOutput->bValid) {
-        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SMO_ANGLE] =
-            foc_angle_to_turns(ptObserverOutput->tElectricalAngle);
-        s_afWaveformValues[FOC_DEBUG_WAVEFORM_ANGLE_ERROR] =
-            foc_to_float(foc_angle_diff(
-                ptObserverOutput->tElectricalAngle,
-                ptMotor->tInput.tElectricalAngle));
-    } else {
-        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SMO_ANGLE] = -1.0f;
-        s_afWaveformValues[FOC_DEBUG_WAVEFORM_ANGLE_ERROR] = -1.0f;
+#endif
+
+#if FOC_OBSERVER_HAS_SMO &&                                                     \
+    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE ||                                \
+     FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR)
+    {
+        const foc_observer_output_t *ptObserverOutput =
+            &ptThis->tPosition.tEstimates.tSmo.tEstimate;
+
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
+        if (ptObserverOutput->bValid) {
+            s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE] =
+                foc_angle_to_turns(ptObserverOutput->tElectricalAngle);
+        } else {
+            s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE] = -1.0f;
+        }
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
+        if (ptObserverOutput->bValid && ptMotor->tInput.bAngleValid) {
+            s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR] =
+                foc_to_float(foc_angle_diff(
+                    ptObserverOutput->tElectricalAngle,
+                    ptMotor->tInput.tElectricalAngle));
+        } else {
+            s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR] =
+                -1.0f;
+        }
+#endif
     }
 #else
-    (void)ptObserverOutput;
-    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SMO_ANGLE] = -1.0f;
-    s_afWaveformValues[FOC_DEBUG_WAVEFORM_ANGLE_ERROR] = -1.0f;
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE] = -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR] = -1.0f;
+#endif
+#endif
+
+#if FOC_OBSERVER_HAS_SMO &&                                                     \
+    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA ||                           \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA ||                            \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA ||                  \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA ||                   \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA ||                        \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA)
+    {
+        const foc_smo_t *ptSmo = &ptThis->tPosition.tObserver.tSmo;
+
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA] =
+            ptSmo->bInitialized ? foc_to_float(ptSmo->tAxis[0].e_hat) :
+                                  -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_BETA] =
+            ptSmo->bInitialized ? foc_to_float(ptSmo->tAxis[1].e_hat) :
+                                  -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
+        s_afWaveformValues[
+            FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_ALPHA] =
+            ptSmo->bInitialized ?
+            foc_to_float(ptMotor->tInput.tCurrentAlphaBeta.qAlpha) -
+                foc_to_float(ptSmo->tAxis[0].i_hat) : -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
+        s_afWaveformValues[
+            FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_BETA] =
+            ptSmo->bInitialized ?
+            foc_to_float(ptMotor->tInput.tCurrentAlphaBeta.qBeta) -
+                foc_to_float(ptSmo->tAxis[1].i_hat) : -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_ALPHA] =
+            ptSmo->bInitialized ? foc_to_float(ptSmo->tAxis[0].z_prev) :
+                                  -1.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_BETA] =
+            ptSmo->bInitialized ? foc_to_float(ptSmo->tAxis[1].z_prev) :
+                                  -1.0f;
+#endif
+    }
 #endif
 }
 
@@ -186,16 +208,19 @@ void foc_debug_WaveformInit(foc_app_t *ptThis,
     }
     for (wIndex = 0U;
          wIndex < FOC_DEBUG_WAVEFORM_CHANNEL_COUNT; wIndex++) {
-        const char *pchName = s_achWaveformNames[wIndex];
+        const foc_debug_waveform_channel_t *ptChannel =
+            &s_atWaveformChannels[wIndex];
+        const uint8_t chSource = ptChannel->chSource;
+        const char *pchName = ptChannel->pchName;
 
-        if (wIndex == FOC_DEBUG_WAVEFORM_ENCODER_ANGLE &&
+        if (chSource == FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE &&
             ptThis->tPosition.eSource ==
                 MOTOR_POSITION_SOURCE_HARD_DRAG) {
             pchName = "Ctrl_mT";
         }
         chChannel = mwaveform.AddVariable(
-            pchName, s_afWaveformScales[wIndex],
-            &s_afWaveformValues[wIndex], MWAVEFORM_VAR_FLOAT);
+            pchName, 1000.0f, &s_afWaveformValues[chSource],
+            MWAVEFORM_VAR_FLOAT);
         if (chChannel == FOC_WAVEFORM_CHANNEL_INVALID) {
             MLOGF(W, "%s\r\n",
                   "FOC waveform channel registration failed");
@@ -291,12 +316,12 @@ static void foc_debug_PrintStatus(const motor_t *ptMotor)
           "zero=%u angle=%u\r\n",
           (unsigned)tStatus.eState, (unsigned)tStatus.wFaults,
           (unsigned)tStatus.eMode, (unsigned)tStatus.bPwmEnabled,
-          (double)foc_to_float(ptMotor->tCore.tCurrent.qD),
-          (double)foc_to_float(ptMotor->tCore.tCurrent.qQ),
+          (double)foc_to_float(ptMotor->tOutput.tCurrent.qD),
+          (double)foc_to_float(ptMotor->tOutput.tCurrent.qQ),
           (double)foc_to_float(
               ptMotor->tCommand.tVoltageReference.qD),
-          (double)foc_to_float(ptMotor->tCore.tVoltage.qD),
-          (double)foc_to_float(ptMotor->tCore.tVoltage.qQ),
+          (double)foc_to_float(ptMotor->tOutput.tVoltage.qD),
+          (double)foc_to_float(ptMotor->tOutput.tVoltage.qQ),
           (unsigned)tStatus.bElectricalZeroValid,
           (unsigned)ptMotor->tInput.bAngleValid);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
@@ -307,8 +332,8 @@ static void foc_debug_PrintStatus(const motor_t *ptMotor)
               (unsigned)tFocApp.tPosition.tHandoff.eFeedbackState,
               (unsigned long)tFocApp.tPosition.tHandoff.wQualifiedCount,
               (unsigned long)tFocApp.tPosition.tHandoff.wBlendCount,
-              (double)foc_to_float(tFocApp.tPosition.tObserver.tOutput
-                                   .qSignalStrengthPu));
+              (double)foc_to_float(tFocApp.tPosition.tEstimates.tSmo
+                                   .qBemfStrengthPu));
     }
 #endif
 }
@@ -589,12 +614,8 @@ static void foc_debug_CmdIdentify(const char *args)
         if (eResult == FOC_RESULT_OK &&
             (tMotorStatus.eState != MOTOR_STATE_IDLE ||
              tMotorStatus.bPwmEnabled)) {
-            MLOGF(W, "identify requires motor idle after align\r\n");
+            MLOGF(W, "identify requires motor idle\r\n");
             eResult = FOC_RESULT_BUSY;
-        } else if (eResult == FOC_RESULT_OK &&
-                   !tMotorStatus.bElectricalZeroValid) {
-            MLOGF(W, "identify requires completed motor align\r\n");
-            eResult = FOC_RESULT_SAFETY;
         } else if (eResult == FOC_RESULT_OK && bStartResistance) {
             eResult = identify_StartResistance(&tFocApp.tIdentify);
         } else if (eResult == FOC_RESULT_OK) {
@@ -609,9 +630,11 @@ static void foc_debug_CmdIdentify(const char *args)
                     FOC_SCALAR(MOTOR_CONFIG_IDENTIFY_LD_MAX_CURRENT_PU),
                 .qMinCurrentDelta =
                     FOC_SCALAR(MOTOR_CONFIG_IDENTIFY_LD_MIN_DELTA_PU),
-                .qMaxElectricalSpeedPu =
-                    FOC_SCALAR(MOTOR_CONFIG_IDENTIFY_LD_MAX_SPEED_PU),
-                .hwMotionFaultCycles = MOTOR_CONFIG_IDENTIFY_LD_MOTION_CYCLES,
+                .qMaxTransverseCurrentPu =
+                    FOC_SCALAR(
+                        MOTOR_CONFIG_IDENTIFY_LD_MAX_TRANSVERSE_CURRENT_PU),
+                .hwTransverseFaultCycles =
+                    MOTOR_CONFIG_IDENTIFY_LD_TRANSVERSE_CYCLES,
             };
 
             eResult = identify_StartInductance(

@@ -11,15 +11,15 @@
 
 foc_result_t _identify_resistance_Start(identify_t *ptThis);
 
-void _identify_resistance_IsrStep(identify_t *ptThis,
-                                  const motor_t *ptMotor,
-                                  const identify_isr_sample_t *ptSample);
-
 fsm_rt_t _identify_resistance_RunPt(identify_t *ptThis,
                                      motor_t *ptMotor);
 
 void _identify_resistance_Stop(identify_t *ptThis);
 
 void _identify_resistance_Reset(identify_t *ptThis);
+
+foc_result_t _identify_resistance_TakeResult(
+    identify_t *ptThis,
+    identify_resistance_result_t *ptResult);
 
 #endif /* FOC_IDENTIFY_RESISTANCE_H */

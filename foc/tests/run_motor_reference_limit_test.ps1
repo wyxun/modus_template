@@ -19,6 +19,7 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/tests/motor_reference_limit_test.c"),
     (Join-Path $repoRoot "foc/tests/motor_realtime_test_port.c"),
     (Join-Path $repoRoot "foc/motor/motor.c"),
+    (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/motor/motor_startup.c"),
     (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
@@ -42,6 +43,7 @@ $includeArgs = @(
     "-I$(Join-Path $repoRoot 'foc/motor')",
     "-I$(Join-Path $repoRoot 'foc/middleware')",
     "-I$(Join-Path $repoRoot 'foc/control')",
+    "-I$(Join-Path $repoRoot 'foc/modulation')",
     "-I$(Join-Path $repoRoot 'foc/observer')"
 )
 

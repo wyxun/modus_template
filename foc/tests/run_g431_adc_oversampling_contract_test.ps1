@@ -4,6 +4,7 @@ $root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
 $hal = Get-Content (Join-Path $root 'peripheral/stm32g431/haladc.c') -Raw
 $mdi = Get-Content (Join-Path $root 'peripheral/stm32g431/mdi/instance.h') -Raw
 $scale = Get-Content (Join-Path $root 'foc/hal/foc_port_config.h') -Raw
+$target = Get-Content (Join-Path $root 'target/stm32g431/target.mk') -Raw
 
 $checks = @(
     @($hal, 'ADC_Init\.DataAlignment\s*=\s*LL_ADC_DATA_ALIGN_RIGHT', 2),
@@ -15,7 +16,10 @@ $checks = @(
     @($mdi, 'X\(u, ADC1->JDR1, 0x0FFFU, 0\)', 1),
     @($mdi, 'X\(v, ADC2->JDR2, 0x0FFFU, 0\)', 1),
     @($mdi, 'X\(w, ADC2->JDR1, 0x0FFFU, 0\)', 1),
-    @($scale, 'FOC_CURRENT_COUNTS_PER_BASE\s+1390U', 1)
+    @($scale, 'FOC_CURRENT_COUNTS_PER_BASE\s+119U', 1),
+    @($scale, 'FOC_CURRENT_BASE_MILLIAMP\s+3500U', 1),
+    @($target, '-DFOC_CURRENT_COUNTS_PER_BASE=119U', 1),
+    @($target, '-DFOC_CURRENT_BASE_MILLIAMP=3500U', 1)
 )
 
 foreach ($check in $checks) {
@@ -25,9 +29,12 @@ foreach ($check in $checks) {
     }
 }
 
-$countsPerAmp = 4096.0 * 0.020 * 16.0 / 3.3
+# OPA+ has three branches: 10k to shunt+, 22k to 3.3V, 976 ohm to GND.
+$signalGain = (1.0 / 10000.0) /
+    (1.0 / 10000.0 + 1.0 / 22000.0 + 1.0 / 976.0)
+$countsPerAmp = $signalGain * 16.0 * 0.020 * 4095.0 / 3.3
 $expected = $countsPerAmp * 3.5
-if ([math]::Abs($expected - 1390.0) -gt 2.0) {
+if ([math]::Round($expected) -ne 119.0) {
     throw "Current base mismatch: expected $expected counts"
 }
 

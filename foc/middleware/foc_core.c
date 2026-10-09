@@ -1,6 +1,8 @@
 /****************************************************************************
  * @file    foc_core.c
  * @brief   Architecture-independent Clarke and Park transforms
+ * @author  Codex
+ * @date    2026-10-09
  ************************************************************************** */
 
 #include "foc_core.h"
@@ -8,16 +10,51 @@
 
 #include <stddef.h>
 
-static bool core_mode_is_valid(foc_control_mode_e eMode)
+foc_result_t foc_core_Init(foc_core_state_t *ptState,
+    const foc_pid_params_t *ptPi, foc_scalar_t qVoltageLimit)
 {
-    return eMode < FOC_MODE_MAX;
+    if (ptState == NULL || ptPi == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    if (!foc_scalar_is_finite(qVoltageLimit) ||
+        qVoltageLimit <= FOC_ZERO || qVoltageLimit > FOC_ONE) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    foc_result_t eResult = foc_pid_Init(&ptState->tIdPi, ptPi);
+    if (eResult == FOC_RESULT_OK) {
+        eResult = foc_pid_Init(&ptState->tIqPi, ptPi);
+    }
+    ptState->qVoltageLimitSquared = foc_mul_pu(qVoltageLimit, qVoltageLimit);
+    return eResult;
 }
 
-static foc_result_t core_validate_inputs(const foc_core_state_t *ptState,
-                                         const foc_core_command_t *ptCommand,
-                                         const foc_core_input_t *ptInput)
+void foc_core_Reset(foc_core_state_t *ptState, foc_core_output_t *ptOutput)
 {
-    if (ptState == NULL || ptCommand == NULL || ptInput == NULL) {
+    if (ptState == NULL || ptOutput == NULL) {
+        return;
+    }
+    foc_pid_Reset(&ptState->tIdPi);
+    foc_pid_Reset(&ptState->tIqPi);
+    ptOutput->tCurrentAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
+    ptOutput->tCurrent = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    ptOutput->tVoltage = (foc_dq_t){FOC_ZERO, FOC_ZERO};
+    ptOutput->tVoltageAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
+    ptOutput->tDuty = (foc_duty_abc_t){FOC_HALF, FOC_HALF, FOC_HALF};
+    ptOutput->bVoltageLimited = false;
+    ptOutput->bPwmSaturated = false;
+}
+
+foc_result_t foc_core_step(foc_core_state_t *ptState,
+                           const foc_core_command_t *ptCommand,
+                           const foc_core_input_t *ptInput,
+                           foc_core_output_t *ptOutput)
+{
+    foc_scalar_t qSin = FOC_ZERO;
+    foc_scalar_t qCos = FOC_ZERO;
+    foc_result_t eResult = FOC_RESULT_OK;
+
+    if (ptState == NULL || ptCommand == NULL || ptInput == NULL ||
+        ptOutput == NULL) {
         return FOC_RESULT_NULL;
     }
     if (ptCommand->eMode == FOC_MODE_POSITION) {
@@ -26,69 +63,41 @@ static foc_result_t core_validate_inputs(const foc_core_state_t *ptState,
     if (!ptInput->bAngleValid) {
         return FOC_RESULT_SAFETY;
     }
-    return core_mode_is_valid(ptCommand->eMode) ? FOC_RESULT_OK :
-                                                  FOC_RESULT_INVALID_ARGUMENT;
-}
-
-static foc_result_t core_update_current(foc_core_state_t *ptState,
-                                        const foc_core_command_t *ptCommand)
-{
-    if (ptCommand->eMode == FOC_MODE_VOLTAGE) {
-        ptState->tVoltage = ptCommand->tVoltageReference;
-        return FOC_RESULT_OK;
+    if (ptCommand->eMode >= FOC_MODE_MAX) {
+        return FOC_RESULT_INVALID_ARGUMENT;
     }
-    ptState->tVoltage.qD = foc_pid_Step(&ptState->tIdPi,
-                                        ptCommand->tCurrentReference.qD,
-                                        ptState->tCurrent.qD);
-    ptState->tVoltage.qQ = foc_pid_Step(&ptState->tIqPi,
-                                        ptCommand->tCurrentReference.qQ,
-                                        ptState->tCurrent.qQ);
-    return FOC_RESULT_OK;
-}
-
-void foc_core_Reset(foc_core_state_t *ptState)
-{
-    if (ptState == NULL) {
-        return;
-    }
-    foc_pid_Reset(&ptState->tIdPi);
-    foc_pid_Reset(&ptState->tIqPi);
-    ptState->tCurrentAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
-    ptState->tCurrent = (foc_dq_t){FOC_ZERO, FOC_ZERO};
-    ptState->tVoltage = (foc_dq_t){FOC_ZERO, FOC_ZERO};
-    ptState->tVoltageAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
-    ptState->tDuty = (foc_duty_abc_t){FOC_HALF, FOC_HALF, FOC_HALF};
-}
-
-foc_result_t foc_core_step(foc_core_state_t *ptState,
-                           const foc_core_command_t *ptCommand,
-                           const foc_core_input_t *ptInput)
-{
-    foc_scalar_t qSin = FOC_ZERO;
-    foc_scalar_t qCos = FOC_ZERO;
-    foc_result_t eResult;
-
-    eResult = core_validate_inputs(ptState, ptCommand, ptInput);
-    if (eResult != FOC_RESULT_OK) {
-        return eResult;
-    }
-    ptState->tCurrentAlphaBeta = ptInput->tCurrentAlphaBeta;
+    ptOutput->tCurrentAlphaBeta = ptInput->tCurrentAlphaBeta;
     foc_angle_sincos(ptInput->tElectricalAngle, &qSin, &qCos);
-    eResult = foc_park_cached(&ptState->tCurrentAlphaBeta, qSin, qCos,
-                              &ptState->tCurrent);
+    eResult = foc_park_cached(&ptOutput->tCurrentAlphaBeta, qSin, qCos,
+                              &ptOutput->tCurrent);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
-    eResult = core_update_current(ptState, ptCommand);
+    if (ptCommand->eMode == FOC_MODE_VOLTAGE) {
+        ptOutput->tVoltage = ptCommand->tVoltageReference;
+    } else {
+        ptOutput->tVoltage.qD = foc_pid_Step(&ptState->tIdPi,
+            ptCommand->tCurrentReference.qD, ptOutput->tCurrent.qD);
+        ptOutput->tVoltage.qQ = foc_pid_Step(&ptState->tIqPi,
+            ptCommand->tCurrentReference.qQ, ptOutput->tCurrent.qQ);
+    }
+    eResult = foc_ipark_cached(&ptOutput->tVoltage, qSin, qCos,
+                               &ptOutput->tVoltageAlphaBeta);
     if (eResult != FOC_RESULT_OK) {
         return eResult;
     }
-    eResult = foc_ipark_cached(&ptState->tVoltage, qSin, qCos,
-                               &ptState->tVoltageAlphaBeta);
-    if (eResult != FOC_RESULT_OK) {
-        return eResult;
-    }
-    return foc_svpwm(&ptState->tVoltageAlphaBeta, &ptState->tDuty);
+    /* Keep the previous Motor criterion; Core owns its PI boundaries. */
+    ptOutput->bVoltageLimited =
+        ptOutput->tVoltage.qD <= ptState->tIdPi.tParams.qOutputMinimum ||
+        ptOutput->tVoltage.qD >= ptState->tIdPi.tParams.qOutputMaximum ||
+        ptOutput->tVoltage.qQ <= ptState->tIqPi.tParams.qOutputMinimum ||
+        ptOutput->tVoltage.qQ >= ptState->tIqPi.tParams.qOutputMaximum ||
+        foc_add_sat(
+            foc_mul_pu(ptOutput->tVoltage.qD, ptOutput->tVoltage.qD),
+            foc_mul_pu(ptOutput->tVoltage.qQ, ptOutput->tVoltage.qQ)) >=
+                ptState->qVoltageLimitSquared;
+    return foc_svpwm(&ptOutput->tVoltageAlphaBeta, &ptOutput->tDuty,
+                     &ptOutput->bPwmSaturated);
 }
 
 foc_result_t foc_clarke(foc_scalar_t qIu,
@@ -102,8 +111,8 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
         return FOC_RESULT_NULL;
     }
     ptAB->qAlpha = qIu;
-    ptAB->qBeta = foc_sub_sat(foc_mul_pu(qIv, qInvSqrtThree),
-                              foc_mul_pu(qIw, qInvSqrtThree));
+    ptAB->qBeta = foc_sub_sat(foc_mul_wide(qIv, qInvSqrtThree),
+                              foc_mul_wide(qIw, qInvSqrtThree));
     return FOC_RESULT_OK;
 }
 
@@ -115,10 +124,10 @@ foc_result_t foc_park_cached(const foc_ab_t *ptAB,
     if (ptAB == NULL || ptDQ == NULL) {
         return FOC_RESULT_NULL;
     }
-    ptDQ->qD = foc_add_sat(foc_mul_pu(ptAB->qAlpha, qCos),
-                           foc_mul_pu(ptAB->qBeta, qSin));
-    ptDQ->qQ = foc_sub_sat(foc_mul_pu(ptAB->qBeta, qCos),
-                           foc_mul_pu(ptAB->qAlpha, qSin));
+    ptDQ->qD = foc_add_sat(foc_mul_wide(ptAB->qAlpha, qCos),
+                            foc_mul_wide(ptAB->qBeta, qSin));
+    ptDQ->qQ = foc_sub_sat(foc_mul_wide(ptAB->qBeta, qCos),
+                            foc_mul_wide(ptAB->qAlpha, qSin));
     return FOC_RESULT_OK;
 }
 

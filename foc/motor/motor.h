@@ -14,24 +14,10 @@
 #include "foc_config.h"
 #include "foc_core.h"
 #include "foc_port.h"
-#include "motor_position.h"
 #include "motor_startup.h"
 
-/**
- * @brief Physical motor metadata owned by Motor.
- * @note Rs/Ld/Lq are validated and retained as explicit motor metadata.
- */
-typedef struct motor_params_t {
-    uint8_t chPolePairs;
-    uint32_t wResistanceMilliohm;
-    uint32_t wInductanceDMicroHenry;
-    uint32_t wInductanceQMicroHenry;
-    uint32_t wVoltageBaseMillivolt;
-    uint32_t wCurrentBaseMilliamp;
-} motor_params_t;
-
 typedef struct {
-    foc_scalar_t qMaxPhaseCurrent;
+    foc_scalar_t qMaxPhaseCurrent; /**< Reference limit; not ADC full scale. */
     foc_scalar_t qMaxIq;
     foc_scalar_t qMaxSpeedReference;
     foc_scalar_t qMaxModulation;
@@ -47,6 +33,8 @@ typedef struct {
     uint16_t hwSampleCount;
     bool bIsCalibrated;
     foc_current_sample_t tLatestSample;
+    uint32_t wTimeoutSteps;
+    uint32_t wElapsedSteps;
 } motor_adc_calib_t;
 
 typedef struct {
@@ -58,7 +46,13 @@ typedef struct {
     float fAlignTimeSeconds;             /**< Configured in seconds. */
     uint32_t wSpeedLoopFrequencyHz;      /**< Configured in hertz. */
     foc_scalar_t qAlignCurrent;
-    foc_scalar_t qElectricalSpeedBaseTurnsPerSecond;
+    /** Electrical base Hz, not speed pu; consumed only at initialization.
+     * FLOAT stores Hz. FIXED int32 stores Hz * 32768 (15 fraction bits).
+     * Configure 0 < Hz <= 65535 with FOC_SCALAR(); rounding is nearest,
+     * ties away from zero. The macro does not saturate: reject overflow
+     * before encoding. Init decodes/derives coefficients; Step uses pu.
+     */
+    foc_scalar_t qElectricalSpeedBaseHz;
     int32_t nHardDragElectricalMilliHz; /**< Zero disables the candidate. */
     uint32_t wStartupRampSteps; /**< Zero disables sensorless startup. */
     uint32_t wStartupMaxRunSteps;
@@ -88,48 +82,65 @@ typedef enum {
 } motor_fault_e;
 
 typedef struct {
-    motor_params_t tParams;
-    motor_limits_t tLimits;
-    foc_scalar_t qAlignCurrent;
-    uint32_t wAdcCalibrationTimeoutSteps;
-    uint32_t wAlignTargetSteps;
-    uint8_t chSpeedLoopDiv;
-    foc_core_state_t tCore;
-    foc_pid_t tSpeedPi;
-    motor_startup_t tStartup;
-    motor_adc_calib_t tCalib;
-    uint32_t wCurrentBaseMilliamp;
-    foc_core_command_t tCommand;
-    foc_core_input_t tInput;
-    uint32_t wRunGeneration;
-    uint32_t wSensorlessRunSteps;
-    uint32_t wStartupMaxRunSteps;
-    uint32_t wHardDragAngleStepBam32;
+    foc_pid_t tPi;
+    foc_scalar_t qIqLimit; /**< min(phase limit, enabled Iq limit), pu. */
+    uint8_t chDiv;
+    uint8_t chCount;
+} motor_speed_loop_t;
+
+typedef struct {
+    motor_startup_t tTrajectory;
+    uint32_t wRunSteps;
+    uint32_t wMaxRunSteps;
+    uint32_t wHardDragStepBam32;
     foc_angle_t tHardDragAngle;
     foc_scalar_t qHardDragSpeedPu;
-    foc_scalar_t qStartupIqPu;
-    foc_scalar_t qStartupTargetSpeedPu;
-    foc_scalar_t qStartupClosedLoopSpeedStepPu;
-    uint32_t wCalibrationSteps;
-    uint32_t wAlignStepCount;
-    uint8_t chSpeedLoopCount;
+    foc_scalar_t qIqPu;
+    foc_scalar_t qTargetSpeedPu;
+    foc_scalar_t qClosedLoopSpeedStepPu;
+    bool bSensorless;
+    bool bObserverActive;
+} motor_start_control_t;
+
+typedef enum {
+    MOTOR_ALIGN_CAPTURE_ZERO = 0,
+    MOTOR_ALIGN_START_RUN,
+    MOTOR_ALIGN_START_IDENTIFICATION,
+} motor_align_completion_t;
+
+typedef struct {
+    foc_scalar_t qCurrentPu;
+    uint32_t wTargetSteps;
+    uint32_t wStepCount;
+    motor_align_completion_t eCompletion;
+    bool bCapturePending; /**< Motor's pending capture; Position executes it. */
+} motor_align_t;
+
+typedef struct motor_t {
+    motor_params_t tParams; /**< Immutable physical metadata after Init. */
+    motor_limits_t tLimits;
+    foc_core_state_t tCore;
+    motor_speed_loop_t tSpeed;
+    motor_start_control_t tStart;
+    motor_align_t tAlign;
+    motor_adc_calib_t tCalib;
+    foc_core_command_t tCommand;
+    foc_core_input_t tInput;
+    foc_core_output_t tOutput; /**< Control command/duty; fault may invalidate. */
+    uint32_t wRunGeneration;
     motor_state_e eState;
     uint32_t wFaults;
     bool bPwmEnabled;
     bool bElectricalZeroValid;
     bool bControlPrepared;
-    bool bAlignCapturePending;
-    bool bSensorlessStart;
-    bool bObserverActive;
-#if !defined(__NO_USE_LOG__)
-    foc_port_pwm_phase_t tPwmCommitPhase;
-#endif
+    bool bIdentificationActive; /**< Fixed alpha-axis session; no position. */
 } motor_t;
 
 typedef enum {
     MOTOR_ISR_NO_CONTROL = 0,
     MOTOR_ISR_CONTROL_READY,
     MOTOR_ISR_CAPTURE_ZERO,
+    MOTOR_ISR_IDENTIFICATION_READY,
 } motor_isr_phase_t;
 
 typedef struct {
@@ -138,6 +149,7 @@ typedef struct {
     foc_control_mode_e eMode;
     bool bPwmEnabled;
     bool bElectricalZeroValid;
+    bool bIdentificationActive;
 } motor_status_t;
 
 /**
@@ -147,6 +159,17 @@ typedef struct {
  * @return FOC_RESULT_OK or an initialization error.
  */
 foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig);
+
+/**
+ * @brief Sample the DC bus and normalize it on Motor's voltage base.
+ * @param ptMotor Initialized Motor with a nonzero voltage base.
+ * @param pqBusPu Output bus voltage in pu.
+ * @return FOC_RESULT_OK or a sampling, range, or argument error.
+ * @note ISR-only. The target port supplies raw ADC counts; Motor applies
+ *       board scaling and performs the physical-to-pu conversion.
+ */
+foc_result_t motor_SampleDcBusPuIsr(const motor_t *ptMotor,
+                                   foc_scalar_t *pqBusPu);
 
 /**
  * @brief Start a supported closed-loop control mode.
@@ -159,10 +182,24 @@ foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
                                         foc_scalar_t qTargetSpeedPu);
 bool motor_SensorlessStartConfigured(const motor_t *ptMotor);
 
+/** @brief Align at a fixed stator angle, then hold zero voltage for R/L.
+ * @param ptMotor Idle, calibrated Motor.
+ * @return Checked start status; readiness is RUNNING in GetStatus().
+ * @note No position source or electrical-zero calibration is required.
+ *       PWM stays enabled across ALIGN -> voltage injection. */
+foc_result_t motor_StartIdentification(motor_t *ptMotor);
+
+/** @brief Submit fixed alpha-axis modulation from the foreground.
+ * @param ptMotor Active identification session. @param ptCommand Modulation.
+ * @return Checked submission status; beta must be zero. */
+foc_result_t motor_SetIdentificationModulation(motor_t *ptMotor,
+    const foc_ab_t *ptCommand);
+
 /**
  * @brief Stop the power stage and return to IDLE when safe.
  * @param ptMotor Motor object.
  * @return None.
+ * @note A rejected hardware stop latches MOTOR_FAULT_PWM and enters FAULT.
  */
 void motor_Stop(motor_t *ptMotor);
 
@@ -197,13 +234,13 @@ foc_result_t motor_SetVoltageReference(motor_t *ptMotor,
 /**
  * @brief Submit a prevalidated identification voltage from the FOC ISR.
  * @param ptMotor Running voltage-mode Motor.
- * @param ptVoltageCommand D/Q modulation command.
+ * @param ptVoltageCommand Fixed alpha-axis modulation; beta must be zero.
  * @return FOC_RESULT_OK or a state/safety error.
  * @note This API is ISR-only and does not access the PWM port directly.
  */
 foc_result_t motor_IdentificationApplyIsr(
     motor_t *ptMotor,
-    const foc_dq_t *ptVoltageCommand);
+    const foc_ab_t *ptVoltageCommand);
 
 /**
  * @brief Atomically stop a failed identification run in the FOC ISR.
@@ -246,13 +283,16 @@ foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor);
  * @brief Sample one ISR period before App obtains electrical feedback.
  * @param ptMotor Motor object.
  * @param ptSample Current and prior voltage snapshot for position sources.
- * @return Whether App must supply feedback or complete alignment.
+ * @return Normal feedback, fixed identification control, or ALIGN action.
  */
 motor_isr_phase_t motor_IsrPrepare(motor_t *ptMotor,
                                    motor_position_sample_t *ptSample);
 
-/** @brief Run Core once with the final electrical feedback. */
-void motor_IsrControlStep(
+/** @brief Run Core once with the final electrical feedback.
+ * @param ptMotor Prepared Motor. @param ptFeedback Electrical feedback;
+ * NULL is accepted only in Motor's fixed-axis identification session.
+ * @return OK only after successful Core calculation and PWM submission. */
+foc_result_t motor_IsrControlStep(
     motor_t *ptMotor, const motor_electrical_feedback_t *ptFeedback);
 
 /** @brief Finish an ALIGN capture requested by motor_IsrPrepare. */

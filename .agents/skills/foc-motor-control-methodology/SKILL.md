@@ -42,6 +42,10 @@ description: Use when designing, explaining, tuning, validating, or debugging PM
 
 ## Default workflow
 
+整理算法可读性和数值边界时，重点读取标幺参考文档第 8 节；代码实现约束以 `embedded-coding` 的 L1.9 为准，不另建一套基值或重复规则正文。
+
+修改 Motor、Position、Observer 或 Core 的对接时，必须读取模块架构参考第 7 节，并遵守 `embedded-coding` L1.10 的强制边界；新增磁链观测器、EKF 等后端时也适用。
+
 1. 写下目标工况和安全边界：电机、母线、电流、速度、负载、方向和最大允许输出。
 2. 核对模型和单位：相量/线量、Y 型等效、机械角/电角、峰值/RMS、真实值/ 标幺值、浮点/Q 格式、正负号和变换约定。
 3. 核对实时链路：PWM 触发 ADC，ADC/DMA 完成，快速控制计算，比较值更新，下一拍生效；记录每个模块的执行频率和延时。

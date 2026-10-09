@@ -15,21 +15,49 @@ $includeArgs = @($includePaths | ForEach-Object {
 })
 
 foreach ($backend in @("FLOAT", "FIXED")) {
-    $testExe = Join-Path $env:TEMP "foc_observer_contract_$backend.exe"
-    $backendDefine = "-DFOC_NUMERIC_$backend=1"
-    $compileArgs = @(
-        "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
-        "-DFOC_TRIG_BACKEND=1",
-        "-DFOC_ENABLE_SMO=1", $backendDefine,
-        $includeArgs, $sourceFiles, @("-lm", "-o", $testExe)
-    )
-    & gcc @compileArgs
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
+    foreach ($algorithms in @(0, 1)) {
+        $testName = "foc_observer_contract_${backend}_${algorithms}.exe"
+        $testExe = Join-Path $env:TEMP $testName
+        $backendDefine = "-DFOC_NUMERIC_$backend=1"
+        $compileArgs = @(
+            "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
+            "-DFOC_TRIG_BACKEND=1",
+            "-DFOC_ENABLE_SMO=1", "-DFOC_OBSERVER_BACKEND=$algorithms",
+            $backendDefine,
+            $includeArgs, $sourceFiles, @("-lm", "-o", $testExe)
+        )
+        & gcc @compileArgs
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        & $testExe
+        if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+        }
+        Write-Output "$backend Observer set=$algorithms contract tests passed"
     }
-    & $testExe
-    if ($LASTEXITCODE -ne 0) {
-        exit $LASTEXITCODE
-    }
-    Write-Output "$backend Observer contract tests passed"
 }
+
+# Unimplemented or contradictory algorithm sets must fail at compile time.
+$configPath = Join-Path $repoRoot 'foc/foc_config.h'
+$errorPath = Join-Path $env:TEMP 'foc_observer_config_error.txt'
+$cases = @(
+    @{ Defines = @('-DFOC_ENABLE_HFI=1'); Reason = 'HFI requires' },
+    @{ Defines = @('-DFOC_OBSERVER_BACKEND=2'); Reason = 'HFI requires' },
+    @{ Defines = @('-DFOC_OBSERVER_BACKEND=3'); Reason = 'HFI requires' },
+    @{ Defines = @('-DFOC_OBSERVER_BACKEND=4'); Reason = 'Unsupported' },
+    @{ Defines = @('-DFOC_OBSERVER_BACKEND=1', '-DFOC_ENABLE_SMO=0');
+       Reason = 'requires FOC_ENABLE_SMO' }
+)
+foreach ($case in $cases) {
+    $arguments = @('-E', '-x', 'c') + $case.Defines +
+        @('"' + $configPath + '"', '-o', 'NUL')
+    $process = Start-Process -FilePath (Get-Command gcc).Source `
+        -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru `
+        -RedirectStandardError $errorPath
+    $diagnostic = Get-Content -LiteralPath $errorPath -Raw
+    if ($process.ExitCode -eq 0 -or $diagnostic -notmatch $case.Reason) {
+        throw "Algorithm configuration was not explicitly rejected: $arguments"
+    }
+}
+Write-Output 'Observer unsupported algorithm configurations rejected'

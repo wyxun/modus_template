@@ -36,6 +36,19 @@ static float s_afWaveScales[8] = {0.0f};
 static void *s_apvWaveValues[8] = {NULL};
 static uint32_t s_awWaveChannelRates[8] = {0U};
 
+static float test_WaveformValue(const char *pchName)
+{
+    uint8_t chIndex = 0U;
+
+    for (chIndex = 0U; chIndex < s_chWaveCount; chIndex++) {
+        if (strcmp(s_achWaveNames[chIndex], pchName) == 0) {
+            return *(float *)s_apvWaveValues[chIndex];
+        }
+    }
+    assert(false);
+    return 0.0f;
+}
+
 /**
  * @brief Record waveform API initialization.
  * @param ptProtocol Waveform protocol requested by the app.
@@ -160,6 +173,10 @@ static int64_t s_lTickStep = 0;
 static uint32_t s_wShortTimeoutBudget = 0U;
 static bool s_bReportTimeout = false;
 static uint32_t s_wMotorStepCount = 0U;
+static uint32_t s_wEncoderRunCount = 0U;
+static uint32_t s_wControlWithoutFeedbackCount = 0U;
+static motor_isr_phase_t s_eMotorPhase = MOTOR_ISR_NO_CONTROL;
+static foc_result_t s_eControlResult = FOC_RESULT_OK;
 static uint32_t s_wEncoderInitCount = 0U;
 static motor_cfg_t s_tCapturedMotorConfig = {0};
 static motor_status_t s_tMotorStatus = {0};
@@ -208,7 +225,8 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
 foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
 {
     (void)ptEncoder;
-    return FOC_RESULT_OK;
+    s_wEncoderRunCount++;
+    return s_ePositionResult;
 }
 
 /**
@@ -222,8 +240,25 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
     *ptMotor = (motor_t){0};
     ptMotor->tParams = ptConfig->tParams;
     ptMotor->tParams.wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP;
-    ptMotor->wCurrentBaseMilliamp = FOC_CURRENT_BASE_MILLIAMP;
     s_tCapturedMotorConfig = *ptConfig;
+    return FOC_RESULT_OK;
+}
+
+/** @brief Stub one valid normalized DC-bus sample for App orchestration.
+ * @param ptMotor Motor whose voltage base is checked.
+ * @param pqBusPu Output bus voltage in pu.
+ * @return FOC_RESULT_OK or a null/base error. */
+foc_result_t motor_SampleDcBusPuIsr(const motor_t *ptMotor,
+                                   foc_scalar_t *pqBusPu)
+{
+    if (ptMotor == NULL || pqBusPu == NULL) {
+        return FOC_RESULT_NULL;
+    }
+    *pqBusPu = FOC_ZERO;
+    if (ptMotor->tParams.wVoltageBaseMillivolt == 0U) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    *pqBusPu = FOC_ONE;
     return FOC_RESULT_OK;
 }
 
@@ -237,16 +272,22 @@ motor_isr_phase_t motor_IsrPrepare(motor_t *ptMotor,
                                    motor_position_sample_t *ptSample)
 {
     (void)ptMotor;
-    (void)ptSample;
+    ptSample->tCurrentAlphaBeta = (foc_ab_t){FOC_SCALAR(0.03f), FOC_ZERO};
+    ptSample->tVoltageModelAlphaBeta.qAlpha = FOC_SCALAR(0.1f);
+    ptSample->bVoltageModelValid = true;
+    ptSample->bAlignActive = ptMotor->eState == MOTOR_STATE_ALIGN;
     s_wMotorStepCount++;
-    return MOTOR_ISR_NO_CONTROL;
+    return s_eMotorPhase;
 }
 
-void motor_IsrControlStep(
+foc_result_t motor_IsrControlStep(
     motor_t *ptMotor, const motor_electrical_feedback_t *ptFeedback)
 {
     (void)ptMotor;
-    (void)ptFeedback;
+    if (ptFeedback == NULL) {
+        s_wControlWithoutFeedbackCount++;
+    }
+    return s_eControlResult;
 }
 
 void motor_ApplyPositionEventIsr(motor_t *ptMotor,
@@ -263,12 +304,16 @@ void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture)
     (void)eCapture;
 }
 
+static foc_result_t s_eIdentifyApplyResult = FOC_RESULT_OK;
+static uint32_t s_wIdentifyAbortCount = 0U;
+static foc_ab_t s_tIdentifyVoltageCommand = {0};
+
 foc_result_t motor_IdentificationApplyIsr(
-    motor_t *ptMotor, const foc_dq_t *ptVoltageCommand)
+    motor_t *ptMotor, const foc_ab_t *ptVoltageCommand)
 {
     (void)ptMotor;
-    (void)ptVoltageCommand;
-    return FOC_RESULT_OK;
+    s_tIdentifyVoltageCommand = *ptVoltageCommand;
+    return s_eIdentifyApplyResult;
 }
 
 void motor_IdentificationAbortIsr(motor_t *ptMotor,
@@ -276,6 +321,7 @@ void motor_IdentificationAbortIsr(motor_t *ptMotor,
 {
     (void)ptMotor;
     (void)eFault;
+    s_wIdentifyAbortCount++;
 }
 
 /**
@@ -418,12 +464,36 @@ foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode)
     return FOC_RESULT_OK;
 }
 
+foc_result_t motor_StartIdentification(motor_t *ptMotor)
+{
+    foc_result_t result = motor_Start(ptMotor, FOC_MODE_VOLTAGE);
+    s_tMotorStatus.bIdentificationActive = true;
+    return result;
+}
+
+foc_result_t motor_SetIdentificationModulation(motor_t *ptMotor,
+    const foc_ab_t *ptCommand)
+{
+    return motor_SetVoltageReference(ptMotor,
+        ptCommand->qAlpha, ptCommand->qBeta);
+}
+
 foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
                                         foc_scalar_t qTargetSpeedPu)
 {
     (void)ptMotor;
     (void)qTargetSpeedPu;
     return FOC_RESULT_DISABLED;
+}
+
+/**
+ * @brief Expose sensorless capability for the command-only fake Motor.
+ * @param ptMotor Motor object queried by the shell command.
+ * @return True for a supplied fake Motor.
+ */
+bool motor_SensorlessStartConfigured(const motor_t *ptMotor)
+{
+    return ptMotor != NULL;
 }
 
 /**
@@ -437,6 +507,7 @@ void motor_Stop(motor_t *ptMotor)
     s_wMotorStopCount++;
     s_tMotorStatus.eState = MOTOR_STATE_IDLE;
     s_tMotorStatus.bPwmEnabled = false;
+    s_tMotorStatus.bIdentificationActive = false;
 }
 
 /**
@@ -529,8 +600,123 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
  * @param None.
  * @return Zero on success.
  */
+/** @brief App submits capture requests and stops rejected/invalid steps.
+ * @return None. */
+static void test_IdentifyBoundary(void)
+{
+    for (uint32_t scenario = 0U; scenario < 4U; scenario++) {
+        foc_app_t app = {0};
+        identify_cfg_t model = {
+            .wVoltageBaseMillivolt = 12000U,
+            .wCurrentBaseMilliamp = 3500U,
+            .wResistanceMilliohm = 1000U,
+            .qElectricalSpeedBaseHz = FOC_SCALAR(350.0f),
+        };
+        identify_inductance_cfg_t cfg = {
+            .wInjectionFrequencyHz = 1000U,
+            .hwCaptureDelayCycles = 2U,
+            .hwCaptureSampleCount = 2U,
+            .hwHalfCycleCount = 4U,
+            .qModulationAmplitude = FOC_SCALAR(0.1f),
+            .qMaxIdentificationCurrent = FOC_SCALAR(0.5f),
+            .qMinCurrentDelta = FOC_SCALAR(0.01f),
+            .qMaxTransverseCurrentPu = FOC_SCALAR(0.01f),
+            .hwTransverseFaultCycles = 1U,
+        };
+        motor_position_sample_t sample = {
+            .tVoltageModelAlphaBeta = {FOC_SCALAR(0.1f), FOC_ZERO},
+            .bVoltageModelValid = true,
+        };
+        identify_result_t tIdentifyResult = {0};
+        uint32_t abort_before = s_wIdentifyAbortCount;
+
+        s_tMotorStatus = (motor_status_t){
+            .eState = MOTOR_STATE_IDLE, .bElectricalZeroValid = false};
+        app.tMotor.tParams.wVoltageBaseMillivolt = 12000U;
+        app.tMotor.tLimits.qMaxModulation = FOC_ONE;
+        app.tMotor.tLimits.qMaxPhaseCurrent = FOC_ONE;
+        assert(identify_Init(&app.tIdentify, &model) == FOC_RESULT_OK);
+        assert(identify_StartInductance(&app.tIdentify, &cfg) ==
+               FOC_RESULT_OK);
+        assert(identify_Run(&app.tIdentify, &app.tMotor, &tIdentifyResult) ==
+               FOC_RESULT_BUSY);
+        assert(tIdentifyResult.eOperation == IDENTIFY_OPERATION_NONE);
+        s_eIdentifyApplyResult = scenario == 1U ?
+            FOC_RESULT_SAFETY : FOC_RESULT_OK;
+        if (scenario == 2U) {
+            sample.bVoltageModelValid = false;
+        }
+        _foc_app_IdentifyStep(&app, &sample,
+            scenario == 3U ? FOC_RESULT_SAFETY : FOC_RESULT_OK);
+        if (scenario == 0U) {
+            assert(s_wIdentifyAbortCount == abort_before);
+            assert(s_tIdentifyVoltageCommand.qAlpha == cfg.qModulationAmplitude);
+            _foc_app_IdentifyStep(&app, &sample, FOC_RESULT_OK);
+            assert(app.tIdentify.tInductance.tCapture.u_window_sum == 0);
+            _foc_app_IdentifyStep(&app, &sample, FOC_RESULT_OK);
+            assert(fabsf(foc_to_float((foc_scalar_t)
+                app.tIdentify.tInductance.tCapture.u_window_sum) -
+                0.1f) < 0.0002f);
+        } else {
+            assert(s_wIdentifyAbortCount == abort_before + 1U);
+            assert(app.tIdentify.eState == IDENTIFY_STATE_ERROR);
+            assert(app.tIdentify.eLastResult == FOC_RESULT_SAFETY);
+            _foc_app_IdentifyStep(&app, &sample, FOC_RESULT_OK);
+            assert(s_wIdentifyAbortCount == abort_before + 1U);
+        }
+    }
+    s_eIdentifyApplyResult = FOC_RESULT_OK;
+    s_tMotorStatus = (motor_status_t){0};
+}
+
+/** @brief Encoder failure and invalid zero cannot block stationary R/L.
+ * @return None. */
+static void test_EncoderlessIdentification(void)
+{
+    identify_cfg_t cfg = {
+        .wVoltageBaseMillivolt = 12000U,
+        .wCurrentBaseMilliamp = 3500U,
+        .wResistanceMilliohm = 1000U,
+        .qElectricalSpeedBaseHz = FOC_SCALAR(350.0f),
+    };
+    tFocApp = (foc_app_t){0};
+    tFocApp.bReady = true;
+    tFocApp.bEncoderEnabled = true;
+    tFocApp.lForegroundPeriodTicks = 1000;
+    tFocApp.tMotor.tParams.wVoltageBaseMillivolt = 12000U;
+    tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_SENSOR;
+    tFocApp.tMotor.tOutput.tDuty = (foc_duty_abc_t){
+        FOC_SCALAR(0.575f), FOC_SCALAR(0.425f), FOC_SCALAR(0.425f)};
+    s_tMotorStatus = (motor_status_t){.eState = MOTOR_STATE_IDLE};
+    s_ePositionResult = FOC_RESULT_SAFETY;
+    assert(identify_Init(&tFocApp.tIdentify, &cfg) == FOC_RESULT_OK);
+    foc_debug_CmdIdentify("resistance");
+    assert(tFocApp.tIdentify.eOperation == IDENTIFY_OPERATION_RESISTANCE);
+    uint32_t encoder_runs = s_wEncoderRunCount;
+    uint32_t positions = s_wPositionCallCount;
+    uint32_t controls = s_wControlWithoutFeedbackCount;
+    s_wShortTimeoutBudget = 1U;
+    assert(foc_app_Run((uintptr_t)&tFocApp) == MODUS_EFAIL);
+    assert(s_wEncoderRunCount == encoder_runs + 1U);
+    assert(tFocApp.tIdentify.tResistance.bMotorStarted);
+    s_eMotorPhase = MOTOR_ISR_IDENTIFICATION_READY;
+    foc_app_HighFrequencyISR();
+    assert(s_wPositionCallCount == positions);
+    assert(s_wControlWithoutFeedbackCount == controls + 1U);
+    assert(tFocApp.tIdentify.eState == IDENTIFY_STATE_RUNNING);
+    assert(tFocApp.tIdentify.tResistance.qLatestCurrentAlphaPu ==
+           FOC_SCALAR(0.03f));
+    identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+    foc_debug_CmdIdentify("inductance");
+    assert(tFocApp.tIdentify.eOperation == IDENTIFY_OPERATION_INDUCTANCE);
+    identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+    s_eMotorPhase = MOTOR_ISR_NO_CONTROL;
+    s_ePositionResult = FOC_RESULT_OK;
+}
+
 int main(void)
 {
+    test_IdentifyBoundary();
     foc_debug_CmdMotor("encoder");
 
     assert(s_wPositionCallCount == 1U);
@@ -614,49 +800,6 @@ int main(void)
     assert(s_wMotorStepCount == 2U);
     assert(s_chLog[0] == '\0');
 
-    tFocApp.bReady = false;
-    tFocApp.lForegroundPeriodTicks = perfc_convert_us_to_ticks(1000U);
-    s_bReportTimeout = true;
-    s_wShortTimeoutBudget = 1U;
-    s_chLog[0] = '\0';
-    (void)foc_app_Run((uintptr_t)&tFocApp);
-    assert(strstr(s_chLog, "FOC HF ISR avg=200 cycles/2 us") != NULL);
-
-    s_bReportTimeout = true;
-    s_wShortTimeoutBudget = 1U;
-    s_chLog[0] = '\0';
-    (void)foc_app_Run((uintptr_t)&tFocApp);
-    assert(s_chLog[0] == '\0');
-
-#if FOC_APP_LOG_ADC_OFFSETS
-    tFocApp.chRunPt = 0U;
-    tFocApp.bReady = false;
-    tFocApp.bAdcOffsetReported = false;
-    tFocApp.tMotor.tCalib.bIsCalibrated = false;
-    s_bReportTimeout = true;
-    s_wShortTimeoutBudget = 1U;
-    s_chLog[0] = '\0';
-    (void)foc_app_Run((uintptr_t)&tFocApp);
-    assert(strstr(s_chLog, "ADC offset U/V/W=") == NULL);
-
-    tFocApp.chRunPt = 0U;
-    tFocApp.tMotor.tCalib.bIsCalibrated = true;
-    tFocApp.tMotor.tCalib.wOffsetU = 1987U;
-    tFocApp.tMotor.tCalib.wOffsetV = 2011U;
-    tFocApp.tMotor.tCalib.wOffsetW = 1994U;
-    s_bReportTimeout = true;
-    s_wShortTimeoutBudget = 1U;
-    (void)foc_app_Run((uintptr_t)&tFocApp);
-    assert(strstr(s_chLog, "ADC offset U/V/W=1987/2011/1994") != NULL);
-
-    tFocApp.chRunPt = 0U;
-    s_bReportTimeout = true;
-    s_wShortTimeoutBudget = 1U;
-    s_chLog[0] = '\0';
-    (void)foc_app_Run((uintptr_t)&tFocApp);
-    assert(s_chLog[0] == '\0');
-#endif
-
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     {
         foc_app_cfg_t tConfig = {0};
@@ -671,7 +814,7 @@ int main(void)
             FOC_SCALAR(0.5773502692f);
         tConfig.wVoltageBaseMillivolt = 12000U;
         tConfig.wHighFrequencyIsrHz = 20000U;
-        tConfig.qElectricalSpeedBaseTurnsPerSecond = FOC_SCALAR(100.0f);
+        tConfig.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
         tConfig.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
         tConfig.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
         tConfig.tObserverCfg.tSmo.qCurrentEstimateLimit = FOC_ONE;
@@ -691,7 +834,7 @@ int main(void)
         assert(s_tCapturedMotorConfig.tParams.wVoltageBaseMillivolt ==
                12000U);
         assert(s_tCapturedMotorConfig.tParams.wCurrentBaseMilliamp == 0U);
-        assert(s_tCapturedMotorConfig.qElectricalSpeedBaseTurnsPerSecond ==
+        assert(s_tCapturedMotorConfig.qElectricalSpeedBaseHz ==
                FOC_SCALAR(100.0f));
         assert(s_tCapturedMotorConfig.tLimits.qMaxSpeedReference == FOC_ONE);
         assert(fabsf(foc_to_float(foc_gain_apply(
@@ -701,17 +844,48 @@ int main(void)
                    &s_tCapturedMotorConfig.tSpeedPiParams.tKiTs,
                    FOC_SCALAR(0.1f))) - 0.05f) < 0.001f);
         assert(s_wWaveInitCount == 1U);
-        assert(s_chWaveCount == 4U);
-        assert(strcmp(s_achWaveNames[0], "Enc_mT") == 0);
-        assert(strcmp(s_achWaveNames[1], "SMO_mT") == 0);
-        assert(strcmp(s_achWaveNames[2], "Err_mT") == 0);
-        assert(strcmp(s_achWaveNames[3], "Iq_mpu") == 0);
-        for (uint32_t wIndex = 0U; wIndex < 4U; wIndex++) {
+        const char *const achExpectedNames[] = {
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_ANGLE
+            "Enc_mT",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
+            "SMO_mT",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
+            "Err_mT",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_IQ
+            "Iq_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
+            "Ealpha_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA
+            "Ebeta_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
+            "IerrA_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
+            "IerrB_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
+            "Zalpha_mpu",
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
+            "Zbeta_mpu",
+#endif
+        };
+        assert(s_chWaveCount ==
+               sizeof(achExpectedNames) / sizeof(achExpectedNames[0]));
+        assert(s_chWaveCount <= 6U);
+        for (uint32_t wIndex = 0U; wIndex < s_chWaveCount; wIndex++) {
+            assert(strcmp(s_achWaveNames[wIndex],
+                          achExpectedNames[wIndex]) == 0);
             assert(s_achWaveTypes[wIndex] == MWAVEFORM_VAR_FLOAT);
             assert(s_apvWaveValues[wIndex] != NULL);
+            assert(s_afWaveScales[wIndex] == 1000.0f);
         }
-        assert(s_afWaveScales[0] == 1000.0f);
-        assert(s_afWaveScales[1] == 1000.0f);
         assert(s_wWaveDecimation == 0U);
         assert(s_wWaveIsrPeriodNs == 50000U);
         assert(s_wWaveTargetHz == 10000U);
@@ -720,100 +894,62 @@ int main(void)
         tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_SENSOR;
         tFocApp.tMotor.tInput.tCurrentAlphaBeta =
             (foc_ab_t){FOC_SCALAR(0.1f), FOC_SCALAR(0.2f)};
-        tFocApp.tMotor.tCore.tVoltageAlphaBeta =
+        tFocApp.tMotor.tOutput.tVoltageAlphaBeta =
             (foc_ab_t){FOC_SCALAR(0.3f), FOC_SCALAR(-0.4f)};
         tFocApp.tMotor.tCommand.tCurrentReference =
             (foc_dq_t){FOC_SCALAR(0.1f), FOC_SCALAR(0.2f)};
-        tFocApp.tMotor.tCore.tCurrent =
+        tFocApp.tMotor.tOutput.tCurrent =
             (foc_dq_t){FOC_SCALAR(0.3f), FOC_SCALAR(0.4f)};
-        tFocApp.tMotor.tCore.tVoltage =
+        tFocApp.tMotor.tOutput.tVoltage =
             (foc_dq_t){FOC_SCALAR(0.5f), FOC_SCALAR(0.6f)};
         tFocApp.tMotor.tInput.tElectricalAngle.wBam32 = 0x20000000U;
         tFocApp.tMotor.tInput.bAngleValid = true;
-        tFocApp.tPosition.tObserver.tSmo.tAxis[0].qBemf =
+        tFocApp.tPosition.tObserver.tSmo.tAxis[0].e_hat =
             FOC_SCALAR(0.5f);
-        tFocApp.tPosition.tObserver.tSmo.tAxis[1].qBemf =
+        tFocApp.tPosition.tObserver.tSmo.tAxis[1].e_hat =
             FOC_SCALAR(0.6f);
-        tFocApp.tPosition.tObserver.tOutput.tElectricalAngle.wBam32 =
+        tFocApp.tPosition.tObserver.tSmo.tAxis[0].i_hat =
+            FOC_SCALAR(0.04f);
+        tFocApp.tPosition.tObserver.tSmo.tAxis[1].i_hat =
+            FOC_SCALAR(0.05f);
+        tFocApp.tPosition.tObserver.tSmo.tAxis[0].z_prev =
+            FOC_SCALAR(0.7f);
+        tFocApp.tPosition.tObserver.tSmo.tAxis[1].z_prev =
+            FOC_SCALAR(0.8f);
+        tFocApp.tPosition.tEstimates.tSmo.tEstimate.tElectricalAngle.wBam32 =
             0x60000000U;
-        tFocApp.tPosition.tObserver.tOutput.bValid = true;
+        tFocApp.tPosition.tEstimates.tSmo.tEstimate.bValid = true;
         foc_debug_WaveformStep();
-        assert(s_afWaveScales[0] == 1000.0f);
-        assert(fabsf(*(float *)s_apvWaveValues[0] - 0.125f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[1] - 0.375f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[2] - 0.25f) < 0.001f);
-        assert(fabsf(*(float *)s_apvWaveValues[3] - 0.4f) < 0.001f);
-#if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_SMO && \
-    !defined(__NO_USE_LOG__)
-        {
-            motor_position_sample_t tSample = {0};
-
-            tFocApp.tMotor.eState = MOTOR_STATE_RUNNING;
-            tFocApp.tMotor.tInput.bAngleValid = true;
-            tFocApp.tMotor.tInput.tElectricalAngle =
-                foc_angle_from_turns(0.1f);
-            tFocApp.tPosition.tObserver.tOutput.bValid = true;
-            tFocApp.tPosition.tObserver.tOutput.tElectricalAngle =
-                foc_angle_from_turns(0.2f);
-            tSample.tCurrentAlphaBeta.qAlpha = FOC_SCALAR(0.1f);
-            tSample.tCurrentAlphaBeta.qBeta = FOC_SCALAR(-0.2f);
-            tSample.tVoltageModelAlphaBeta.qAlpha =
-                FOC_SCALAR(0.1f);
-            tSample.tVoltageModelAlphaBeta.qBeta =
-                FOC_SCALAR(0.2f);
-            tSample.wRunGeneration = 1U;
-            tFocApp.tPosition.tObserver.tSmo.tExec
-                .qVoltageCurrentGain = FOC_SCALAR(0.2f);
-            tFocApp.tPosition.tObserver.tSmo.tAxis[0]
-                .qCurrentEstimate = FOC_SCALAR(0.2f);
-            tFocApp.tPosition.tObserver.tSmo.tAxis[1]
-                .qCurrentEstimate = FOC_SCALAR(-0.1f);
-            tFocApp.tPosition.tObserver.tSmo.tAxis[0].qBemf =
-                FOC_SCALAR(0.3f);
-            tFocApp.tPosition.tObserver.tSmo.tAxis[1].qBemf =
-                FOC_SCALAR(0.4f);
-            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
-            tFocApp.tPosition.tObserver.tOutput.tElectricalAngle =
-                foc_angle_from_turns(0.4f);
-            tSample.tVoltageModelAlphaBeta.qAlpha =
-                FOC_SCALAR(0.3f);
-            tSample.tVoltageModelAlphaBeta.qBeta = FOC_ZERO;
-            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
-            tFocApp.tPosition.tObserver.tOutput.bValid = false;
-            foc_app_AccumulateSmoDiagnostic(&tFocApp, &tSample);
-            assert(tFocApp.tHfStats.wSmoDiagnosticSampleCount == 2U);
-            assert(tFocApp.tHfStats.wSmoLargeAngleErrorCount == 1U);
-            assert(fabsf(tFocApp.tHfStats.fBemfSquareTotal - 0.5f)
-                   < 0.001f);
-            assert(fabsf(tFocApp.tHfStats.fCurrentErrorSquareTotal - 0.04f)
-                   < 0.001f);
-            assert(fabsf(tFocApp.tHfStats.fSmoBadBemfSquareTotal -
-                         0.25f) < 0.001f);
-            assert(fabsf(tFocApp.tHfStats.fSmoBadCurrentSquareTotal -
-                         0.02f) < 0.001f);
-            assert(tFocApp.tHfStats.awSmoBinSampleCount[3] == 2U);
-            assert(tFocApp.tHfStats.awSmoBinBadCount[3] == 1U);
-            assert(tFocApp.tHfStats.awSmoSectorBadCount[0] == 1U);
-            assert(tFocApp.tHfStats.awSmoSectorLowCount[0] == 0U);
-            s_chLog[0] = '\0';
-            foc_app_ReportSmoRms(&tFocApp);
-            assert(strstr(s_chLog,
-                          "SMO cond x1e4 eBad=5000 eGood=5000 ") !=
-                   NULL);
-            assert(strstr(s_chLog, "iBad=1414 iGood=1414") != NULL);
-            assert(strstr(s_chLog,
-                          "SMO bin bad/tot [0]=0/0 [1]=0/0 "
-                          "[2]=0/0 [3]=1/2") != NULL);
-            assert(strstr(s_chLog,
-                          "SMO sec err/low s0=1/0 s1=0/0 s2=0/0 s3=0/0 ") !=
-                   NULL);
-            assert(tFocApp.tHfStats.wSmoDiagnosticSampleCount == 0U);
-            assert(tFocApp.tHfStats.fSmoBadBemfSquareTotal == 0.0f);
-            assert(tFocApp.tHfStats.fSmoBadCurrentSquareTotal == 0.0f);
-            assert(tFocApp.tHfStats.awSmoBinSampleCount[3] == 0U);
-            assert(tFocApp.tHfStats.awSmoBinBadCount[3] == 0U);
-            assert(tFocApp.tHfStats.awSmoSectorBadCount[0] == 0U);
-        }
+        assert(fabsf(test_WaveformValue("Enc_mT") - 0.125f) < 0.001f);
+        assert(fabsf(test_WaveformValue("SMO_mT") - 0.375f) < 0.001f);
+        assert(fabsf(test_WaveformValue("Err_mT") - 0.25f) < 0.001f);
+        assert(fabsf(test_WaveformValue("Iq_mpu") - 0.4f) < 0.001f);
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
+        assert(fabsf(test_WaveformValue("Ealpha_mpu") - 0.5f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA
+        assert(fabsf(test_WaveformValue("Ebeta_mpu") - 0.6f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
+        assert(fabsf(test_WaveformValue("IerrA_mpu") - 0.06f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
+        assert(fabsf(test_WaveformValue("IerrB_mpu") - 0.15f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
+        assert(fabsf(test_WaveformValue("Zalpha_mpu") - 0.7f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
+        assert(fabsf(test_WaveformValue("Zbeta_mpu") - 0.8f) < 0.001f);
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
+        tFocApp.tMotor.tInput.bAngleValid = false;
+        foc_debug_WaveformStep();
+        assert(test_WaveformValue("Err_mT") == -1.0f);
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
+        assert(fabsf(test_WaveformValue("SMO_mT") - 0.375f) < 0.001f);
+#endif
+        tFocApp.tMotor.tInput.bAngleValid = true;
 #endif
         s_wWaveStepCount = 0U;
         assert(s_wEncoderInitCount == 1U);
@@ -859,6 +995,26 @@ int main(void)
         assert(!tFocApp.tPosition.tHandoff.bAutoTakeover);
 #endif
     }
+#endif
+    test_EncoderlessIdentification();
+#if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
+    /* A failed control/PWM submission must not retain a qualified estimate. */
+    tFocApp = (foc_app_t){0};
+    tFocApp.bReady = true;
+    tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_SENSOR;
+    tFocApp.tPosition.tSensor = (motor_position_provider_t){
+        .fnGetPosition = foc_encoder_GetPosition,
+        .pContext = &tFocApp.tEncoder};
+    tFocApp.tPosition.chPolePairs = 7U;
+    tFocApp.tPosition.qMechanicalToElectricalSpeedPuGain = FOC_ONE;
+    tFocApp.tPosition.tEstimates.tSmo.tEstimate.bValid = true;
+    tFocApp.tPosition.tSmo.bObserverSpeedReady = true;
+    s_ePositionResult = FOC_RESULT_OK;
+    s_eMotorPhase = MOTOR_ISR_CONTROL_READY;
+    s_eControlResult = FOC_RESULT_SAFETY;
+    foc_app_HighFrequencyISR();
+    assert(!tFocApp.tPosition.tEstimates.tSmo.tEstimate.bValid);
+    assert(!tFocApp.tPosition.tSmo.bObserverSpeedReady);
 #endif
     return 0;
 }
