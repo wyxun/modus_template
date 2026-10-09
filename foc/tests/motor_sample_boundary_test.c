@@ -7,6 +7,7 @@
 static foc_current_sample_t raw = {2048U, 2048U, 2048U};
 static uint32_t bus = 12000U;
 static bool pwm;
+static uint32_t busReads;
 
 foc_result_t foc_SampleCurrent(foc_current_sample_t *out)
 {
@@ -16,6 +17,7 @@ foc_result_t foc_SampleCurrent(foc_current_sample_t *out)
 uint32_t foc_SampleDcBusRaw(foc_port_adc_channel_e channel)
 {
     assert(channel == FOC_PORT_ADC_CHANNEL_DCBUS);
+    busReads++;
     return bus;
 }
 foc_result_t foc_SetDuty(const foc_duty_abc_t *duty)
@@ -32,6 +34,66 @@ foc_result_t foc_PwmClearFault(void) { return FOC_RESULT_OK; }
 static void near(foc_scalar_t actual, float expected)
 {
     assert(fabsf(foc_to_float(actual) - expected) < 0.0003f);
+}
+
+/** @brief Fixed-bus identification ignores later ADC publication windows.
+ * @param cfg Initialized control profile. @return None. */
+static void test_IdentificationBusSnapshot(const motor_cfg_t *cfg)
+{
+    motor_t motor = {0};
+    motor_position_sample_t sample = {0};
+    uint32_t reads = 0U;
+
+    raw = (foc_current_sample_t){2048U, 2048U, 2048U};
+    bus = 12000U;
+    assert(motor_Init(&motor, cfg) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
+    bus = FOC_PORT_ADC_SAMPLE_INVALID;
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_SAFETY);
+    assert(!pwm);
+    bus = 0U;
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_OUT_OF_RANGE);
+    bus = FOC_DCBUS_MAX_MILLIVOLT + 1U;
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_OUT_OF_RANGE);
+    bus = 12000U;
+    reads = busReads;
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_OK);
+    assert(busReads == reads + 1U);
+    near(motor.qIdentificationDcBusPu, 1.0f);
+    /* First ISR runs after the foreground ADC enters its update window. */
+    bus = FOC_PORT_ADC_SAMPLE_INVALID;
+    for (uint32_t step = 0U; step < motor.tAlign.wTargetSteps; step++) {
+        assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
+    }
+    assert(motor_IsrPrepare(&motor, &sample) ==
+           MOTOR_ISR_IDENTIFICATION_READY);
+    assert(sample.bVoltageModelValid);
+    assert(motor_IsrControlStep(&motor, NULL) == FOC_RESULT_OK);
+    assert(motor_IdentificationApplyIsr(&motor,
+        &(foc_ab_t){FOC_SCALAR(0.1f), FOC_ZERO}) == FOC_RESULT_OK);
+    /* Reference reaches PWM on the next control step. */
+    assert(motor_IsrPrepare(&motor, &sample) ==
+           MOTOR_ISR_IDENTIFICATION_READY);
+    assert(motor_IsrControlStep(&motor, NULL) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&motor, &sample) ==
+           MOTOR_ISR_IDENTIFICATION_READY);
+    assert(sample.bVoltageModelValid);
+    near(sample.tVoltageModelAlphaBeta.qAlpha, 0.1f);
+    assert(busReads == reads + 1U);
+    assert(motor_IsrControlStep(&motor, NULL) == FOC_RESULT_OK);
+    motor_Stop(&motor);
+    near(motor.qIdentificationDcBusPu, 0.0f);
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_SAFETY);
+    assert(!pwm);
+    /* A new session must latch anew, not reuse the prior session's value. */
+    bus = 9600U;
+    assert(motor_StartIdentification(&motor) == FOC_RESULT_OK);
+    near(motor.qIdentificationDcBusPu, 0.8f);
+    /* Holding the bus snapshot must not mask a real current-sample fault. */
+    raw.wU = UINT32_MAX;
+    assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
+    assert(motor.eState == MOTOR_STATE_FAULT && !pwm);
+    near(motor.qIdentificationDcBusPu, 0.0f);
 }
 
 int main(void)
@@ -98,5 +160,6 @@ int main(void)
     raw.wU = UINT32_MAX;
     assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
     assert(motor.eState == MOTOR_STATE_FAULT && !pwm);
+    test_IdentificationBusSnapshot(&cfg);
     return 0;
 }

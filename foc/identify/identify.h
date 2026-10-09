@@ -17,12 +17,14 @@ typedef struct motor_t motor_t;
 
 /** @brief Compile-time switch for Identify diagnostics and result logs. */
 #ifndef IDENTIFY_LOG_ENABLE
-#define IDENTIFY_LOG_ENABLE (0)
+#define IDENTIFY_LOG_ENABLE (1)
 #endif
+#ifndef IDENTIFY_LOG_ACTIVE
 #if IDENTIFY_LOG_ENABLE && !defined(__NO_USE_LOG__)
 #define IDENTIFY_LOG_ACTIVE (1)
 #else
 #define IDENTIFY_LOG_ACTIVE (0)
+#endif
 #endif
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT      (2U)
@@ -39,9 +41,9 @@ typedef struct motor_t motor_t;
     FOC_SCALAR(0.14f)
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU                                  \
-    FOC_SCALAR(0.025f)
+    FOC_SCALAR(0.04f)
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU                                  \
-    FOC_SCALAR(0.085f)
+    FOC_SCALAR(0.09f)
 
 #if (IDENTIFY_RESISTANCE_SAMPLE_HZ == 0U) ||                                    \
     (FOC_HF_ISR_HZ == 0U) ||                                                    \
@@ -235,6 +237,11 @@ typedef struct {
     volatile identify_accumulator_t qCurrentSum;
     volatile identify_accumulator_t qVoltageSum;
     volatile foc_scalar_t qLatestCurrentAlphaPu;
+#if IDENTIFY_LOG_ACTIVE
+    /* Paired with latest current for foreground-only failure diagnostics. */
+    volatile foc_scalar_t qLatestVoltageModelAlphaPu;
+    volatile bool bLatestSampleAvailable;
+#endif
     foc_scalar_t aqAverageCurrent[
         IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT];
     foc_scalar_t aqAverageVoltageAlpha[
@@ -253,6 +260,17 @@ typedef struct {
     bool bReady;
 } identify_stationary_t;
 
+#if IDENTIFY_LOG_ACTIVE
+/** Debug-only bus publication state; never fed into the R/L algorithms. */
+typedef struct {
+    uint32_t wRaw;
+    uint32_t wSequence;
+    bool bValid;
+    bool bReady;
+    bool bAvailable;
+} identify_bus_failure_t;
+#endif
+
 /** @brief Caller-owned parameter identification parent object. */
 typedef struct {
     volatile identify_state_t eState;
@@ -262,6 +280,7 @@ typedef struct {
     identify_operation_t eFailureOperation;
     identify_failure_cause_t eFailureCause;
     foc_result_t eFailureResult;
+    identify_bus_failure_t tFailureBus;
     volatile bool bFailureLogPending;
 #endif
     identify_resistance_t tResistance;

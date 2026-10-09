@@ -57,6 +57,9 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
         "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
         "-DFOC_OFFSET_CALIB_TIMES=1U",
+        # This break-only fixture uses a fixed valid 12 V supply.
+        "-DFOC_DCBUS_SOURCE=1U",
+        "-DFOC_DCBUS_NOMINAL_MILLIVOLT=12000U",
         "-DFOC_TEST_EXTERNAL_FAULT_PORT=1",
         "-DFOC_TEST_EXTERNAL_PWM_STOP=1",
         "-DFOC_TEST_EXTERNAL_ADC_TRIGGER=1",

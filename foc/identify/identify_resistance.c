@@ -67,6 +67,10 @@ static void _identify_resistance_ClearCapture(identify_resistance_t *ptResistanc
     perfc_port_resume_global_interrupt(tIrqState);
 }
 
+/** @brief Latch failure and snapshot the last valid ISR pair before stopping.
+ * @param ptThis Identification owner. @param ptMotor Session to stop.
+ * @param eResult Failure status. @return None.
+ * @note Snapshot under interrupt guard; diagnostics print in foreground. */
 static void _identify_resistance_Fail(identify_t *ptThis,
                                       motor_t *ptMotor,
                                       foc_result_t eResult)
@@ -77,12 +81,18 @@ static void _identify_resistance_Fail(identify_t *ptThis,
         IDENTIFY_RESISTANCE_STATE_IDLE;
     uint8_t chFailedLevel = 0U;
     bool bReportFailure = false;
+    foc_scalar_t qFailedCurrent = FOC_ZERO;
+    foc_scalar_t qFailedVoltage = FOC_ZERO;
+    bool bSampleAvailable = false;
 #endif
     tIrqState = perfc_port_disable_global_interrupt();
 #if IDENTIFY_LOG_ACTIVE
     bReportFailure = ptThis->eState != IDENTIFY_STATE_ERROR;
     eFailedState = ptThis->tResistance.eState;
     chFailedLevel = ptThis->tResistance.chVoltageLevel;
+    qFailedCurrent = ptThis->tResistance.qLatestCurrentAlphaPu;
+    qFailedVoltage = ptThis->tResistance.qLatestVoltageModelAlphaPu;
+    bSampleAvailable = ptThis->tResistance.bLatestSampleAvailable;
 #endif
     ptThis->tResistance.bMotorStarted = false;
     ptThis->tResistance.bBatchReady = false;
@@ -96,9 +106,17 @@ static void _identify_resistance_Fail(identify_t *ptThis,
     perfc_port_resume_global_interrupt(tIrqState);
 #if IDENTIFY_LOG_ACTIVE
     if (bReportFailure) {
-        MLOGF(W, "identify R %s level=%u failed rc=%d\r\n",
+        MLOGF(W, "identify R %s level=%u failed rc=%d "
+              "i_alpha_pu=%.5f min_i_pu=%.5f mod_alpha=%.5f "
+              "u_model_alpha_pu=%.5f sample_seen=%u\r\n",
               _identify_resistance_StateName(eFailedState),
-              (unsigned)chFailedLevel, (int)eResult);
+              (unsigned)chFailedLevel, (int)eResult,
+              (double)foc_to_float(qFailedCurrent),
+              (double)foc_to_float(IDENTIFY_RESISTANCE_MIN_CURRENT_PU),
+              (double)foc_to_float(
+                  _identify_resistance_VoltageForLevel(chFailedLevel)),
+              (double)foc_to_float(qFailedVoltage),
+              (unsigned)bSampleAvailable);
     }
 #endif
     if (ptMotor != NULL) {
@@ -264,6 +282,10 @@ static identify_failure_cause_t _identify_resistance_CaptureStep(
         return cause;
     }
     ptResistance->qLatestCurrentAlphaPu = ptSample->tCurrentPu.qAlpha;
+#if IDENTIFY_LOG_ACTIVE
+    ptResistance->qLatestVoltageModelAlphaPu = ptSample->qVoltageModelAlphaPu;
+    ptResistance->bLatestSampleAvailable = true;
+#endif
     if (ptResistance->eState != IDENTIFY_RESISTANCE_STATE_CAPTURE ||
         ptResistance->bBatchReady) {
         return IDENTIFY_FAILURE_CAUSE_NONE;

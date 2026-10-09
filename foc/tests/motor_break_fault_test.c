@@ -99,6 +99,7 @@ int main(void)
     tConfig.tParams.wResistanceMilliohm = 500U;
     tConfig.tParams.wInductanceDMicroHenry = 1000U;
     tConfig.tParams.wInductanceQMicroHenry = 1000U;
+    tConfig.tParams.wVoltageBaseMillivolt = 12000U;
     tConfig.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     tConfig.tLimits.qMaxSpeedReference = FOC_ONE;
     tConfig.tLimits.qMaxPhaseCurrent = FOC_ONE;
@@ -162,6 +163,7 @@ int main(void)
     assert(motor_GetStatus(&tMotor, &tStatus) == FOC_RESULT_OK);
     assert(tStatus.eState == MOTOR_STATE_FAULT);
     assert(!tStatus.bIdentificationActive && !tStatus.bPwmEnabled);
+    assert(tMotor.qIdentificationDcBusPu == FOC_ZERO);
     assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
 
     /* 5. ClearFault refuses while the break source is still active. */

@@ -139,6 +139,7 @@ static void _motor_EnterFault(motor_t *ptMotor, motor_fault_e eFault)
     ptMotor->bControlPrepared = false;
     ptMotor->tAlign.bCapturePending = false;
     ptMotor->bIdentificationActive = false;
+    ptMotor->qIdentificationDcBusPu = FOC_ZERO;
     ptMotor->bPwmEnabled = false;
     ptMotor->tStart.bObserverActive = false;
     motor_startup_Stop(&ptMotor->tStart.tTrajectory);
@@ -385,8 +386,15 @@ static motor_isr_phase_t _motor_PrepareRun(
     }
     ptSample->tCurrentAlphaBeta = ptMotor->tInput.tCurrentAlphaBeta;
     foc_scalar_t bus = FOC_ZERO;
-    ptSample->bVoltageModelValid =
-        motor_SampleDcBusPuIsr(ptMotor, &bus) == FOC_RESULT_OK &&
+    bool busValid = false;
+    if (ptMotor->bIdentificationActive) {
+        /* Fixed-supply R/L uses its startup snapshot, not ADC readiness. */
+        bus = ptMotor->qIdentificationDcBusPu;
+        busValid = foc_scalar_is_finite(bus) && bus > FOC_ZERO;
+    } else {
+        busValid = motor_SampleDcBusPuIsr(ptMotor, &bus) == FOC_RESULT_OK;
+    }
+    ptSample->bVoltageModelValid = busValid &&
         foc_modulation_ModelVoltageAlphaBeta(&ptMotor->tOutput.tDuty, bus,
             &ptSample->tVoltageModelAlphaBeta) == FOC_RESULT_OK;
     ptSample->bPwmSaturated = ptMotor->tOutput.bPwmSaturated;
@@ -619,8 +627,8 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
  * @param ptMotor Initialized Motor with a nonzero voltage base.
  * @param pqBusPu Output DC-bus voltage in pu.
  * @return Sampling, normalization, or input status.
- * @note ISR-only; the target port returns raw ADC counts, while Motor owns
- *       board scaling checks and physical-to-pu normalization. */
+ * @note ISR-safe and nonblocking; also used at protected session startup.
+ *       Motor owns scaling checks and physical-to-pu normalization. */
 foc_result_t motor_SampleDcBusPuIsr(const motor_t *ptMotor,
                                    foc_scalar_t *pqBusPu)
 {
@@ -751,6 +759,7 @@ foc_result_t motor_StartIdentification(motor_t *ptMotor)
 {
     perfc_global_interrupt_status_t irq = 0U;
     foc_result_t result = FOC_RESULT_OK;
+    foc_scalar_t bus = FOC_ZERO;
 
     if (ptMotor == NULL) {
         return FOC_RESULT_NULL;
@@ -766,6 +775,12 @@ foc_result_t motor_StartIdentification(motor_t *ptMotor)
         perfc_port_resume_global_interrupt(irq);
         return FOC_RESULT_SAFETY;
     }
+    result = motor_SampleDcBusPuIsr(ptMotor, &bus);
+    if (result != FOC_RESULT_OK || bus <= FOC_ZERO) {
+        perfc_port_resume_global_interrupt(irq);
+        return result == FOC_RESULT_OK ? FOC_RESULT_OUT_OF_RANGE : result;
+    }
+    ptMotor->qIdentificationDcBusPu = bus;
     ptMotor->tCommand = (foc_core_command_t){.eMode = FOC_MODE_CURRENT};
     ptMotor->tCommand.tCurrentReference.qD = ptMotor->tAlign.qCurrentPu;
     ptMotor->tAlign.wStepCount = 0U;
@@ -798,6 +813,7 @@ void motor_Stop(motor_t *ptMotor)
     ptMotor->tStart.bSensorless = false;
     ptMotor->tStart.bObserverActive = false;
     ptMotor->bIdentificationActive = false;
+    ptMotor->qIdentificationDcBusPu = FOC_ZERO;
     foc_pid_Reset(&ptMotor->tSpeed.tPi);
     ptMotor->bControlPrepared = false;
     ptMotor->tAlign.bCapturePending = false;

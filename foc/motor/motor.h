@@ -134,6 +134,7 @@ typedef struct motor_t {
     bool bElectricalZeroValid;
     bool bControlPrepared;
     bool bIdentificationActive; /**< Fixed alpha-axis session; no position. */
+    foc_scalar_t qIdentificationDcBusPu; /**< Validated once per R/L session. */
 } motor_t;
 
 typedef enum {
@@ -165,8 +166,8 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig);
  * @param ptMotor Initialized Motor with a nonzero voltage base.
  * @param pqBusPu Output bus voltage in pu.
  * @return FOC_RESULT_OK or a sampling, range, or argument error.
- * @note ISR-only. The target port supplies raw ADC counts; Motor applies
- *       board scaling and performs the physical-to-pu conversion.
+ * @note ISR-safe, also used during protected identification startup.
+ *       The target supplies raw counts; Motor applies scaling and PU units.
  */
 foc_result_t motor_SampleDcBusPuIsr(const motor_t *ptMotor,
                                    foc_scalar_t *pqBusPu);
@@ -186,7 +187,8 @@ bool motor_SensorlessStartConfigured(const motor_t *ptMotor);
  * @param ptMotor Idle, calibrated Motor.
  * @return Checked start status; readiness is RUNNING in GetStatus().
  * @note No position source or electrical-zero calibration is required.
- *       PWM stays enabled across ALIGN -> voltage injection. */
+ *       PWM stays enabled across ALIGN -> voltage injection. Bus voltage is
+ *       validated and latched before PWM starts; supply must remain stable. */
 foc_result_t motor_StartIdentification(motor_t *ptMotor);
 
 /** @brief Submit fixed alpha-axis modulation from the foreground.

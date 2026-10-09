@@ -20,6 +20,34 @@
 #include "perf_counter.h"
 #include "perfc_task_pt.h"
 
+#if IDENTIFY_LOG_ACTIVE
+#if defined(STM32G431xx) && FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
+/* Target-specific debug reads only: no new App/port API or control input. */
+extern volatile uint32_t g_awG431AdcMean[3];
+extern volatile uint32_t g_wG431AdcSequence;
+extern volatile bool g_bG431AdcMeanValid;
+#endif
+
+/**
+ * @brief Capture publication state while the ISR pauses the mean updater.
+ * @return Debug snapshot; odd sequence means the raw mean may be partial.
+ * @note No ADC transaction, retry, logging or control decision here.
+ */
+static identify_bus_failure_t _identify_CaptureBusFailure(void)
+{
+    identify_bus_failure_t bus = {0};
+
+#if defined(STM32G431xx) && FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
+    bus.wSequence = g_wG431AdcSequence;
+    bus.bValid = g_bG431AdcMeanValid;
+    bus.wRaw = g_awG431AdcMean[0] & 0x0FFFU;
+    bus.bReady = bus.bValid && ((bus.wSequence & 1U) == 0U);
+    bus.bAvailable = true;
+#endif
+    return bus;
+}
+#endif
+
 /**
  * @brief Initialize one identification object.
  * @param ptThis Caller-owned identification object.
@@ -238,6 +266,7 @@ void identify_AbortIsr(identify_t *ptThis,
         ptThis->eFailureOperation = ptThis->eOperation;
         ptThis->eFailureCause = eCause;
         ptThis->eFailureResult = eResult;
+        ptThis->tFailureBus = _identify_CaptureBusFailure();
         __perfc_sync_barrier__();
         ptThis->bFailureLogPending = true;
     }
@@ -279,12 +308,14 @@ static void _identify_ReportPendingIsrFailure(identify_t *ptThis)
     identify_operation_t eOperation = IDENTIFY_OPERATION_NONE;
     identify_failure_cause_t eCause = IDENTIFY_FAILURE_CAUSE_NONE;
     foc_result_t eResult = FOC_RESULT_OK;
+    identify_bus_failure_t bus = {0};
 
     tIrqState = perfc_port_disable_global_interrupt();
     if (ptThis->bFailureLogPending) {
         eOperation = ptThis->eFailureOperation;
         eCause = ptThis->eFailureCause;
         eResult = ptThis->eFailureResult;
+        bus = ptThis->tFailureBus;
         ptThis->bFailureLogPending = false;
     }
     perfc_port_resume_global_interrupt(tIrqState);
@@ -293,15 +324,26 @@ static void _identify_ReportPendingIsrFailure(identify_t *ptThis)
     }
 
     if (eOperation == IDENTIFY_OPERATION_RESISTANCE) {
-        MLOGF(W, "identify R ISR %s rc=%d\r\n",
-              _identify_FailureCauseName(eCause), (int)eResult);
+        MLOGF(W, "identify R ISR %s rc=%d "
+            "bus_raw=%lu valid=%u ready=%u seq=%lu bus_diag=%u\r\n",
+            _identify_FailureCauseName(eCause), (int)eResult,
+            (unsigned long)bus.wRaw, (unsigned)bus.bValid,
+            (unsigned)bus.bReady, (unsigned long)bus.wSequence,
+            (unsigned)bus.bAvailable);
     } else if (eOperation == IDENTIFY_OPERATION_INDUCTANCE) {
-        MLOGF(W, "identify Ld ISR %s rc=%d\r\n",
-              _identify_FailureCauseName(eCause), (int)eResult);
+        MLOGF(W, "identify Ld ISR %s rc=%d "
+            "bus_raw=%lu valid=%u ready=%u seq=%lu bus_diag=%u\r\n",
+            _identify_FailureCauseName(eCause), (int)eResult,
+            (unsigned long)bus.wRaw, (unsigned)bus.bValid,
+            (unsigned)bus.bReady, (unsigned long)bus.wSequence,
+            (unsigned)bus.bAvailable);
     } else {
-        MLOGF(W, "identify ISR op=%u %s rc=%d\r\n",
+        MLOGF(W, "identify ISR op=%u %s rc=%d "
+            "bus_raw=%lu valid=%u ready=%u seq=%lu bus_diag=%u\r\n",
               (unsigned)eOperation, _identify_FailureCauseName(eCause),
-              (int)eResult);
+              (int)eResult, (unsigned long)bus.wRaw, (unsigned)bus.bValid,
+              (unsigned)bus.bReady, (unsigned long)bus.wSequence,
+              (unsigned)bus.bAvailable);
     }
 }
 #endif
@@ -476,6 +518,7 @@ foc_result_t identify_Reset(identify_t *ptThis,
     ptThis->eFailureOperation = IDENTIFY_OPERATION_NONE;
     ptThis->eFailureCause = IDENTIFY_FAILURE_CAUSE_NONE;
     ptThis->eFailureResult = FOC_RESULT_OK;
+    ptThis->tFailureBus = (identify_bus_failure_t){0};
     ptThis->bFailureLogPending = false;
 #endif
     perfc_port_resume_global_interrupt(tIrqState);

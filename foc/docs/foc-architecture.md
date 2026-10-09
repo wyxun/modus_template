@@ -69,9 +69,9 @@ flowchart LR
 
 FLOAT 和 FIXED 表达相同单位。Startup 的 Q16 步进余数、Q31 速度累加属于内部数值存储格式，输出恢复公共角度和速度类型；格式缩放不能混同物理单位换算。
 
-Motor 在 Prepare 内采集并归一化母线，用上一份提交占空比经 `foc_modulation_ModelVoltageAlphaBeta()` 重构理想 αβ 电压 PU。Observer 和 Identify 共同消费这份 `u[k-1]`，App 不再保存占空比或另采母线、重构模型。样本同时发布 `bVoltageModelValid` 和上一周期 `bPwmSaturated`；模型无效时观测历史与候选失效，辨识按自身采集阶段中止。纯强拖和有感控制不以模型有效性替代位置反馈有效性。
+Motor 在普通运行的 Prepare 内采集并归一化母线，用上一份提交占空比经 `foc_modulation_ModelVoltageAlphaBeta()` 重构理想 αβ 电压 PU。固定母线的 R/L 辨识在 `motor_StartIdentification()` 启动 PWM 前验证并锁存一次母线 PU，整次 ALIGN/注入会话保持该值，不依赖 ADC 均值更新窗口；Stop/Fault 清除缓存，下次辨识重新读取。此流程假定辨识期间供电稳定，不提供逐拍母线变化跟踪。Observer 和 Identify 消费 Motor 的共享 `u[k-1]` 快照，App 不再保存占空比或另采母线、重构模型。样本同时发布 `bVoltageModelValid` 和上一周期 `bPwmSaturated`；模型无效时观测历史与候选失效，辨识按自身采集阶段中止。纯强拖和有感控制不以模型有效性替代位置反馈有效性。
 
-Core 的 `tVoltage/tVoltageAlphaBeta` 保留现行调制度命令语义，不是实测电压 PU；本次不改变 PI 的增益及输出限幅。理想重构包含占空比裁剪和实测母线变化，但不包含死区、器件压降或 PWM 实际生效点的硬件验证。电流归一化保留超过 1 pu 的可表达值，Clarke/Park 使用宽乘法；数值不可表达时锁存采样故障。电流基值、参考上限和硬件过流保护是不同边界。
+Core 的 `tVoltage/tVoltageAlphaBeta` 保留现行调制度命令语义，不是实测电压 PU；本次不改变 PI 的增益及输出限幅。理想重构包含占空比裁剪，普通运行跟踪实测母线变化，固定母线辨识使用启动快照；不包含死区、器件压降或 PWM 实际生效点的硬件验证。电流归一化保留超过 1 pu 的可表达值，Clarke/Park 使用宽乘法；数值不可表达时锁存采样故障。电流基值、参考上限和硬件过流保护是不同边界。
 
 `bVoltageLimited` 是当前电压边界判据输出，不意味着 Core 已实现统一的矢量缩放限幅或 HFI 电压预算。`bPwmSaturated` 表示调制达到占空比边界；二者不能替代算法内部饱和与积分冻结。
 

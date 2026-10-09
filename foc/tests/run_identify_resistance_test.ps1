@@ -23,6 +23,7 @@ $commonArgs = @(
     "-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>",
     "-D__COMPILER_HAS_GNU_EXTENSIONS__=1",
     "-DFOC_HF_ISR_HZ=20000U",
+    "-DSTM32G431xx=1",
     "-DFOC_TRIG_BACKEND=1"
 )
 

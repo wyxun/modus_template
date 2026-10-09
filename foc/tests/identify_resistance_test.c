@@ -18,8 +18,13 @@ static int64_t s_lNowTicks = 1;
 static uint32_t s_wAbortCount = 0U;
 static identify_result_t s_tIdentifyResult = {0};
 static uint32_t s_wIdentifyLogCount = 0U;
-static char s_chLastIdentifyLog[160];
+static char s_chLastIdentifyLog[320];
 uint8_t g_chGLogMask = 0xFFU;
+
+/* Simulate the target's volatile publication state, not an ADC transaction. */
+volatile uint32_t g_awG431AdcMean[3] = {1434U, 0U, 0U};
+volatile uint32_t g_wG431AdcSequence = 11U;
+volatile bool g_bG431AdcMeanValid = true;
 
 void util_debug_Printf(const char *pchFormat, ...)
 {
@@ -340,8 +345,80 @@ static void test_ValidCurrent(void)
     assert(tIdentify.eState == IDENTIFY_STATE_RUNNING);
 }
 
+/** @brief Failure diagnostics retain the ISR publication window.
+ * @return None. */
+static void test_FailureBusSnapshot(void)
+{
+    for (uint32_t scenario = 0U; scenario < 3U; scenario++) {
+        identify_t identify = {0};
+        motor_t motor = {0};
+        identify_result_t result = {0};
+        uint32_t logs = s_wIdentifyLogCount;
+
+        assert(identify_Init(&identify, &s_tIdentifyConfig) == FOC_RESULT_OK);
+        assert(identify_StartResistance(&identify) == FOC_RESULT_OK);
+        g_awG431AdcMean[0] = scenario == 2U ? 0U : 1434U;
+        g_wG431AdcSequence = scenario == 0U ? 11U : 12U;
+        g_bG431AdcMeanValid = scenario != 1U;
+        identify_AbortIsr(&identify, IDENTIFY_FAILURE_CAUSE_INVALID_SAMPLE,
+                          FOC_RESULT_SAFETY);
+        assert(s_wIdentifyLogCount == logs);
+        /* ADC publication finishes before the foreground diagnostic runs. */
+        g_awG431AdcMean[0] = 1500U;
+        g_wG431AdcSequence = 14U;
+        g_bG431AdcMeanValid = true;
+        identify_AbortIsr(&identify, IDENTIFY_FAILURE_CAUSE_CONTROL_REJECTED,
+                          FOC_RESULT_OUT_OF_RANGE);
+        assert(identify_Run(&identify, &motor, &result) ==
+               FOC_RESULT_OUT_OF_RANGE);
+#if IDENTIFY_LOG_ACTIVE
+        const char *expected[] = {
+            "bus_raw=1434 valid=1 ready=0 seq=11",
+            "bus_raw=1434 valid=0 ready=0 seq=12",
+            "bus_raw=0 valid=1 ready=1 seq=12",
+        };
+        assert(strstr(s_chLastIdentifyLog, expected[scenario]) != NULL);
+        assert(strstr(s_chLastIdentifyLog, "invalid-sample rc=6") != NULL);
+        assert(strstr(s_chLastIdentifyLog, "bus_diag=1") != NULL);
+        assert(s_wIdentifyLogCount == logs + 1U);
+#else
+        assert(s_wIdentifyLogCount == logs);
+#endif
+        logs = s_wIdentifyLogCount;
+        (void)identify_Run(&identify, &motor, &result);
+        assert(s_wIdentifyLogCount == logs);
+    }
+}
+
+/** @brief A settle failure without ISR samples must not imply measured zero.
+ * @return None. */
+static void test_NoSampleSettleFailure(void)
+{
+    identify_t identify = {0};
+    motor_t motor = {0};
+    identify_result_t result = {0};
+    uint32_t logs = s_wIdentifyLogCount;
+
+    s_lNowTicks = 1;
+    assert(identify_Init(&identify, &s_tIdentifyConfig) == FOC_RESULT_OK);
+    assert(identify_StartResistance(&identify) == FOC_RESULT_OK);
+    assert(identify_Run(&identify, &motor, &result) == FOC_RESULT_BUSY);
+    s_lNowTicks = 101;
+    assert(identify_Run(&identify, &motor, &result) == FOC_RESULT_BUSY);
+    s_lNowTicks = 601;
+    assert(identify_Run(&identify, &motor, &result) ==
+           FOC_RESULT_OUT_OF_RANGE);
+#if IDENTIFY_LOG_ENABLE
+    assert(s_wIdentifyLogCount == logs + 1U);
+    assert(strstr(s_chLastIdentifyLog, "sample_seen=0") != NULL);
+#else
+    assert(s_wIdentifyLogCount == logs);
+#endif
+}
+
 int main(void)
 {
+    test_FailureBusSnapshot();
     identify_t tIdentify = {0};
     motor_t tMotor = {0};
     identify_status_t tStatus = {0};
@@ -420,20 +497,48 @@ int main(void)
     test_RunProgress(&tIdentify, &tMotor);
     s_lNowTicks = 1103;
     uint32_t wLogBeforeTimeout = s_wIdentifyLogCount;
+    identify_resistance_sample_t failureSample = {
+        .bValid = true,
+        .tCurrentPu.qAlpha = FOC_SCALAR(-0.0084f),
+        .qVoltageModelAlphaPu = FOC_SCALAR(0.0200f),
+    };
+    test_IsrStep(&tIdentify, &tMotor, &failureSample);
+    assert(s_wIdentifyLogCount == wLogBeforeTimeout);
     assert(identify_Run(&tIdentify, &tMotor, &s_tIdentifyResult) ==
            FOC_RESULT_OUT_OF_RANGE);
     assert(s_tIdentifyResult.eOperation == IDENTIFY_OPERATION_NONE);
 #if IDENTIFY_LOG_ENABLE
     assert(s_wIdentifyLogCount == wLogBeforeTimeout + 1U);
     assert(strstr(s_chLastIdentifyLog, "identify R settle") != NULL);
+    char expectedSnapshot[200] = {0};
+    (void)snprintf(expectedSnapshot, sizeof(expectedSnapshot),
+        "i_alpha_pu=%.5f min_i_pu=%.5f mod_alpha=%.5f "
+        "u_model_alpha_pu=%.5f sample_seen=1",
+        (double)foc_to_float(failureSample.tCurrentPu.qAlpha),
+        (double)foc_to_float(IDENTIFY_RESISTANCE_MIN_CURRENT_PU),
+        (double)foc_to_float(IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU),
+        (double)foc_to_float(failureSample.qVoltageModelAlphaPu));
+    assert(strstr(s_chLastIdentifyLog, expectedSnapshot) != NULL);
 #else
     assert(s_wIdentifyLogCount == wLogBeforeTimeout);
+#endif
+    /* Later samples cannot replace the already printed failure snapshot. */
+    uint32_t logsAfterFailure = s_wIdentifyLogCount;
+    failureSample.tCurrentPu.qAlpha = FOC_SCALAR(0.10f);
+    failureSample.qVoltageModelAlphaPu = FOC_SCALAR(0.08f);
+    test_IsrStep(&tIdentify, &tMotor, &failureSample);
+    assert(identify_Run(&tIdentify, &tMotor, &s_tIdentifyResult) ==
+           FOC_RESULT_OUT_OF_RANGE);
+    assert(s_wIdentifyLogCount == logsAfterFailure);
+#if IDENTIFY_LOG_ENABLE
+    assert(strstr(s_chLastIdentifyLog, expectedSnapshot) != NULL);
 #endif
     identify_Stop(&tIdentify, &tMotor);
     identify_GetStatus(&tIdentify, &tStatus);
     assert(tStatus.eState == IDENTIFY_STATE_IDLE);
     assert(identify_Reset(&tIdentify, &tMotor) == FOC_RESULT_OK);
     assert(identify_StartResistance(&tIdentify) == FOC_RESULT_OK);
+    test_NoSampleSettleFailure();
     test_Overcurrent();
     test_ValidCurrent();
     return 0;

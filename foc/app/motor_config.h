@@ -15,26 +15,26 @@
 
 /* Motor nameplate and identified electrical parameters. */
 #define MOTOR_CONFIG_POLE_PAIRS                            7U
-#define MOTOR_CONFIG_RESISTANCE_MILLIOHM                   2550U
-#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               860U
-#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               860U
+#define MOTOR_CONFIG_RESISTANCE_MILLIOHM                   4000U
+#define MOTOR_CONFIG_INDUCTANCE_D_MICROHENRY               1200U
+#define MOTOR_CONFIG_INDUCTANCE_Q_MICROHENRY               1200U
 
 /* Drive bases. HF frequency itself is supplied by the selected target. */
 #define MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT                12000U
 #define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    400.0f
 
 /* Position source: SENSOR or HARD_DRAG. Hard drag is disabled at zero Hz. */
-#define MOTOR_CONFIG_POSITION_SOURCE                                            \
-    MOTOR_POSITION_SOURCE_HARD_DRAG
+#define MOTOR_CONFIG_POSITION_SOURCE    MOTOR_POSITION_SOURCE_SENSOR
+
 #define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
 
 /* Sensorless capability is opt-in. Keep automatic handoff disabled until
  * repeated bench data establishes reliable thresholds for this motor. */
-#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     10000U
-#define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  60000U
+#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     0U
+#define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  0U
 #define MOTOR_CONFIG_STARTUP_IQ_PU                          0.06f
 #define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.0005f
-#define MOTOR_CONFIG_OBSERVER_TAKEOVER                      true
+#define MOTOR_CONFIG_OBSERVER_TAKEOVER                      false
 #define MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER                 false
 #define MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS           4000U
 #define MOTOR_CONFIG_OBSERVER_BLEND_STEPS                   400U
@@ -69,7 +69,7 @@
 #define MOTOR_CONFIG_ADC_CALIBRATION_TIMEOUT_SECONDS       0.1f
 #define MOTOR_CONFIG_ALIGN_TIME_SECONDS                    1.5f 
 #define MOTOR_CONFIG_SPEED_LOOP_FREQUENCY_HZ               1000U
-#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.06f
+#define MOTOR_CONFIG_ALIGN_CURRENT_PU                      0.04f
 
 /* Position sensor setup; used only when FOC_PORT_HAS_POSITION is enabled. */
 #define MOTOR_CONFIG_ENCODER_SPEED_FILTER_ALPHA            0.25f
