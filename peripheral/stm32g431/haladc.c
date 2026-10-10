@@ -19,7 +19,7 @@
 
 /* Post-calibration delay from ST example formula */
 #define ADC_DELAY_CALIB_ENABLE_CPU_CYCLES  (LL_ADC_DELAY_CALIB_ENABLE_ADC_CYCLES * 32UL)
-static volatile bool s_bRegularBusy;
+
 
 /*----------------------------------------------------------------------------*/
 /* Helpers                                                                    */
@@ -267,7 +267,6 @@ static void regular_dma_init(void)
     LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMA1);
     LL_AHB1_GRP1_EnableClock(LL_AHB1_GRP1_PERIPH_DMAMUX1);
     LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
-    s_bRegularBusy = false;
     LL_DMAMUX_SetRequestID(DMAMUX1, LL_DMAMUX_CHANNEL_0,
                            LL_DMAMUX_REQ_ADC1);
     LL_DMA_ConfigTransfer(DMA1, LL_DMA_CHANNEL_1,
@@ -277,7 +276,7 @@ static void regular_dma_init(void)
         LL_DMA_PRIORITY_HIGH);
     LL_DMA_EnableIT_TC(DMA1, LL_DMA_CHANNEL_1);
     HAL_NVIC_SetPriority(DMA1_Channel1_IRQn, 2, 0);
-    HAL_NVIC_EnableIRQ(DMA1_Channel1_IRQn);
+    LL_DMA_EnableIT_TE(DMA1, LL_DMA_CHANNEL_1);
 }
 
 /*----------------------------------------------------------------------------*/
@@ -306,36 +305,3 @@ void haladc_EnableISR(void)
 {
     HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
 }
-
-bool haladc_StartRegular(volatile uint16_t *pwDmaBuffer,
-                         uint32_t wTransferCount)
-{
-    if (pwDmaBuffer == NULL || wTransferCount == 0U ||
-        wTransferCount > UINT16_MAX || s_bRegularBusy) {
-        return false;
-    }
-    LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
-    LL_DMA_ClearFlag_GI1(DMA1);
-    LL_DMA_ConfigAddresses(DMA1, LL_DMA_CHANNEL_1,
-        (uint32_t)(uintptr_t)&ADC1->DR,
-        (uint32_t)(uintptr_t)pwDmaBuffer,
-        LL_DMA_DIRECTION_PERIPH_TO_MEMORY);
-    LL_DMA_SetDataLength(DMA1, LL_DMA_CHANNEL_1, wTransferCount);
-    s_bRegularBusy = true;
-    LL_DMA_EnableChannel(DMA1, LL_DMA_CHANNEL_1);
-    LL_ADC_REG_StartConversion(ADC1);
-    return true;
-}
-
-bool haladc_RegularDmaCompleteISR(void)
-{
-    if (LL_DMA_IsActiveFlag_TC1(DMA1) != 0U) {
-        LL_DMA_ClearFlag_TC1(DMA1);
-        LL_DMA_DisableChannel(DMA1, LL_DMA_CHANNEL_1);
-        LL_ADC_REG_StopConversion(ADC1);
-        s_bRegularBusy = false;
-        return true;
-    }
-    return false;
-}
-

@@ -21,8 +21,5 @@
 void haladc_Init(void);
 void haladc_SetVbusRange48V(uint32_t bEnable);
 void haladc_EnableISR(void);
-bool haladc_StartRegular(volatile uint16_t *pwDmaBuffer,
-                         uint32_t wTransferCount);
-bool haladc_RegularDmaCompleteISR(void);
 
 #endif /* __HALADC_H__ */

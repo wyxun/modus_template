@@ -6,6 +6,7 @@
 #define PERIPHERAL_TEMPLATE_MDI_INSTANCE_H
 
 #include "mdi/mdi.h"
+#include "mdi/feature/adc_mean.h"
 #include "mdi/feature/soft_i2c_edges.h"
 #include "mdi/feature/soft_i2c_master.h"
 #include "mdi/feature/i2c_reg8.h"
@@ -100,8 +101,7 @@ MDI_ADC_DMA_FLAG_BIND(adc1_dma, g_wPt32AdcPublished,
 MDI_ADC_MEAN_GROUP_BIND(adc1_mean, adc1_dma, g_awPt32AdcDma,
                         PT32_ADC_SAMPLE_COUNT, PT32_ADC_CHANNEL_COUNT,
                         PT32_ADC_CHANNELS, g_awPt32AdcMean,
-                        g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid,
-                        PT32_ADC1->RATE_HZ, PT32_CORE_CLOCK_HZ)
+                        g_wPt32AdcMeanSequence, g_bPt32AdcMeanValid)
 
 /** @brief Bind the next mock DMA slot and start one regular ADC block. */
 MDI_INLINE mdi_status_t pt32_adc1_start(void)
@@ -154,6 +154,7 @@ MDI_SAMPLE_READY_BIND(phase_current, PT32_PHASE_CHANNELS,
     X(w, PT32_TIMER1->CCR3, PT32_TIMER1->ARR)
 MDI_PWM_REG_BIND(bridge, PT32_BRIDGE_CHANNELS)
 MDI_PT32_PWM_TIMING_BIND(bridge, PT32_TIMER1, 80000000U, PT32_BRIDGE_CHANNELS)
+MDI_PT32_PWM_COMMIT_BIND(bridge, PT32_TIMER1)
 MDI_PT32_PWM_LIFECYCLE_BIND(bridge, PT32_TIMER1, UINT32_C(1))
 MDI_PT32_PWM_FAULT_BIND(bridge, PT32_TIMER1, UINT32_C(1), PT32_FAULT)
 

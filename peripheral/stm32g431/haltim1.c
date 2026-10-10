@@ -34,7 +34,6 @@
 #define TIM1_HTMIN          10U     /* ADC 触发提前量（相对 PWM 顶部，低边导通区） */
 #define TIM1_CH4_CCR        ((TIM1_PERIOD) - (TIM1_HTMIN))
 
-static uint32_t s_wDutyU, s_wDutyV, s_wDutyW; /* cache for SetDuty */
 
 void haltim1_Init(void)
 {
@@ -146,7 +145,7 @@ void haltim1_Init(void)
     LL_TIM_EnableIT_BRK(TIM1);
     HAL_NVIC_SetPriority(TIM1_BRK_TIM15_IRQn, 2, 0);
 
-    /* Start counter (outputs disabled until haltim1_Start) */
+    /* Start counter (phase outputs disabled until MDI_PWM_Enable) */
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_EnableCounter(TIM1);
 }
@@ -155,65 +154,3 @@ void haltim1_EnableISR(void)
 {
     HAL_NVIC_EnableIRQ(TIM1_BRK_TIM15_IRQn);
 }
-
-void haltim1_SetDuty(float fU, float fV, float fW)
-{
-    /* Clamp and scale float [0..1] to [0..TIM1_PERIOD] */
-    if (fU < 0.0f) fU = 0.0f; else if (fU > 1.0f) fU = 1.0f;
-    if (fV < 0.0f) fV = 0.0f; else if (fV > 1.0f) fV = 1.0f;
-    if (fW < 0.0f) fW = 0.0f; else if (fW > 1.0f) fW = 1.0f;
-
-    s_wDutyU = (uint32_t)(fU * (float)TIM1_PERIOD);
-    s_wDutyV = (uint32_t)(fV * (float)TIM1_PERIOD);
-    s_wDutyW = (uint32_t)(fW * (float)TIM1_PERIOD);
-
-    LL_TIM_OC_SetCompareCH1(TIM1, s_wDutyU);
-    LL_TIM_OC_SetCompareCH2(TIM1, s_wDutyV);
-    LL_TIM_OC_SetCompareCH3(TIM1, s_wDutyW);
-}
-
-void haltim1_Start(void)
-{
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH2 | LL_TIM_CHANNEL_CH2N);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH4);
-    LL_TIM_EnableAllOutputs(TIM1);
-}
-
-void haltim1_StartAdcTrigger(void)
-{
-    /*
-     * MDI_PWM_SafeStop() stops the timer counter as part of its generic
-     * lifecycle contract.  ADC calibration still needs the internal CH4
-     * trigger, while CH1-CH3 must remain disabled, so restart the counter
-     * explicitly here without opening the three-phase power outputs.
-     */
-    LL_TIM_EnableCounter(TIM1);
-    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH4);
-    LL_TIM_EnableAllOutputs(TIM1);
-}
-
-void haltim1_Stop(void)
-{
-    /* 只关三相功率输出（CH1-3），保留 CH4 + MOE：
-       高频 FOC ISR 由 OC4REF→ADC 注入触发驱动，若整体关 MOE 会连
-       ADC 触发一起停掉，导致后续 Start 的邮箱命令无人消费（电机路径
-       启动死锁）。CH1-3 关断 + MOE 保持与 ADC 校准阶段完全一致，
-       为已验证的安全关断状态。 */
-    LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH1 | LL_TIM_CHANNEL_CH1N);
-    LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH2 | LL_TIM_CHANNEL_CH2N);
-    LL_TIM_CC_DisableChannel(TIM1, LL_TIM_CHANNEL_CH3 | LL_TIM_CHANNEL_CH3N);
-}
-
-bool haltim1_GetBreakFault(void)
-{
-    return LL_TIM_IsActiveFlag_BRK(TIM1) != 0U;
-}
-
-bool haltim1_ClearBreakFault(void)
-{
-    LL_TIM_ClearFlag_BRK(TIM1);
-    return LL_TIM_IsActiveFlag_BRK(TIM1) == 0U;
-}
-

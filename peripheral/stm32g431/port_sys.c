@@ -17,6 +17,48 @@
 #include "halledgpio.h"
 #include "halcordic.h"
 
+#define G431_BOARD_UART_BAUDRATE 115200U
+
+/**
+ * @brief Configure USART2 before enabling interrupts on initialized queues.
+ * @param None.
+ * @return None; the MDI initialization hook verifies hardware readiness.
+ */
+static void _port_usart2_Init(void)
+{
+    uint32_t wPeripheralClockHz = HAL_RCC_GetPCLK1Freq();
+
+    NVIC_DisableIRQ(USART2_IRQn);
+    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
+    RCC->APB1ENR1 |= RCC_APB1ENR1_USART2EN;
+    (void)RCC->AHB2ENR;
+    (void)RCC->APB1ENR1;
+
+    GPIOB->MODER &= ~((UINT32_C(3) << (3U * 2U)) |
+                      (UINT32_C(3) << (4U * 2U)));
+    GPIOB->MODER |= (UINT32_C(2) << (3U * 2U)) |
+                    (UINT32_C(2) << (4U * 2U));
+    GPIOB->OTYPER &= ~((UINT32_C(1) << 3U) | (UINT32_C(1) << 4U));
+    GPIOB->OSPEEDR &= ~((UINT32_C(3) << (3U * 2U)) |
+                        (UINT32_C(3) << (4U * 2U)));
+    GPIOB->PUPDR &= ~((UINT32_C(3) << (3U * 2U)) |
+                      (UINT32_C(3) << (4U * 2U)));
+    GPIOB->PUPDR |= UINT32_C(1) << (4U * 2U);
+    GPIOB->AFR[0] &= ~((UINT32_C(0xF) << (3U * 4U)) |
+                       (UINT32_C(0xF) << (4U * 4U)));
+    GPIOB->AFR[0] |= (UINT32_C(7) << (3U * 4U)) |
+                     (UINT32_C(7) << (4U * 4U));
+
+    USART2->CR1 = 0U;
+    USART2->CR2 = 0U;
+    USART2->CR3 = 0U;
+    USART2->BRR = (wPeripheralClockHz + (G431_BOARD_UART_BAUDRATE / 2U)) /
+                  G431_BOARD_UART_BAUDRATE;
+    USART2->ICR = USART_ICR_ORECF | USART_ICR_NECF | USART_ICR_FECF |
+                  USART_ICR_PECF | USART_ICR_TCCF;
+    USART2->CR1 = USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
+}
+
 /**
  * @brief Initialize the board-owned encoder I2C1 peripheral.
  * @param None.
@@ -127,6 +169,7 @@ void peripheral_Init(void)
 
     /* Keep encoder I2C ready before MODUS object initialization. */
     port_i2c1_Init();
+    _port_usart2_Init();
     haladc_EnableISR();
     haltim1_EnableISR();
 }

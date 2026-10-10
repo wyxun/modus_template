@@ -24,24 +24,30 @@ static modus_t s_tModus = { .ptAppFlash = NULL };
 static unsigned s_uart_read(char *pchBuf, unsigned hwSize)
 {
 #if defined(MDI_MAIN_STREAM_RESOURCE)
-    int32_t nRead = MDI_STREAM_Read(
-        MDI_MAIN_STREAM_RESOURCE, (uint8_t *)pchBuf, (uint32_t)hwSize);
+    uint32_t wRead = 0U;
+    mdi_status_t eStatus = MDI_STREAM_Read(
+        MDI_MAIN_STREAM_RESOURCE, (uint8_t *)pchBuf, (uint32_t)hwSize,
+        &wRead);
+    return (eStatus == MDI_OK || eStatus == MDI_OVERRUN) ?
+           (unsigned)wRead : 0U;
 #else
     if (HW.ptSerial == NULL) {
         return 0;
     }
     int32_t nRead = MDI_Stream_Read(
         HW.ptSerial, (uint8_t *)pchBuf, (uint32_t)hwSize);
-#endif
     return nRead > 0 ? (unsigned)nRead : 0;
+#endif
 }
 
 static void s_uart_write(const char *pchBuf, unsigned hwSize)
 {
 #if defined(MDI_MAIN_STREAM_RESOURCE)
-    (void)MDI_STREAM_Write(
+    uint32_t wWritten = 0U;
+    mdi_status_t eStatus = MDI_STREAM_Write(
         MDI_MAIN_STREAM_RESOURCE, (const uint8_t *)pchBuf,
-        (uint32_t)hwSize);
+        (uint32_t)hwSize, &wWritten);
+    if (eStatus != MDI_OK) { return; }
 #else
     if (HW.ptSerial == NULL) {
         return;
@@ -62,8 +68,11 @@ void user_trace_output(const char *str)
 #if USERCONFIG_MSHELL_ON_SERIAL
 #if defined(MDI_MAIN_STREAM_RESOURCE)
     if (str != NULL) {
-        (void)MDI_STREAM_Write(
-            MDI_MAIN_STREAM_RESOURCE, (const uint8_t *)str, strlen(str));
+        uint32_t wWritten = 0U;
+        mdi_status_t eStatus = MDI_STREAM_Write(
+            MDI_MAIN_STREAM_RESOURCE, (const uint8_t *)str,
+            (uint32_t)strlen(str), &wWritten);
+        if (eStatus != MDI_OK) { return; }
     }
 #else
     if (str && HW.ptSerial) {
@@ -85,9 +94,11 @@ int main(void)
 #if MODUS_ENABLE
     #if MSHELL_ENABLE || !defined(__NO_USE_LOG__)
         debug_transport_init();
-        MLOGF(I, "Booting MODUS Template...\r\n");
     #endif
     modus_Init(&s_tModus);
+    #if MSHELL_ENABLE || !defined(__NO_USE_LOG__)
+        MLOGF(I, "Booting MODUS Template...\r\n");
+    #endif
     #if USERCONFIG_MSHELL_ON_SERIAL && MSHELL_ENABLE
     mshell_SetIO(&s_tUartIO);
     #endif

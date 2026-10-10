@@ -61,7 +61,7 @@ void TIM1_BRK_TIM15_IRQHandler(void)
 {
     /* 先锁存软件故障，再清硬件标志，避免前台读到被清空的 BIF */
     mdi_g431_fault_notify_break();
-    (void)haltim1_ClearBreakFault();
+    TIM1->SR = ~TIM_SR_BIF;
 }
 
 void TIM1_UP_TIM16_IRQHandler(void)

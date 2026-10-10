@@ -78,6 +78,7 @@ typedef struct {
 
 #define PT32_UART_ISR_RX_READY UINT32_C(1)
 #define PT32_UART_ISR_TX_DONE  UINT32_C(2)
+#define PT32_UART_ISR_OVERRUN  UINT32_C(4)
 #define PT32_UART_CR1_RX_IRQ  UINT32_C(1)
 #define PT32_UART_CR1_TX_IRQ  UINT32_C(2)
 
@@ -92,9 +93,35 @@ MDI_INLINE uint8_t pt32_uart_RxRead(pt32_uart_t *ptUart)
     return (uint8_t)ptUart->RDR;
 }
 
+/** @brief Acknowledge fake hardware RX loss. @param ptUart UART registers.
+ * @return True if the receiver overran before this interrupt.
+ */
+MDI_INLINE bool pt32_uart_RxLost(pt32_uart_t *ptUart)
+{
+    bool bLost = (ptUart->ISR & PT32_UART_ISR_OVERRUN) != 0U;
+    if (bLost) {
+        ptUart->ICR = PT32_UART_ISR_OVERRUN;
+        ptUart->ISR &= ~PT32_UART_ISR_OVERRUN;
+    }
+    return bLost;
+}
+
+/** @brief Enable RX interrupts after queue initialization.
+ * @param ptUart UART registers. @return OK or INVALID for null registers.
+ */
+MDI_INLINE mdi_status_t pt32_uart_IrqEnable(pt32_uart_t *ptUart)
+{
+    if (ptUart == NULL) {
+        return MDI_INVALID;
+    }
+    ptUart->CR1 |= PT32_UART_CR1_RX_IRQ;
+    return MDI_OK;
+}
+
 MDI_INLINE bool pt32_uart_TxComplete(pt32_uart_t *ptUart)
 {
-    return (ptUart->ISR & PT32_UART_ISR_TX_DONE) != 0U;
+    return (ptUart->CR1 & PT32_UART_CR1_TX_IRQ) != 0U &&
+           (ptUart->ISR & PT32_UART_ISR_TX_DONE) != 0U;
 }
 
 MDI_INLINE void pt32_uart_TxWrite(pt32_uart_t *ptUart, uint8_t chData)
@@ -124,10 +151,10 @@ MDI_INLINE void pt32_uart_TxIrqDisable(pt32_uart_t *ptUart)
 #define PT32_UART1 ((pt32_uart_t *)(uintptr_t)PT32_UART1_BASE)
 
 #define PT32_UART_STREAM_BIND(NAME, STATE, UART)                                \
-    MDI_UART_STREAM_BIND(                                                        \
-        NAME, STATE, UART, pt32_uart_RxReady, pt32_uart_RxRead,                  \
-        pt32_uart_TxComplete, pt32_uart_TxWrite, pt32_uart_TxClear,              \
-        pt32_uart_TxIrqEnable, pt32_uart_TxIrqDisable)
+    MDI_UART_STREAM_BIND(                                                       \
+        NAME, STATE, UART, pt32_uart_RxReady, pt32_uart_RxRead,                 \
+        pt32_uart_RxLost, pt32_uart_TxComplete, pt32_uart_TxWrite,              \
+        pt32_uart_TxClear, pt32_uart_TxIrqEnable, pt32_uart_TxIrqDisable)
 
 extern volatile mdi_tick_t g_qwPt32RawTick;
 
@@ -356,11 +383,14 @@ typedef struct {
         CHANNELS(PT32_DUTY_CONVERT)                                              \
         MDI_PWM_StageFast(NAME, &tCounts);                                       \
         return MDI_OK;                                                           \
-    }                                                                            \
-    MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_Commit)(void)                      \
-    {                                                                            \
-        (TIMER)->EGR = 1U;                                                       \
-        return MDI_OK;                                                           \
+    }
+
+/** Opt in only when configured preload/update semantics permit UG. */
+#define MDI_PT32_PWM_COMMIT_BIND(NAME, TIMER)                                   \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_Commit)(void)                     \
+    {                                                                           \
+        (TIMER)->EGR = 1U;                                                      \
+        return MDI_OK;                                                          \
     }
 
 #define MDI_PT32_PWM_LIFECYCLE_BIND(NAME, TIMER, GATE_MASK)                      \

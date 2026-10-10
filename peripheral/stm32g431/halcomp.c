@@ -39,13 +39,3 @@ void halcomp_Init(void)
     for (volatile uint32_t i = 0; i < (LL_COMP_DELAY_VOLTAGE_SCALER_STAB_US * 85U); i++) {}
     LL_COMP_Enable(COMP4);
 }
-
-uint32_t halcomp_GetOutput(uint32_t wIdx)
-{
-    switch (wIdx) {
-    case HALCOMP_IDX_COMP1: return LL_COMP_ReadOutputLevel(COMP1);
-    case HALCOMP_IDX_COMP2: return LL_COMP_ReadOutputLevel(COMP2);
-    case HALCOMP_IDX_COMP4: return LL_COMP_ReadOutputLevel(COMP4);
-    default:                return 0;
-    }
-}

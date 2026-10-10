@@ -1,11 +1,11 @@
-# `peripheral_template`：32 位芯片 MDI 参考后端
+# `peripheral/template`：32 位芯片 MDI 参考后端
 
 本目录是一个**不绑定具体厂商**的 32 位 MCU 参考工程。它展示芯片层如何把同一颗
 MCU 的多个硬件外设绑定到公共 MDI，再交给应用层使用。寄存器地址和位定义都是模板
 值，移植到真实芯片时只修改 `mdi/backend.h` 和启动初始化，不修改应用调用方式。
 
 ```text
-peripheral_template/
+peripheral/template/
 ├── README.md
 ├── mdi/
 │   ├── backend.h       抽象 32 位寄存器模型和芯片后端绑定宏
@@ -48,7 +48,7 @@ peripheral_template/
 SDA/SCL 资源的所有权；本例同时声明它们是为了展示替换关系。
 
 DMA 完成中断调用 `pt32_AdcDmaCompleteIrq()`，释放当前槽位并发布完成计数。
-`modus_Init()` 完成对象初始化后调用 `mdi_Init()` 配置采样频率；`modus_Run()` 在对象 Run 前调用 `mdi_Service()`：先对完成的块求均值，再按 raw tick
+`modus_Init()` 在日志和对象初始化之前调用 `mdi_Init()` 准备队列及服务状态；`modus_Run()` 在对象 Run 前调用 `mdi_Service()`：先对完成的块求均值，再用 perfc 显式截止时间
 启动下一次规则 ADC 扫描。通道读取只读取已发布的快照。模板启动时将 DMA 目的地址
 设为当前槽位；真实芯片后端还需按硬件规则配置、停止 DMA。
 
@@ -67,8 +67,7 @@ mdi_adc_value_t tBusCurrent = {0};
 ```
 
 `MDI_ADC_Read()` 不启动转换，也不做滤波；首次服务处理完成前返回 `MDI_BUSY`。
-模板以 `PT32_CORE_CLOCK_HZ` 表示 raw tick 的频率，服务按 100 Hz 调度。需要更高
-采样频率时，应把采集触发改由硬件定时器负责。
+模板默认按 100 Hz 调度。`mdi_service_SetAdcFrequency(wHz)` 修改实际服务周期（1..1000000 Hz，周期向上取整为微秒），有效调用后重新计时，非法设置保留旧值；实际频率受前台调用延迟与 DMA 忙限制，需要严格硬件时序时改用硬件触发。
 
 `bus_voltage`、`bus_current` 和 `temperature` 共用规则 ADC/DMA 采集组；注入 ADC
 的 `phase_current` 独立提供一次完成的 U/V/W 帧。FOC 控制中断直接调用
@@ -92,12 +91,9 @@ feature；不要把通道差异加入 core 契约。
 不注册 ISR 回调；真实芯片应在后端补齐时钟树、更新事件和中断向量配置。
 
 `pt32_raw_tick` 是板级无单位计数器，模板 provider 读取 `g_qwPt32RawTick`；真实板应像参考
-项目一样从单调硬件计数器读取。`mdi_Clock()` 只维护 Stream，不负责制造 raw tick。
+项目一样从单调硬件计数器读取。`mdi_Clock()` 当前为空，不负责制造 raw tick。
 
-`board_stream` 使用公共 `mdi/feature/uart_stream.h` 生成。写入返回 TX 队列实际接收的字节数，
-读取在 RX 空闲保护结束后返回当前帧数据；`MDI_STREAM_Available()` 返回 RX 队列字节数，
-`MDI_STREAM_IsBusy()` 表示 TX 队列仍有发送活动。`mdi_Clock()` 只推进 RX 空闲保护，收发
-寄存器由对应 UART IRQ 入口处理，不执行协议解析或阻塞操作。
+`board_stream` 显式使用 `mdi/feature/uart_stream.h` 与 mringbuf。Read/Write 返回状态，第四个参数返回实际字节数；Read 立即消费 RX 队列，分帧归上层协议。短传输与空队列返回 OK，溢出返回 OVERRUN 并保留已读数据。`Available` 返回立即可读数量，`IsBusy` 包含队列和最后一字节物理发送。队列初始化成功后才启用 UART IRQ，Clock 不维护分帧计时。
 
 ## 与 MDI 框架规范的符合性
 
@@ -129,34 +125,15 @@ feature；不要把通道差异加入 core 契约。
    展示职责边界，不是可直接生产的时序实现。
 4. 保持 `instance.h` 中的资源语义和应用接口不变。换芯片只替换绑定和后端。
 
-## 示例编译
+## 验证入口
 
-示例不需要厂商头文件，可以用主机编译器做语法检查：
-
-```text
-gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only                                 \
-    -Imodus/src -Iperipheral_template                                            \
-    peripheral_template/examples/multi_peripheral_app.c                          \
-    peripheral_template/mdi/state.c                                               \
-    peripheral_template/mdi/service.c                                             \
-    peripheral_template/tests/contract.c
-
-gcc -std=c11 -Wall -Wextra -Werror -fsyntax-only                                 \
-    -DFOC_NUMERIC_FLOAT=1 -I. -Ifoc -Ifoc/math -Imodus/src                       \
-    -Iperipheral_template                                                         \
-    peripheral_template/tests/foc_port_contract.c
-```
-
-Timer、Stream 和板级服务的主机运行检查：
+从项目根目录执行：
 
 ```text
-gcc -std=c11 -Wall -Wextra -Werror -Imodus/src -Iperipheral_template \
-    peripheral_template/tests/runtime.c -o peripheral_template/tests/runtime.exe
-peripheral_template/tests/runtime.exe
-gcc -std=c11 -Wall -Wextra -Werror -Imodus/src -Iperipheral_template \
-    peripheral_template/tests/service_runtime.c -o peripheral_template/tests/service_runtime.exe
-peripheral_template/tests/service_runtime.exe
+python modus/src/mdi/tests/run_tests.py
 ```
+
+The runner covers template Timer/Stream and ADC scheduling, links mringbuf and supplies the perfc host port. Override tools with HOST_CC, ARM_CC and ARM_OBJDUMP.
 
 应用层完整调用见 [multi_peripheral_app.c](examples/multi_peripheral_app.c)，资源绑定见
 [instance.h](mdi/instance.h)，板级服务见 [service.c](mdi/service.c)，后端职责见

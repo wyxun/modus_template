@@ -14,7 +14,6 @@
 extern int64_t get_system_ticks(void);
 
 #define G431_STREAM_BUFFER_SIZE 128U
-#define G431_STREAM_BAUDRATE    115200U
 
 typedef mdi_uart_stream_state_t g431_stream_state_t;
 extern g431_stream_state_t g_tG431Stream;
@@ -31,9 +30,22 @@ MDI_INLINE uint8_t mdi_g431_uart_RxRead(USART_TypeDef *ptUsart)
     return (uint8_t)ptUsart->RDR;
 }
 
+/** @brief Acknowledge hardware RX loss. @param ptUsart UART registers.
+ * @return True if the receiver overran before this interrupt.
+ */
+MDI_INLINE bool mdi_g431_uart_RxLost(USART_TypeDef *ptUsart)
+{
+    bool bLost = (ptUsart->ISR & USART_ISR_ORE) != 0U;
+    if (bLost) {
+        ptUsart->ICR = USART_ICR_ORECF;
+    }
+    return bLost;
+}
+
 MDI_INLINE bool mdi_g431_uart_TxComplete(USART_TypeDef *ptUsart)
 {
-    return (ptUsart->ISR & USART_ISR_TC) != 0U;
+    return (ptUsart->CR1 & USART_CR1_TCIE) != 0U &&
+           (ptUsart->ISR & USART_ISR_TC) != 0U;
 }
 
 MDI_INLINE void mdi_g431_uart_TxWrite(
@@ -57,58 +69,35 @@ MDI_INLINE void mdi_g431_uart_TxIrqDisable(USART_TypeDef *ptUsart)
     ptUsart->CR1 &= ~USART_CR1_TCIE;
 }
 
-/** @brief Initialize USART2 hardware; stream queues use MDI_UART_STREAM_INIT. */
-MDI_INLINE mdi_status_t mdi_g431_uart_Init(
-    USART_TypeDef *ptUsart, uint32_t wPeripheralClockHz)
+/**
+ * @brief Enable the initialized board UART after its queues are ready.
+ * @param ptUsart The board-owned USART2 instance.
+ * @return OK, INVALID for another instance, or IO_ERROR if hardware is unready.
+ */
+MDI_INLINE mdi_status_t mdi_g431_uart_IrqEnable(USART_TypeDef *ptUsart)
 {
-    if (ptUsart == NULL || wPeripheralClockHz == 0U) {
+    const uint32_t wReady = USART_CR1_UE | USART_CR1_RE | USART_CR1_TE;
+    if (ptUsart != USART2) {
         return MDI_INVALID;
     }
-    RCC->AHB2ENR |= RCC_AHB2ENR_GPIOBEN;
-    RCC->APB1ENR1 |= RCC_APB1ENR1_USART2EN;
-    (void)RCC->AHB2ENR;
-    (void)RCC->APB1ENR1;
-
-    GPIOB->MODER &= ~((UINT32_C(3) << (3U * 2U)) |
-                      (UINT32_C(3) << (4U * 2U)));
-    GPIOB->MODER |= (UINT32_C(2) << (3U * 2U)) |
-                    (UINT32_C(2) << (4U * 2U));
-    GPIOB->OTYPER &= ~((UINT32_C(1) << 3U) | (UINT32_C(1) << 4U));
-    GPIOB->OSPEEDR &= ~((UINT32_C(3) << (3U * 2U)) |
-                        (UINT32_C(3) << (4U * 2U)));
-    GPIOB->PUPDR &= ~((UINT32_C(3) << (3U * 2U)) |
-                      (UINT32_C(3) << (4U * 2U)));
-    GPIOB->PUPDR |= UINT32_C(1) << (4U * 2U);
-    GPIOB->AFR[0] &= ~((UINT32_C(0xF) << (3U * 4U)) |
-                       (UINT32_C(0xF) << (4U * 4U)));
-    GPIOB->AFR[0] |= (UINT32_C(7) << (3U * 4U)) |
-                     (UINT32_C(7) << (4U * 4U));
-
-    ptUsart->CR1 = 0U;
-    ptUsart->CR2 = 0U;
-    ptUsart->CR3 = 0U;
-    ptUsart->BRR = (wPeripheralClockHz + (G431_STREAM_BAUDRATE / 2U)) /
-                   G431_STREAM_BAUDRATE;
-    ptUsart->ICR = USART_ICR_ORECF | USART_ICR_NECF | USART_ICR_FECF |
-                   USART_ICR_PECF | USART_ICR_TCCF;
-    ptUsart->CR1 = USART_CR1_UE | USART_CR1_RE | USART_CR1_TE |
-                   USART_CR1_RXNEIE_RXFNEIE;
+    if ((ptUsart->CR1 & wReady) != wReady || ptUsart->BRR == 0U) {
+        return MDI_IO_ERROR;
+    }
+    ptUsart->CR1 |= USART_CR1_RXNEIE_RXFNEIE;
     NVIC_SetPriority(USART2_IRQn, 4U);
     NVIC_EnableIRQ(USART2_IRQn);
     return MDI_OK;
 }
 
 #define MDI_G431_UART_STREAM_BIND(NAME, STATE, UART)                            \
-    MDI_UART_STREAM_BIND(                                                        \
+    MDI_UART_STREAM_BIND(                                                       \
         NAME, STATE, UART, mdi_g431_uart_RxReady, mdi_g431_uart_RxRead,         \
-        mdi_g431_uart_TxComplete, mdi_g431_uart_TxWrite,                        \
-        mdi_g431_uart_TxClear, mdi_g431_uart_TxIrqEnable,                       \
-        mdi_g431_uart_TxIrqDisable)
+        mdi_g431_uart_RxLost, mdi_g431_uart_TxComplete,                         \
+        mdi_g431_uart_TxWrite, mdi_g431_uart_TxClear,                           \
+        mdi_g431_uart_TxIrqEnable, mdi_g431_uart_TxIrqDisable)
 
 #define MDI_G431_UART_STREAM_INIT(STATE, TXBUF, TXSIZE, RXBUF, RXSIZE)          \
     MDI_UART_STREAM_INIT(STATE, TXBUF, TXSIZE, RXBUF, RXSIZE)
-#define MDI_G431_UART_INIT(UART, CLOCK_HZ)                                       \
-    mdi_g431_uart_Init((UART), (CLOCK_HZ))
 
 #define MDI_STM32_TICK_BIND(NAME, NOW_FN)                                      \
     MDI_INLINE mdi_tick_t MDI_OP(NAME, _tick_Now)(void)                        \
@@ -240,6 +229,3 @@ typedef struct {
         PORTS(MDI_CORE_PORT_WRITE_MASKED, &tWrite)                               \
     }
 #endif
-
-
-

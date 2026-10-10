@@ -39,6 +39,8 @@ MDI_I2C_REG8_BIND(encoder_angle, encoder_i2c, 0x36U)
 #define G431_ADC_DMA_SLOT_COUNT   2U
 #define G431_ADC_BLOCK_SIZE \
     (G431_ADC_SAMPLE_COUNT * G431_ADC_CHANNEL_COUNT)
+_Static_assert(G431_ADC_BLOCK_SIZE > 0U &&
+               G431_ADC_BLOCK_SIZE <= UINT16_MAX, "invalid DMA block size");
 #define G431_ADC_CHANNELS(X, ...) \
     X(__VA_ARGS__, adc_bus_voltage, 0) \
     X(__VA_ARGS__, adc_temperature, 1) \
@@ -49,7 +51,12 @@ extern volatile uint16_t
 extern volatile uint32_t g_wG431AdcPublished;
 extern volatile uint32_t g_wG431AdcConsumed;
 extern volatile uint32_t g_wG431AdcSequence;
-extern volatile uint32_t g_wG431AdcRateHz;
+/* This board owns one regular DMA transaction; ISR releases its slot. */
+typedef struct {
+    volatile bool bBusy;
+    volatile mdi_status_t eError;
+} mdi_g431_adc_state_t;
+extern mdi_g431_adc_state_t g_tG431Adc;
 extern volatile uint32_t g_awG431AdcMean[G431_ADC_CHANNEL_COUNT];
 extern volatile bool g_bG431AdcMeanValid;
 extern volatile mdi_status_t g_eG431AdcStatus;
@@ -59,19 +66,38 @@ MDI_ADC_DMA_FLAG_BIND(adc_dma, g_wG431AdcPublished,
 MDI_ADC_MEAN_GROUP_BIND(adc_mean, adc_dma, g_awG431AdcDma,
                         G431_ADC_SAMPLE_COUNT, G431_ADC_CHANNEL_COUNT,
                         G431_ADC_CHANNELS, g_awG431AdcMean,
-                        g_wG431AdcSequence, g_bG431AdcMeanValid,
-                        g_wG431AdcRateHz, 1000000U)
+                        g_wG431AdcSequence, g_bG431AdcMeanValid)
 
-/** @brief Arm the next regular ADC DMA slot after mean publication. */
+/**
+ * @brief Arm the next regular ADC DMA slot after mean publication.
+ * @param None.
+ * @return OK, BUSY while stopping/in flight, or the latched DMA error.
+ * @note Foreground only; the ISR cannot release an unarmed transaction.
+ */
 static inline mdi_status_t mdi_g431_adc_start(void)
 {
-    uint32_t wSlot = MDI_ADC_DMA_Published(adc_dma) %
-                     G431_ADC_DMA_SLOT_COUNT;
-    volatile uint16_t *pwBuffer = &g_awG431AdcDma[
-        wSlot * G431_ADC_BLOCK_SIZE];
+    uint32_t wSlot = 0U;
+    volatile uint16_t *pwBuffer = NULL;
 
-    return haladc_StartRegular(pwBuffer, G431_ADC_BLOCK_SIZE)
-        ? MDI_OK : MDI_BUSY;
+    if (g_tG431Adc.eError != MDI_OK) { return g_tG431Adc.eError; }
+    if (g_tG431Adc.bBusy || (DMA1_Channel1->CCR & DMA_CCR_EN) != 0U ||
+        (ADC1->CR & (ADC_CR_ADSTART | ADC_CR_ADSTP)) != 0U) {
+        return MDI_BUSY;
+    }
+    if ((ADC1->CR & ADC_CR_ADEN) == 0U) { return MDI_IO_ERROR; }
+    /* A completion IRQ may advance Published before the busy checks. Once
+     * idle, no armed transaction can publish while this slot is selected. */
+    wSlot = MDI_ADC_DMA_Published(adc_dma) % G431_ADC_DMA_SLOT_COUNT;
+    pwBuffer = &g_awG431AdcDma[wSlot * G431_ADC_BLOCK_SIZE];
+    DMA1->IFCR = DMA_IFCR_CGIF1;
+    ADC1->ISR = ADC_ISR_OVR;
+    DMA1_Channel1->CPAR = (uint32_t)(uintptr_t)&ADC1->DR;
+    DMA1_Channel1->CMAR = (uint32_t)(uintptr_t)pwBuffer;
+    DMA1_Channel1->CNDTR = G431_ADC_BLOCK_SIZE;
+    g_tG431Adc.bBusy = true;
+    DMA1_Channel1->CCR |= DMA_CCR_EN;
+    ADC1->CR |= ADC_CR_ADSTART;
+    return MDI_OK;
 }
 
 MDI_ADC_TRIGGER_FN_BIND(adc_mean, mdi_g431_adc_start)
@@ -103,15 +129,9 @@ MDI_SAMPLE_READY_BIND(phase_current_completed, G431_CURRENT_CHANNELS,
     X(w, TIM1->CCR3, TIM1->ARR)
 MDI_PWM_REG_BIND(bridge, G431_BRIDGE_CHANNELS)
 MDI_STM32_PWM_TIMING_BIND(bridge, TIM1, 170000000U, 2U, G431_BRIDGE_CHANNELS)
-MDI_STM32_PWM_LIFECYCLE_FAULT_BIND(
-    bridge, TIM1, TIM1->BDTR, TIM_BDTR_MOE,
-    mdi_g431_fault_active(), mdi_g431_fault_source_active(),
-    mdi_g431_fault_clear())
+MDI_G431_PWM_LIFECYCLE_BIND(bridge)
 /* Edge/up PWM1: ARR + 1 ticks per cycle; channel one is a one-field group. */
 #define G431_BUZZER_CHANNELS(X) X(value, TIM3->CCR1, TIM3->ARR + 1U)
 MDI_PWM_REG_BIND(buzzer, G431_BUZZER_CHANNELS)
 MDI_STM32_PWM_TIMING_BIND(buzzer, TIM3, 170000000U, 1U, G431_BUZZER_CHANNELS)
 #endif
-
-
-

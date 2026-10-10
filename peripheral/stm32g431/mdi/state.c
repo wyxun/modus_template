@@ -12,7 +12,7 @@ volatile uint16_t
 volatile uint32_t g_wG431AdcPublished = 0U;
 volatile uint32_t g_wG431AdcConsumed = 0U;
 volatile uint32_t g_wG431AdcSequence = 0U;
-volatile uint32_t g_wG431AdcRateHz = G431_ADC_RATE_HZ;
+mdi_g431_adc_state_t g_tG431Adc = {false, MDI_OK};
 volatile uint32_t g_awG431AdcMean[G431_ADC_CHANNEL_COUNT];
 volatile bool g_bG431AdcMeanValid = false;
 volatile mdi_status_t g_eG431AdcStatus = MDI_OK;

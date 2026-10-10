@@ -16,7 +16,6 @@
 #include "foc/hal/foc_port.h"
 #include "foc/foc_types.h"
 #include "mdi/instance.h"
-#include "haltim1.h"
 
 /** @brief Translate an MDI result to the independent FOC result domain. */
 MDI_INLINE foc_result_t mdi_g431_foc_status(mdi_status_t eStatus)
@@ -115,32 +114,26 @@ MDI_INLINE uint32_t mdi_g431_foc_sample_dcbus_raw(
 #endif
 }
 
+/** @brief Start the internal CH4 trigger with phase gates kept as configured.
+ * @note Calibration calls this after SafeStop has closed CH1-3 E/NE.
+ */
 static inline void mdi_g431_foc_start_adc_trigger(void)
 {
-    haltim1_StartAdcTrigger();
+    TIM1->CR1 |= TIM_CR1_CEN;
+    TIM1->CCER |= TIM_CCER_CC4E;
+    TIM1->BDTR |= TIM_BDTR_MOE;
 }
 
+/** @brief Open the complete bridge gate after the provider's fault checks. */
 static inline foc_result_t mdi_g431_foc_pwm_enable(void)
 {
-    mdi_status_t eStatus = MDI_PWM_Enable(bridge, true);
-
-    if (eStatus != MDI_OK) {
-        return mdi_g431_foc_status(eStatus);
-    }
-    /* The generic lifecycle owns TIM1 CEN/MOE.  The board backend owns the
-     * complementary phase-channel gate, which is deliberately disabled
-     * during ADC calibration and safe-stop. */
-    haltim1_Start();
-    return FOC_RESULT_OK;
+    return mdi_g431_foc_status(MDI_PWM_Enable(bridge, true));
 }
 
+/** @brief Close phase outputs while keeping existing CH4 trigger gates. */
 static inline foc_result_t mdi_g431_foc_pwm_safe_stop(void)
 {
-    mdi_status_t eStatus = MDI_PWM_SafeStop(bridge);
-
-    /* Keep CH4 available to the ADC trigger path, but close CH1-3. */
-    haltim1_Stop();
-    return mdi_g431_foc_status(eStatus);
+    return mdi_g431_foc_status(MDI_PWM_SafeStop(bridge));
 }
 
 static inline bool mdi_g431_foc_pwm_get_fault(void)

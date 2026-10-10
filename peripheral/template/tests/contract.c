@@ -10,6 +10,7 @@
 
 static void pt32_contract(void)
 {
+    uint32_t wCount = 0U;
     uint8_t chData[2] = {0U, 0U};
     const mdi_tick_t wNow = MDI_TICK_Now(pt32_raw_tick);
 
@@ -18,8 +19,8 @@ static void pt32_contract(void)
     (void)MDI_TIMER_Start(adc_service_timer);
     (void)MDI_TIMER_Stop(adc_service_timer);
     (void)MDI_TIMER_IsRunning(adc_service_timer);
-    (void)MDI_STREAM_Write(board_stream, chData, sizeof(chData));
-    (void)MDI_STREAM_Read(board_stream, chData, sizeof(chData));
+    (void)MDI_STREAM_Write(board_stream, chData, sizeof(chData), &wCount);
+    (void)MDI_STREAM_Read(board_stream, chData, sizeof(chData), &wCount);
     (void)MDI_STREAM_Available(board_stream);
     (void)MDI_STREAM_IsBusy(board_stream);
 }
