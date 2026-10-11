@@ -116,35 +116,3 @@ foc_scalar_t foc_ladrc_Step(foc_ladrc_t *ptLadrc,
         ptLadrc->tParams.qOutputMaximum);
     return ptLadrc->qOutput;
 }
-
-static void ladrc_interface_reset(void *pController)
-{
-    foc_ladrc_Reset((foc_ladrc_t *)pController);
-}
-
-static foc_scalar_t ladrc_interface_step(void *pController,
-                                          foc_scalar_t qReference,
-                                          foc_scalar_t qFeedback)
-{
-    return foc_ladrc_Step((foc_ladrc_t *)pController, qReference, qFeedback);
-}
-
-static void ladrc_interface_track(void *pController,
-                                   foc_scalar_t qOutput,
-                                   foc_scalar_t qReference,
-                                   foc_scalar_t qFeedback)
-{
-    foc_ladrc_Track((foc_ladrc_t *)pController, qOutput,
-                    qReference, qFeedback);
-}
-
-foc_controller_if_t foc_ladrc_ControllerInterface(foc_ladrc_t *ptLadrc)
-{
-    foc_controller_if_t tInterface = {
-        .pController = ptLadrc,
-        .fnReset = ladrc_interface_reset,
-        .fnStep = ladrc_interface_step,
-        .fnTrack = ladrc_interface_track,
-    };
-    return tInterface;
-}

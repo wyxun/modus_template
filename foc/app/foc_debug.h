@@ -114,7 +114,9 @@ void foc_debug_CurrentStepRun(foc_app_t *ptApp);
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
 void foc_debug_WaveformInit(foc_app_t *ptApp,
                             uint32_t wPeriodNanoseconds);
-void foc_debug_WaveformStep(void);
+/** @brief Prepare bound values on an accepted waveform sample.
+ * @param None. @return None. @note Called synchronously by mwaveform.Step. */
+void foc_debug_CaptureWaveform(void);
 #endif
 
 #endif /* FOC_DEBUG_H */

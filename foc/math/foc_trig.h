@@ -13,11 +13,6 @@
 #define FOC_TRIG_BACKEND FOC_TRIG_BACKEND_LUT
 #endif
 
-typedef struct {
-    void (*fnSinCosBam32)(uint32_t wBam32, foc_scalar_t *pqSin, foc_scalar_t *pqCos); /**< BAM32 sincos 函数 */
-    foc_angle_t (*fnAtan2)(foc_scalar_t qY, foc_scalar_t qX);                         /**< 反正切函数 */
-} foc_trig_backend_t;
-
 #if (FOC_TRIG_BACKEND == FOC_TRIG_BACKEND_LUT)
 extern const float s_afSinQuarter[513];
 /** @brief  浮点圈数正弦（LUT 后端） */

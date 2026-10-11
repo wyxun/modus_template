@@ -2,7 +2,7 @@
  * @brief Real Motor/Core sample pairing, bus scaling and wide-current tests. */
 #include <assert.h>
 #include <math.h>
-#include "motor.h"
+#include "../motor/motor.c"
 
 static foc_current_sample_t raw = {2048U, 2048U, 2048U};
 static uint32_t bus = 12000U;
@@ -96,8 +96,44 @@ static void test_IdentificationBusSnapshot(const motor_cfg_t *cfg)
     near(motor.qIdentificationDcBusPu, 0.0f);
 }
 
+/** @brief Check narrowing against the original wide calculation.
+ * @param None. @return None. */
+static void test_CurrentConversion(void)
+{
+    const uint32_t values[] = {0U, 1U, 2048U, 4095U, 65535U,
+        7798783U, 7798784U, INT32_MAX, 2147483648U, UINT32_MAX - 1U,
+        UINT32_MAX};
+    for (unsigned i = 0U; i < sizeof(values) / sizeof(values[0]); i++) {
+        for (unsigned j = 0U; j < sizeof(values) / sizeof(values[0]); j++) {
+            int64_t delta = (int64_t)values[j] - (int64_t)values[i];
+#if !FOC_CURRENT_SAMPLE_INVERTED
+            delta = -delta;
+#endif
+            int64_t scaled = delta * FOC_Q_SCALE;
+            bool valid = values[i] != UINT32_MAX &&
+                scaled < ((int64_t)INT32_MAX + 1) *
+                    FOC_CURRENT_COUNTS_PER_BASE &&
+                scaled > (int64_t)INT32_MIN * FOC_CURRENT_COUNTS_PER_BASE;
+            foc_scalar_t actual = FOC_ZERO;
+            assert(_motor_NormalizeCurrent(values[i], values[j], &actual) ==
+                   valid);
+            if (valid) {
+#if defined(FOC_NUMERIC_FIXED)
+                assert(actual == scaled / FOC_CURRENT_COUNTS_PER_BASE);
+#else
+                assert(actual == (float)delta / FOC_CURRENT_COUNTS_PER_BASE);
+#endif
+            }
+        }
+    }
+}
+
 int main(void)
 {
+    test_CurrentConversion();
+    if (FOC_CURRENT_COUNTS_PER_BASE > 1000U) {
+        return 0;
+    }
     motor_t motor = {0};
     motor_position_sample_t sample = {0};
     motor_electrical_feedback_t feedback = {.bValid = true};

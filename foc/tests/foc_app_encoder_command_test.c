@@ -124,6 +124,7 @@ static void test_WaveStart(void)
  */
 static void test_WaveStep(void)
 {
+    foc_debug_CaptureWaveform();
     s_wWaveStepCount++;
 }
 
@@ -181,6 +182,10 @@ static uint32_t s_wEncoderInitCount = 0U;
 static motor_cfg_t s_tCapturedMotorConfig = {0};
 static motor_status_t s_tMotorStatus = {0};
 static uint32_t s_wMotorStartCount = 0U;
+static uint32_t s_wAlignCount = 0U;
+static uint32_t s_wCalibrationCount = 0U;
+static uint32_t s_wSensorlessStartCount = 0U;
+static foc_scalar_t s_qSensorlessTarget = FOC_ZERO;
 static uint32_t s_wCurrentReferenceCount = 0U;
 static uint32_t s_wMotorStopCount = 0U;
 static foc_scalar_t s_qCurrentReferenceD = FOC_ZERO;
@@ -482,18 +487,9 @@ foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
                                         foc_scalar_t qTargetSpeedPu)
 {
     (void)ptMotor;
-    (void)qTargetSpeedPu;
+    s_wSensorlessStartCount++;
+    s_qSensorlessTarget = qTargetSpeedPu;
     return FOC_RESULT_DISABLED;
-}
-
-/**
- * @brief Expose sensorless capability for the command-only fake Motor.
- * @param ptMotor Motor object queried by the shell command.
- * @return True for a supplied fake Motor.
- */
-bool motor_SensorlessStartConfigured(const motor_t *ptMotor)
-{
-    return ptMotor != NULL;
 }
 
 /**
@@ -571,13 +567,19 @@ foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
 }
 
 /**
- * @brief Stub an unused alignment command.
+ * @brief Record the requested alignment completion.
  * @param ptMotor Motor object.
+ * @param bCaptureZero Whether alignment captures the encoder zero.
  * @return FOC_RESULT_OK.
  */
-foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor)
+foc_result_t motor_RequestAlignment(motor_t *ptMotor, bool bCaptureZero)
 {
     (void)ptMotor;
+    if (bCaptureZero) {
+        s_wCalibrationCount++;
+    } else {
+        s_wAlignCount++;
+    }
     return FOC_RESULT_OK;
 }
 
@@ -590,8 +592,8 @@ foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor)
 foc_result_t motor_GetStatus(const motor_t *ptMotor,
                              motor_status_t *ptStatus)
 {
-    (void)ptMotor;
     *ptStatus = s_tMotorStatus;
+    ptStatus->bAngleValid = ptMotor->tInput.bAngleValid;
     return FOC_RESULT_OK;
 }
 
@@ -714,8 +716,97 @@ static void test_EncoderlessIdentification(void)
     s_ePositionResult = FOC_RESULT_OK;
 }
 
+/** @brief Advance one foreground service without motor readiness.
+ * @param bExpired Whether the one-second report window elapsed.
+ * @return None. */
+static void test_RunTimingWindow(bool bExpired)
+{
+    s_bReportTimeout = bExpired;
+    s_wShortTimeoutBudget = 1U;
+    assert(foc_app_Run((uintptr_t)&tFocApp) == fsm_rt_on_going);
+}
+
+/** @brief Mean, deadline overrun maximum and reset use completed ISR samples.
+ * @return None. */
+static void test_IsrTimingReport(void)
+{
+    tFocApp = (foc_app_t){0};
+    tFocApp.lForegroundPeriodTicks = 1000;
+    tFocApp.tIsrTiming.lReportPeriodTicks = 1000000;
+    tFocApp.tIsrTiming.lBudgetTicks = 5000;
+    s_lSystemTick = 1000;
+    s_chLog[0] = '\0';
+    s_lTickStep = 1000;
+    foc_app_HighFrequencyISR();
+    s_lTickStep = 3000;
+    foc_app_HighFrequencyISR();
+    assert(s_chLog[0] == '\0');
+    assert(tFocApp.tIsrTiming.wSamples == 2U);
+    test_RunTimingWindow(false);
+    assert(s_chLog[0] == '\0');
+    assert(tFocApp.tIsrTiming.wSamples == 2U);
+    test_RunTimingWindow(true);
+    assert(strstr(s_chLog, "[T] foc ISR avg=20.0 us") != NULL);
+    assert(tFocApp.tIsrTiming.wSamples == 0U);
+    assert(tFocApp.tIsrTiming.qwTotalTicks == 0U);
+    assert(tFocApp.tIsrTiming.wMaximumTicks == 0U);
+
+    s_chLog[0] = '\0';
+    s_lTickStep = 7000;
+    foc_app_HighFrequencyISR();
+    s_lTickStep = 2000;
+    foc_app_HighFrequencyISR();
+    /* A single overrun must win even when the mean is below the budget. */
+    s_lTickStep = 1000;
+    foc_app_HighFrequencyISR();
+    assert(s_chLog[0] == '\0');
+    test_RunTimingWindow(true);
+    assert(strstr(s_chLog, "foc ISR max=70.0 us (overrun)") != NULL);
+    s_chLog[0] = '\0';
+    s_lTickStep = 2000;
+    foc_app_HighFrequencyISR();
+    test_RunTimingWindow(true);
+    assert(strstr(s_chLog, "foc ISR avg=20.0 us") != NULL);
+    s_chLog[0] = '\0';
+    test_RunTimingWindow(true);
+    assert(s_chLog[0] == '\0');
+
+    s_lTickStep = 5000;
+    foc_app_HighFrequencyISR();
+    test_RunTimingWindow(true);
+    assert(strstr(s_chLog, "foc ISR avg=50.0 us") != NULL);
+    s_chLog[0] = '\0';
+    s_lSystemTick = (int64_t)UINT32_MAX - 99;
+    s_lTickStep = 345;
+    foc_app_HighFrequencyISR();
+    test_RunTimingWindow(true);
+    assert(strstr(s_chLog, "foc ISR avg=3.4 us") != NULL);
+    s_chLog[0] = '\0';
+    g_chGLogMask = MLOG_MASK_ALL & ~MLOG_MASK_T;
+    foc_app_HighFrequencyISR();
+    test_RunTimingWindow(true);
+    assert(s_chLog[0] == '\0');
+    assert(tFocApp.tIsrTiming.wSamples == 0U);
+    g_chGLogMask = MLOG_MASK_ALL;
+    s_bReportTimeout = false;
+    s_lTickStep = 0;
+}
+
 int main(void)
 {
+    tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_HARD_DRAG;
+    foc_debug_CmdMotor("align");
+    assert(s_wAlignCount == 1U && s_wCalibrationCount == 0U);
+    foc_debug_CmdMotor("calibrate");
+    assert(s_wCalibrationCount == 0U);
+    foc_debug_CmdMotor("speed 0.4");
+    assert(s_wSensorlessStartCount == 1U && s_wMotorStartCount == 0U);
+    assert(fabsf(foc_to_float(s_qSensorlessTarget) - 0.4f) < 0.0001f);
+    tFocApp.tPosition.eSource = MOTOR_POSITION_SOURCE_SENSOR;
+    foc_debug_CmdMotor("align");
+    assert(s_wAlignCount == 2U && s_wCalibrationCount == 0U);
+    foc_debug_CmdMotor("calibrate");
+    assert(s_wCalibrationCount == 1U);
     test_IdentifyBoundary();
     foc_debug_CmdMotor("encoder");
 
@@ -808,7 +899,7 @@ int main(void)
         tConfig.tMotorCfg.tParams.wInductanceDMicroHenry = 1000U;
         tConfig.tMotorCfg.tParams.wInductanceQMicroHenry = 1000U;
         tConfig.tMotorCfg.tLimits.qMaxSpeedReference =
-            FOC_SCALAR(100.0f);
+            FOC_ONE;
         tConfig.tMotorCfg.tLimits.qMaxPhaseCurrent = FOC_SCALAR(1.0f);
         tConfig.tMotorCfg.tLimits.qMaxModulation =
             FOC_SCALAR(0.5773502692f);
@@ -818,15 +909,19 @@ int main(void)
         tConfig.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
         tConfig.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
         tConfig.tObserverCfg.tSmo.qCurrentEstimateLimit = FOC_ONE;
-        assert(foc_gain_from_float(0.2f,
+        assert(foc_gain_from_float(20.0f,
             &tConfig.tMotorCfg.tSpeedPiParams.tKp) ==
                FOC_RESULT_OK);
-        assert(foc_gain_from_float(0.005f,
+        assert(foc_gain_from_float(0.5f,
             &tConfig.tMotorCfg.tSpeedPiParams.tKiTs) ==
                FOC_RESULT_OK);
         assert(foc_gain_from_float(0.0f,
             &tConfig.tMotorCfg.tSpeedPiParams.tKdOverTs) ==
                FOC_RESULT_OK);
+        tConfig.wHighFrequencyIsrHz = 10000U;
+        assert(foc_app_Init((uintptr_t)&tFocApp,
+                            (uintptr_t)&tConfig) != MODUS_SUCCESS);
+        tConfig.wHighFrequencyIsrHz = FOC_HF_ISR_HZ;
         int nInitResult = foc_app_Init((uintptr_t)&tFocApp,
                                        (uintptr_t)&tConfig);
 
@@ -919,7 +1014,7 @@ int main(void)
         tFocApp.tPosition.tEstimates.tSmo.tEstimate.tElectricalAngle.wBam32 =
             0x60000000U;
         tFocApp.tPosition.tEstimates.tSmo.tEstimate.bValid = true;
-        foc_debug_WaveformStep();
+        mwaveform.Step();
         assert(fabsf(test_WaveformValue("Enc_mT") - 0.125f) < 0.001f);
         assert(fabsf(test_WaveformValue("SMO_mT") - 0.375f) < 0.001f);
         assert(fabsf(test_WaveformValue("Err_mT") - 0.25f) < 0.001f);
@@ -944,7 +1039,7 @@ int main(void)
 #endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
         tFocApp.tMotor.tInput.bAngleValid = false;
-        foc_debug_WaveformStep();
+        mwaveform.Step();
         assert(test_WaveformValue("Err_mT") == -1.0f);
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
         assert(fabsf(test_WaveformValue("SMO_mT") - 0.375f) < 0.001f);
@@ -1016,5 +1111,6 @@ int main(void)
     assert(!tFocApp.tPosition.tEstimates.tSmo.tEstimate.bValid);
     assert(!tFocApp.tPosition.tSmo.bObserverSpeedReady);
 #endif
+    test_IsrTimingReport();
     return 0;
 }

@@ -24,11 +24,19 @@
 #include "foc_smo.h"
 #endif
 
+/** @brief Physical speed tuning converted once at App initialization. */
 typedef struct {
-    /* Unbound profile: speed limit is electrical Hz; speed gains are
-     * per electrical Hz. BindMotorConfig produces Motor's pu config.
-     * Do not pass this nested profile directly to motor_Init(). */
+    foc_scalar_t qMaximumElectricalHz;
+    foc_gain_t tKpPerElectricalHz;
+    foc_gain_t tKiTsPerElectricalHz;
+    foc_gain_t tKdOverTsPerElectricalHz;
+} foc_app_speed_profile_t;
+
+typedef struct {
+    /** Motor configuration always uses PU, including speed and gains. */
     motor_cfg_t tMotorCfg;
+    /** NULL uses Motor PU tuning; otherwise binds this physical profile. */
+    const foc_app_speed_profile_t *ptSpeedProfile;
     motor_position_source_t ePositionSource;
     foc_encoder_cfg_t tEncoderCfg;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
@@ -43,6 +51,7 @@ typedef struct {
     foc_scalar_t qObserverMaxAngleErrorTurns;
 #endif
     uint32_t wVoltageBaseMillivolt;
+    /** Must equal the target FOC_HF_ISR_HZ. */
     uint32_t wHighFrequencyIsrHz;
     /** Electrical base Hz, not speed pu; consumed only at initialization.
      * FLOAT stores Hz. FIXED int32 stores Hz * 32768 (15 fraction bits).
@@ -59,6 +68,20 @@ typedef enum {
     FOC_APP_CURRENT_STEP_ZERO_TAIL,
 } foc_app_current_step_state_e;
 
+#if !defined(__NO_USE_LOG__)
+/** @brief ISR-owned accumulators and foreground-owned report deadline.
+ * @note Run snapshots and resets shared counters with interrupts masked.
+ * Timing diagnostics are compiled out together with logging. */
+typedef struct {
+    volatile uint64_t qwTotalTicks;
+    volatile uint32_t wSamples;
+    volatile uint32_t wMaximumTicks;
+    int64_t lReportTimestamp;
+    int64_t lReportPeriodTicks;
+    int64_t lBudgetTicks;
+} foc_app_isr_timing_t;
+#endif
+
 typedef struct {
     modus_base_t *ptBase;
     motor_t tMotor;
@@ -73,6 +96,9 @@ typedef struct {
     int64_t lCurrentStepDurationTicks;
     bool bEncoderEnabled;
     bool bReady;
+#if !defined(__NO_USE_LOG__)
+    foc_app_isr_timing_t tIsrTiming;
+#endif
 } foc_app_t;
 
 /* User-profile initializer; time values are seconds and loop rate is hertz. */
@@ -93,7 +119,7 @@ typedef struct {
             MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU),                         \
         .tLimits = {                                                            \
             .qMaxSpeedReference =                                               \
-                FOC_SCALAR(MOTOR_CONFIG_MAX_SPEED_ELECTRICAL_HZ),               \
+                FOC_ONE,                                                        \
             .qMaxPhaseCurrent =                                                 \
                 FOC_SCALAR(MOTOR_CONFIG_MAX_PHASE_CURRENT_PU),                  \
             .qMaxModulation =                                                   \
@@ -117,13 +143,12 @@ typedef struct {
         },                                                                      \
         .tSpeedPiParams = {                                                     \
             .tKp = {MOTOR_CONFIG_PI_GAIN_INTEGER,                               \
-                    FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KP_PER_ELECTRICAL_HZ)},    \
+                    FOC_ZERO},                                                  \
             .tKiTs = {MOTOR_CONFIG_PI_GAIN_INTEGER,                             \
-                      FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KI_TS_PER_ELECTRICAL_HZ)},\
+                      FOC_ZERO},                                                \
             .tKdOverTs = {                                                      \
-                MOTOR_CONFIG_PI_GAIN_INTEGER,                                  \
-                FOC_SCALAR(                                                     \
-                    MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PER_ELECTRICAL_HZ)},       \
+                MOTOR_CONFIG_PI_GAIN_INTEGER,                                   \
+                FOC_ZERO},                                                      \
             .qOutputMinimum =                                                   \
                 FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_OUTPUT_MIN_PU),                \
             .qOutputMaximum =                                                   \

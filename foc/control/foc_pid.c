@@ -13,7 +13,14 @@ foc_result_t foc_pid_Init(foc_pid_t *ptPid,
     if (ptPid == NULL || ptParams == NULL) {
         return FOC_RESULT_NULL;
     }
-    if (ptParams->qOutputMinimum >= ptParams->qOutputMaximum ||
+    if (!foc_gain_IsValid(&ptParams->tKp) ||
+        !foc_gain_IsValid(&ptParams->tKiTs) ||
+        !foc_gain_IsValid(&ptParams->tKdOverTs) ||
+        !foc_scalar_is_finite(ptParams->qOutputMinimum) ||
+        !foc_scalar_is_finite(ptParams->qOutputMaximum) ||
+        !foc_scalar_is_finite(ptParams->qIntegratorMinimum) ||
+        !foc_scalar_is_finite(ptParams->qIntegratorMaximum) ||
+        ptParams->qOutputMinimum >= ptParams->qOutputMaximum ||
         ptParams->qIntegratorMinimum > ptParams->qIntegratorMaximum) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }

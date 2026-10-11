@@ -140,6 +140,9 @@ FOC_INCLUDES ?=
 FOC_NUMERIC ?= float
 ifeq ($(FOC_NUMERIC),float)
     C_DEFS += -DFOC_NUMERIC_FLOAT=1
+ifneq ($(strip $(FOC_SOURCES)),)
+    C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=foc_debug_CaptureWaveform
+endif
 else ifeq ($(FOC_NUMERIC),fixed)
     C_DEFS += -DFOC_NUMERIC_FIXED=1
 else
@@ -256,6 +259,10 @@ vpath %.S $(sort $(dir $(ASM_SOURCES)))
 # 针对高频控制步相关的密集计算模块强制启用 -O2 优化
 $(BUILD_DIR)/foc_%.o: CFLAGS += -O2
 $(BUILD_DIR)/motor.o: CFLAGS += -O2
+# Preserve separate-operation rounding throughout the numeric layer's callers.
+ifneq ($(strip $(FOC_SOURCES)),)
+$(addprefix $(BUILD_DIR)/,$(notdir $(FOC_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
+endif
 
 # ------------------------------------------------------------------------------
 # Build configuration signature tracking
@@ -286,10 +293,12 @@ else
 	@echo $(BUILD_CONFIG_SIGNATURE) > $(CONFIG_STAMP)
 endif
 
-$(OBJECTS): $(CONFIG_STAMP)
+$(OBJECTS): $(CONFIG_STAMP) makefile
+
+-include $(OBJECTS:.o=.d)
 
 $(BUILD_DIR)/%.o: %.c $(CONFIG_STAMP) | $(BUILD_DIR)
-	$(CC) -c $(CFLAGS) -o $@ $<
+	$(CC) -c $(CFLAGS) -MMD -MP -o $@ $<
 
 $(BUILD_DIR)/%.o: %.s | $(BUILD_DIR)
 	$(AS) -c $(ASFLAGS) -o $@ $<

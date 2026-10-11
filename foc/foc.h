@@ -10,7 +10,7 @@
 
 #include "foc_config.h"
 
-#include "math/foc_math_types.h"
+#include "math/foc_numeric.h"
 
 #include "middleware/foc_core.h"
 #include "control/foc_pid.h"

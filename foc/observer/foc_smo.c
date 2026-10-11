@@ -267,8 +267,7 @@ static bool _foc_smo_ConfigValid(const foc_electrical_model_t *ptModel,
     if (ptModel == NULL || ptConfig == NULL ||
         ptModel->wResistanceMilliohm == 0U ||
         ptModel->wInductanceDMicroHenry == 0U ||
-        ptModel->wInductanceDMicroHenry !=
-            ptModel->wInductanceQMicroHenry ||
+        ptModel->wInductanceQMicroHenry == 0U ||
         ptModel->wVoltageBaseMillivolt == 0U ||
         ptModel->wCurrentBaseMilliamp == 0U ||
         ptConfig->wSampleFrequencyHz == 0U ||
@@ -294,7 +293,7 @@ static bool _foc_smo_ConfigValid(const foc_electrical_model_t *ptModel,
  * @param ptSmo SMO state to initialize.
  * @param ptModel Physical motor model and PU bases.
  * @param ptConfig Sample frequency and SMO parameters.
- * @return FOC_RESULT_OK or an argument/range error.
+ * @return OK, DISABLED for a salient model, or an argument/range error.
  */
 foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
                           const foc_electrical_model_t *ptModel,
@@ -313,6 +312,10 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
     }
     if (!_foc_smo_ConfigValid(ptModel, ptConfig)) {
         return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    if (ptModel->wInductanceDMicroHenry !=
+        ptModel->wInductanceQMicroHenry) {
+        return FOC_RESULT_DISABLED;
     }
     wSamplePeriodNanoseconds =
         (FOC_NANOSECONDS_PER_SECOND +

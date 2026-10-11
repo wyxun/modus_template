@@ -1,6 +1,6 @@
 /*******************************************************************************
  * @file    foc_math.c
- * @brief   Compatibility math functions using normalized-turn angles
+ * @brief   Scalar square root for the unified FOC numeric backend
  ******************************************************************************/
 
 #include "foc_math.h"
@@ -9,27 +9,7 @@
 #include <math.h>
 #endif
 
-q_type foc_sin(q_type qTurns)
-{
-    return foc_angle_sin(foc_angle_from_scalar(qTurns));
-}
-
-q_type foc_cos(q_type qTurns)
-{
-    return foc_angle_cos(foc_angle_from_scalar(qTurns));
-}
-
-q_type foc_atan2(q_type qY, q_type qX)
-{
-    foc_angle_t tAngle = foc_angle_atan2(qY, qX);
-#if defined(FOC_NUMERIC_FLOAT)
-    return foc_angle_to_turns(tAngle);
-#else
-    return (q_type)(tAngle.wBam32 >> 16);
-#endif
-}
-
-q_type foc_sqrt(q_type qValue)
+foc_scalar_t foc_sqrt(foc_scalar_t qValue)
 {
 #if defined(FOC_NUMERIC_FLOAT)
     return qValue <= FOC_ZERO ? FOC_ZERO : sqrtf(qValue);
@@ -64,6 +44,6 @@ q_type foc_sqrt(q_type qValue)
         }
         wBit >>= 2;
     }
-    return (q_type)(wResult * wResultScale);
+    return (foc_scalar_t)(wResult * wResultScale);
 #endif
 }

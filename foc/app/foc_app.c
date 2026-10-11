@@ -9,6 +9,7 @@
 #include "foc_debug.h"
 
 #include "foc_port_config.h"
+#include "mdebug/mwaveform.h"
 
 #if FOC_OBSERVER_BACKEND == FOC_OBSERVER_BACKEND_NONE &&                        \
     MOTOR_CONFIG_OBSERVER_TAKEOVER
@@ -71,8 +72,20 @@ extern const foc_encoder_sensor_if_t g_tFocEncoderSensorInterface;
     .tEncoderCfg = {0},
 #endif
 
+static const foc_app_speed_profile_t s_tFocAppSpeedProfile = {
+    .qMaximumElectricalHz =
+        FOC_SCALAR(MOTOR_CONFIG_MAX_SPEED_ELECTRICAL_HZ),
+    .tKpPerElectricalHz = {MOTOR_CONFIG_PI_GAIN_INTEGER,
+        FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KP_PER_ELECTRICAL_HZ)},
+    .tKiTsPerElectricalHz = {MOTOR_CONFIG_PI_GAIN_INTEGER,
+        FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KI_TS_PER_ELECTRICAL_HZ)},
+    .tKdOverTsPerElectricalHz = {MOTOR_CONFIG_PI_GAIN_INTEGER,
+        FOC_SCALAR(MOTOR_CONFIG_SPEED_PI_KD_OVER_TS_PER_ELECTRICAL_HZ)},
+};
+
 #define FOC_APP_INIT_CONFIG                                                     \
     .tMotorCfg = FOC_APP_INIT_MOTOR_CONFIG,                                     \
+    .ptSpeedProfile = &s_tFocAppSpeedProfile,                                   \
     .ePositionSource = MOTOR_CONFIG_POSITION_SOURCE,                            \
     FOC_APP_INIT_OBSERVER_CONFIG                                                \
     FOC_APP_INIT_ENCODER_CONFIG                                                 \
@@ -197,10 +210,9 @@ static foc_result_t foc_app_ScaleSpeedGain(foc_gain_t *ptGain,
 }
 
 /**
- * @brief Build the Motor config bound to this App's Encoder.
+ * @brief Bind Motor PU tuning and optional physical speed profile once.
  * @param ptConfig App configuration.
  * @param ptMotorConfig Output Motor configuration.
- * @param bEncoderReady Whether the Encoder was initialized.
  * @return FOC_RESULT_OK or an invalid speed configuration.
  */
 static foc_result_t foc_app_BindMotorConfig(
@@ -215,9 +227,18 @@ static foc_result_t foc_app_BindMotorConfig(
     ptMotorConfig->qElectricalSpeedBaseHz =
         ptConfig->qElectricalSpeedBaseHz;
     ptMotorConfig->wControlFrequencyHz =
-        ptConfig->wHighFrequencyIsrHz;
+        FOC_HF_ISR_HZ;
+    if (ptConfig->ptSpeedProfile == NULL) {
+        return FOC_RESULT_OK;
+    }
+    ptMotorConfig->tSpeedPiParams.tKp =
+        ptConfig->ptSpeedProfile->tKpPerElectricalHz;
+    ptMotorConfig->tSpeedPiParams.tKiTs =
+        ptConfig->ptSpeedProfile->tKiTsPerElectricalHz;
+    ptMotorConfig->tSpeedPiParams.tKdOverTs =
+        ptConfig->ptSpeedProfile->tKdOverTsPerElectricalHz;
     eResult = foc_div_checked(
-        ptMotorConfig->tLimits.qMaxSpeedReference,
+        ptConfig->ptSpeedProfile->qMaximumElectricalHz,
         ptConfig->qElectricalSpeedBaseHz,
         &ptMotorConfig->tLimits.qMaxSpeedReference);
     if (eResult != FOC_RESULT_OK ||
@@ -260,12 +281,23 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     if (ptThis == NULL || ptConfig == NULL) {
         return MODUS_EFAIL;
     }
+    if (ptConfig->wHighFrequencyIsrHz != FOC_HF_ISR_HZ ||
+        (ptConfig->ePositionSource != MOTOR_POSITION_SOURCE_SENSOR &&
+         ptConfig->ePositionSource != MOTOR_POSITION_SOURCE_HARD_DRAG)) {
+        return (int)FOC_RESULT_INVALID_ARGUMENT;
+    }
     *ptThis = (foc_app_t){0};
     ptThis->ptBase = &s_tFocAppBase;
     s_tFocAppBaseCfg.wParent = wObjectAddr;
     ptThis->chRunPt = 0U;
     ptThis->lForegroundTimestamp = 0;
     ptThis->lForegroundPeriodTicks = perfc_convert_us_to_ticks(1000U);
+#if !defined(__NO_USE_LOG__)
+    ptThis->tIsrTiming.lReportPeriodTicks = perfc_convert_ms_to_ticks(1000U);
+    ptThis->tIsrTiming.lBudgetTicks =
+        ptThis->tIsrTiming.lReportPeriodTicks / FOC_HF_ISR_HZ;
+    ptThis->tIsrTiming.lReportTimestamp = get_system_ticks();
+#endif
     ptThis->bEncoderEnabled = false;
     ptThis->bReady = false;
 
@@ -273,14 +305,14 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         tEncoderConfig = ptConfig->tEncoderCfg;
         eEncoder = foc_encoder_Init(&ptThis->tEncoder,
                                     &tEncoderConfig);
-        if (eEncoder != FOC_RESULT_OK && eEncoder != FOC_RESULT_DISABLED) {
+        if (eEncoder != FOC_RESULT_OK) {
             return (int)eEncoder;
         }
     } else {
         eEncoder = FOC_RESULT_DISABLED;
     }
     wControlPeriodNanoseconds = foc_app_GetControlPeriodNanoseconds(
-        ptConfig->wHighFrequencyIsrHz);
+        FOC_HF_ISR_HZ);
     if (ptConfig->wVoltageBaseMillivolt == 0U ||
         wControlPeriodNanoseconds == 0U ||
         ptConfig->qElectricalSpeedBaseHz <= FOC_ZERO) {
@@ -310,12 +342,12 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     tPositionConfig.qElectricalSpeedBaseHz =
         ptConfig->qElectricalSpeedBaseHz;
     tPositionConfig.wControlFrequencyHz =
-        ptConfig->wHighFrequencyIsrHz;
+        FOC_HF_ISR_HZ;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     tPositionConfig.ptMotorParams = &ptThis->tMotor.tParams;
     tPositionConfig.tObserverCfg = ptConfig->tObserverCfg;
     tPositionConfig.tObserverCfg.tSmo.wSampleFrequencyHz =
-        ptConfig->wHighFrequencyIsrHz;
+        FOC_HF_ISR_HZ;
     tPositionConfig.bObserverTakeover = ptConfig->bObserverTakeover;
     tPositionConfig.bAutoTakeover = ptConfig->bObserverAutoTakeover;
     tPositionConfig.wQualificationSteps =
@@ -391,6 +423,46 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
+#if !defined(__NO_USE_LOG__)
+/** @brief Report mean ISR time, or this window's maximum after an overrun.
+ * @param ptApp App owning the timing window.
+ * @return None.
+ * @note Only snapshot/reset masks interrupts; conversion/logging is foreground.
+ * The measurement covers ISR work including waveform, excluding accumulation.
+ */
+static void foc_app_ReportIsrTiming(foc_app_t *ptApp)
+{
+    foc_app_isr_timing_t *ptTiming = &ptApp->tIsrTiming;
+    uint64_t qwTotal = 0U;
+    uint32_t wSamples = 0U;
+    uint32_t wMaximum = 0U;
+    perfc_global_interrupt_status_t tIrqState = 0U;
+
+    if (!__perfc_is_time_out(ptTiming->lReportPeriodTicks,
+        &ptTiming->lReportTimestamp, true)) {
+        return;
+    }
+    tIrqState = perfc_port_disable_global_interrupt();
+    qwTotal = ptTiming->qwTotalTicks;
+    wSamples = ptTiming->wSamples;
+    wMaximum = ptTiming->wMaximumTicks;
+    ptTiming->qwTotalTicks = 0U;
+    ptTiming->wSamples = 0U;
+    ptTiming->wMaximumTicks = 0U;
+    perfc_port_resume_global_interrupt(tIrqState);
+    if (wSamples == 0U) {
+        return;
+    }
+    bool bOverrun = (int64_t)wMaximum > ptTiming->lBudgetTicks;
+    uint32_t wTicks = bOverrun ? wMaximum : (uint32_t)(qwTotal / wSamples);
+    uint32_t wTenthsUs = (uint32_t)perfc_convert_ticks_to_us(
+        (int64_t)wTicks * 10);
+    MLOGF(T, "foc ISR %s=%lu.%lu us%s\r\n", bOverrun ? "max" : "avg",
+        (unsigned long)(wTenthsUs / 10U),
+        (unsigned long)(wTenthsUs % 10U), bOverrun ? " (overrun)" : "");
+}
+#endif
+
 static int foc_app_Run(uintptr_t wObjectAddr)
 {
     foc_app_t *ptThis = (foc_app_t *)wObjectAddr;
@@ -408,6 +480,9 @@ static int foc_app_Run(uintptr_t wObjectAddr)
             &ptThis->lForegroundTimestamp, true))
         motor_PollBreakFault(&ptThis->tMotor);
         foc_debug_CurrentStepRun(ptThis);
+#if !defined(__NO_USE_LOG__)
+        foc_app_ReportIsrTiming(ptThis);
+#endif
         if (!ptThis->bReady) {
             continue;
         }
@@ -526,7 +601,17 @@ void foc_app_HighFrequencyISR(void)
         _foc_app_IdentifyStep(&tFocApp, &tSample, eControl);
     }
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
-    foc_debug_WaveformStep();
+    mwaveform.Step();
+#endif
+#if !defined(__NO_USE_LOG__)
+    /* Unsigned subtraction also handles a 32-bit cycle-counter wrap.
+     * One invocation must complete within 2^32 ticks; no ISR logging. */
+    uint32_t wElapsed = (uint32_t)get_system_ticks() - wNowTick;
+    tFocApp.tIsrTiming.qwTotalTicks += wElapsed;
+    tFocApp.tIsrTiming.wSamples += 1U;
+    if (wElapsed > tFocApp.tIsrTiming.wMaximumTicks) {
+        tFocApp.tIsrTiming.wMaximumTicks = wElapsed;
+    }
 #endif
 }
 

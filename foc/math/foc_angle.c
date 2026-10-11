@@ -56,11 +56,6 @@ foc_angle_t foc_angle_add_scalar(foc_angle_t tAngle, foc_scalar_t qTurns)
     return foc_angle_add(tAngle, foc_angle_from_scalar(qTurns));
 }
 
-foc_angle_t foc_angle_wrap(foc_angle_t tAngle)
-{
-    return tAngle; /* Natural unsigned 32-bit integer overflow */
-}
-
 foc_scalar_t foc_angle_diff(foc_angle_t tTarget,
                             foc_angle_t tActual)
 {
@@ -98,20 +93,6 @@ void foc_angle_sincos(foc_angle_t tAngle,
     #error "Fixed FOC requires LUT or CORDIC trigonometry"
   #endif
 #endif
-}
-
-foc_scalar_t foc_angle_sin(foc_angle_t tAngle)
-{
-    foc_scalar_t qSin, qCos;
-    foc_angle_sincos(tAngle, &qSin, &qCos);
-    return qSin;
-}
-
-foc_scalar_t foc_angle_cos(foc_angle_t tAngle)
-{
-    foc_scalar_t qSin, qCos;
-    foc_angle_sincos(tAngle, &qSin, &qCos);
-    return qCos;
 }
 
 foc_angle_t foc_angle_atan2(foc_scalar_t qY,

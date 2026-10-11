@@ -74,8 +74,8 @@ typedef struct {
  * @param ptSmo Observer state to initialize.
  * @param ptModel Narrow physical model and shared PU bases.
  * @param ptConfig Sample frequency and SMO tuning inputs.
- * @return FOC_RESULT_OK or an argument/range error.
- * @note Ld must equal Lq. Init converts frequency and physical inputs into tExec;
+ * @return OK, DISABLED for Ld != Lq, or an argument/range error.
+ * @note Only Ld == Lq is supported. Init converts physical inputs into tExec;
  *       Step never reads ptConfig or ptModel.
  */
 foc_result_t foc_smo_Init(foc_smo_t *ptSmo,

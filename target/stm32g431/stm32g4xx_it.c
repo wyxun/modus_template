@@ -86,10 +86,8 @@ void ADC1_2_IRQHandler(void)
          */
         foc_app_HighFrequencyISR();
 
-        ADC1->ISR = ADC_ISR_JEOS;
-        ADC2->ISR = ADC_ISR_JEOS;
-        ADC1->ISR = ADC_ISR_OVR;
-        ADC2->ISR = ADC_ISR_OVR;
+        ADC1->ISR = ADC_ISR_JEOS | ADC_ISR_OVR;
+        ADC2->ISR = ADC_ISR_JEOS | ADC_ISR_OVR;
         (void)ADC1->ISR;
         (void)ADC2->ISR;
     }

@@ -365,7 +365,8 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
     }
     if (ptConfig->chPolePairs == 0U ||
         ptConfig->qElectricalSpeedBaseHz <= FOC_ZERO ||
-        ptConfig->eSource > MOTOR_POSITION_SOURCE_HARD_DRAG ||
+        (ptConfig->eSource != MOTOR_POSITION_SOURCE_SENSOR &&
+         ptConfig->eSource != MOTOR_POSITION_SOURCE_HARD_DRAG) ||
         (ptConfig->eSource == MOTOR_POSITION_SOURCE_SENSOR &&
          ptConfig->tSensor.pContext == NULL)) {
         return FOC_RESULT_INVALID_ARGUMENT;
@@ -377,10 +378,7 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
     }
 #endif
     *ptPosition = (motor_position_t){0};
-    ptPosition->pSensorState = ptConfig->tSensor.pContext;
-#if !defined(FOC_POSITION_STATIC_BINDING)
     ptPosition->tSensor = ptConfig->tSensor;
-#endif
     ptPosition->chPolePairs = ptConfig->chPolePairs;
     ptPosition->eSource = ptConfig->eSource;
     qPolePairs = foc_from_float((float)ptConfig->chPolePairs);
@@ -416,6 +414,10 @@ foc_result_t motor_position_Init(motor_position_t *ptPosition,
             ptConfig->qElectricalSpeedBaseHz;
         eResult = foc_observer_Init(&ptPosition->tObserver,
                                     &model, &observer_cfg);
+    }
+    /* An unsupported monitor must not block sensor or forced feedback. */
+    if (eResult == FOC_RESULT_DISABLED && !ptConfig->bObserverTakeover) {
+        return FOC_RESULT_OK;
     }
     if (eResult != FOC_RESULT_OK) {
         return eResult;
@@ -539,7 +541,7 @@ foc_result_t motor_position_CaptureZero(motor_position_t *ptPosition,
         return FOC_RESULT_DISABLED;
     }
     motor_position_InvalidateZero(ptPosition);
-    eResult = FOC_SENSOR_POSITION_CAPTURE_ZERO(
+    eResult = FOC_SENSOR_POSITION_GET(
         ptPosition, wNowTick, &tMechanical);
     if (eResult != FOC_RESULT_OK || !tMechanical.bValid) {
         return eResult == FOC_RESULT_OK ? FOC_RESULT_SAFETY : eResult;

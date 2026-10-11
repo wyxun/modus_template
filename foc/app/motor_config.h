@@ -23,15 +23,16 @@
 #define MOTOR_CONFIG_BASE_VOLTAGE_MILLIVOLT                12000U
 #define MOTOR_CONFIG_BASE_ELECTRICAL_HZ                    400.0f
 
-/* Position source: SENSOR or HARD_DRAG. Hard drag is disabled at zero Hz. */
-#define MOTOR_CONFIG_POSITION_SOURCE    MOTOR_POSITION_SOURCE_SENSOR
+/* Position source: SENSOR or HARD_DRAG. */
+#define MOTOR_CONFIG_POSITION_SOURCE    MOTOR_POSITION_SOURCE_HARD_DRAG
 
-#define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
+/* Fixed-frequency current/voltage test; speed uses the startup ramp below. */
+#define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           20000
 
-/* Sensorless capability is opt-in. Keep automatic handoff disabled until
- * repeated bench data establishes reliable thresholds for this motor. */
-#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     0U
-#define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  0U
+/* 20 kHz: 2 s I/f ramp, at most 10 s open-loop run after alignment.
+ * Automatic SMO handoff remains disabled during hard-drag testing. */
+#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     40000U
+#define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  200000U
 #define MOTOR_CONFIG_STARTUP_IQ_PU                          0.06f
 #define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.0005f
 #define MOTOR_CONFIG_OBSERVER_TAKEOVER                      false
@@ -82,6 +83,20 @@
 #define MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU         1.0f
 
 /* Debug identification routine settings. */
+/* Rs is a compile-time profile: no per-instance configuration copy.
+ * Voltage levels are modulation commands, not measured voltage PU.
+ * Maximum current is measured alpha-beta magnitude, checked every ISR. */
+#define IDENTIFY_RESISTANCE_SAMPLE_COUNT                    (100U)
+#define IDENTIFY_RESISTANCE_SAMPLE_HZ                       (100U)
+#define IDENTIFY_RESISTANCE_SETTLE_TIME_MS                   (100U)
+#define IDENTIFY_RESISTANCE_SETTLE_TIMEOUT_MS                (500U)
+#define IDENTIFY_RESISTANCE_CAPTURE_TIMEOUT_MS              (1500U)
+#define IDENTIFY_ALIGNMENT_TIMEOUT_MS                       (5000U)
+#define IDENTIFY_RESISTANCE_MIN_CURRENT_PU                  FOC_SCALAR(0.025f)
+#define IDENTIFY_RESISTANCE_MAX_CURRENT_PU                  FOC_SCALAR(0.14f)
+#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU               FOC_SCALAR(0.04f)
+#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU               FOC_SCALAR(0.09f)
+
 #define MOTOR_CONFIG_IDENTIFY_LD_FREQUENCY_HZ              1000U
 #define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_DELAY             2U
 #define MOTOR_CONFIG_IDENTIFY_LD_CAPTURE_SAMPLES           8U

@@ -88,14 +88,10 @@ _Static_assert(sizeof(s_atWaveformChannels) /
                    FOC_DEBUG_WAVEFORM_CHANNEL_COUNT,
                "Waveform channels and switches must match");
 
-static void foc_debug_CaptureWaveform(const foc_app_t *ptThis)
+void foc_debug_CaptureWaveform(void)
 {
-    const motor_t *ptMotor = NULL;
-
-    if (ptThis == NULL) {
-        return;
-    }
-    ptMotor = &ptThis->tMotor;
+    const foc_app_t *ptThis = &tFocApp;
+    const motor_t *ptMotor = &ptThis->tMotor;
 #if FOC_DEBUG_WAVEFORM_ENABLE_IQ
     s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_IQ] =
         foc_to_float(ptMotor->tOutput.tCurrent.qQ);
@@ -238,11 +234,6 @@ void foc_debug_WaveformInit(foc_app_t *ptThis,
           (unsigned long)wActualRateHz);
 }
 
-void foc_debug_WaveformStep(void)
-{
-    foc_debug_CaptureWaveform(&tFocApp);
-    mwaveform.Step();
-}
 #endif
 
 /**
@@ -416,8 +407,7 @@ static foc_result_t foc_debug_StartCurrentStep(
         return FOC_RESULT_INVALID_ARGUMENT;
     }
     if (ptApp->eCurrentStepState != FOC_APP_CURRENT_STEP_IDLE ||
-        !ptApp->bEncoderEnabled ||
-        !ptApp->tMotor.tInput.bAngleValid) {
+        !ptApp->bEncoderEnabled) {
         return FOC_RESULT_BUSY;
     }
     eResult = motor_GetStatus(&ptApp->tMotor, &tStatus);
@@ -426,7 +416,7 @@ static foc_result_t foc_debug_StartCurrentStep(
     }
     if (tStatus.eState != MOTOR_STATE_RUNNING ||
         tStatus.eMode != FOC_MODE_CURRENT || !tStatus.bPwmEnabled ||
-        !tStatus.bElectricalZeroValid) {
+        !tStatus.bElectricalZeroValid || !tStatus.bAngleValid) {
         return FOC_RESULT_BUSY;
     }
     eResult = motor_SetCurrentReference(
@@ -466,17 +456,18 @@ static void foc_debug_CmdMotor(const char *args)
     } else if (strncmp(args, "clear", 5U) == 0) {
         eResult = motor_ClearFault(&tFocApp.tMotor);
     } else if (strncmp(args, "align", 5U) == 0) {
+        eResult = motor_RequestAlignment(&tFocApp.tMotor, false);
+    } else if (strncmp(args, "calibrate", 9U) == 0) {
         if (motor_position_UsesHardDrag(&tFocApp.tPosition)) {
             eResult = FOC_RESULT_DISABLED;
         } else {
-            eResult = motor_RequestPositionCalibration(&tFocApp.tMotor);
+            eResult = motor_RequestAlignment(&tFocApp.tMotor, true);
         }
     } else if (strncmp(args, "speed", 5U) == 0) {
         nScanned = sscanf(args + 5, "%f", &fQ);
         if (nScanned != 1 || !isfinite(fQ) || fabsf(fQ) > 1.0f) {
             eResult = FOC_RESULT_INVALID_ARGUMENT;
-        } else if (motor_position_UsesHardDrag(&tFocApp.tPosition) &&
-                   motor_SensorlessStartConfigured(&tFocApp.tMotor)) {
+        } else if (motor_position_UsesHardDrag(&tFocApp.tPosition)) {
             eResult = motor_StartSensorlessSpeed(
                 &tFocApp.tMotor, foc_from_float(fQ));
             bStarted = eResult == FOC_RESULT_OK;
@@ -528,7 +519,8 @@ static void foc_debug_CmdMotor(const char *args)
         return;
     } else {
         MLOGF(I, "usage: motor speed <pu> | current <d> <q> | "
-              "voltage <d> <q> | align | stop | clear\r\n"
+              "voltage <d> <q> | align | calibrate | stop | clear\r\n"
+              "       align: rotor hold; calibrate: encoder zero\r\n"
               "       motor step <Iq pu> <pulse ms> (25..150 ms)\r\n"
               "       current reference updates live in current mode\r\n"
               "       motor status | encoder\r\n");
@@ -543,7 +535,7 @@ static void foc_debug_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, foc_debug_CmdMotor,
-                "FOC Motor: control/align/stop/clear/status/encoder");
+                "FOC Motor: control/align/calibrate/stop/clear/status/encoder");
 
 /**
  * @brief Compare a shell argument with a complete keyword.

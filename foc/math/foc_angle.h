@@ -19,7 +19,7 @@
  *   0xC0000000 = 270°   = 0.75 圈
  *   0xFFFFFFFF → 0x00000000（自动回绕）
  *
- * ===== 定点圈数（foc_scalar_t / q_type） =====
+ * ===== 定点圈数（foc_scalar_t） =====
  * 部分接口（如 foc_angle_diff、foc_angle_add_scalar）使用 Q15 定点格式
  * 表示圈数偏移，范围 [-1, 1)，分辨率为 1/32768 圈 ≈ 0.011°。
  ******************************************************************************/
@@ -51,7 +51,7 @@ foc_angle_t  foc_angle_from_turns(float fTurns);
  * 与 foc_angle_from_turns 不同的是，输入已经是归一化到 [-1, 1) 范围的
  * 定点数，转换无精度损失。
  *
- * @param  qTurns  定点圈数（q_type 格式，FOC_Q_SCALE = 1.0 圈）
+ * @param  qTurns  定点圈数（foc_scalar_t 格式，FOC_Q_SCALE = 1.0 圈）
  * @return         归一化角度
  */
 foc_angle_t  foc_angle_from_scalar(foc_scalar_t qTurns);
@@ -86,17 +86,6 @@ foc_angle_t  foc_angle_add(foc_angle_t tLeft, foc_angle_t tRight);
  */
 foc_angle_t  foc_angle_add_scalar(foc_angle_t tAngle, foc_scalar_t qTurns);
 /**
- * @brief  将角度回绕到 [0, 1) 圈范围
- *
- * 当 BAM32 角度经过多次加法叠加后，显式回绕确保与物理直觉一致。
- * 通常不需要调用——大多数下游使用（三角函数、PWM、角度误差）都
- * 能正确处理任意 BAM32 值。
- *
- * @param  tAngle  输入角度
- * @return         回绕后的角度 [0, 2³²)
- */
-foc_angle_t  foc_angle_wrap(foc_angle_t tAngle);
-/**
  * @brief  计算目标角度到实际角度的最短有向误差
  *
  * 取两个角度的最小有向距离，结果在 [-0.5, +0.5) 圈范围内。
@@ -113,29 +102,9 @@ foc_angle_t  foc_angle_wrap(foc_angle_t tAngle);
  */
 foc_scalar_t foc_angle_diff(foc_angle_t tTarget, foc_angle_t tActual);
 /**
- * @brief  计算 BAM32 角度的正弦值
- *
- * 三角函数的实际实现由 FOC_TRIG_BACKEND 编译开关选择：
- *   - FOC_TRIG_BACKEND_LUT：256 项 / 513 项正弦查找表 + 线性插值
- *   - FOC_TRIG_BACKEND_LIBM：调用标准库 sinf/cosf
- *   - FOC_TRIG_BACKEND_CORDIC：使用硬件 CORDIC 外设
- * 通过 foc_angle_* 接口统一调用，上层代码无需关注后端差异。
- *
- * @param  tAngle  输入角度（BAM32）
- * @return         正弦值，范围 [-1, 1]
- */
-foc_scalar_t foc_angle_sin(foc_angle_t tAngle);
-/**
- * @brief  计算 BAM32 角度的余弦值
- * @param  tAngle  输入角度（BAM32）
- * @return         余弦值，范围 [-1, 1]
- */
-foc_scalar_t foc_angle_cos(foc_angle_t tAngle);
-/**
  * @brief  同时计算 BAM32 角度的正弦和余弦值
  *
- * 同时计算可复用部分中间结果，比分别调用 sin + cos 节省约 30% 时间。
- * Park 和逆 Park 变换应优先使用此函数。
+ * Core 每拍计算一次，Park 和逆 Park 共用所得 sin/cos。
  *
  * @param  tAngle  输入角度（BAM32）
  * @param  pqSin   输出正弦值指针

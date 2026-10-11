@@ -21,15 +21,6 @@ _Static_assert(MOTOR_ADC_OFFSET_SAMPLE_COUNT > 0U &&
                MOTOR_ADC_OFFSET_SAMPLE_COUNT <= UINT16_MAX,
                "ADC offset calibration count must fit the sample counter");
 
-/** @brief Clear calibration samples and bind the explicit deadline.
- * @param ptMotor Motor instance. @param wTimeoutSteps Configured deadline.
- * @return None. */
-static void _motor_ResetAdcCalibration(motor_t *ptMotor,
-                                      uint32_t wTimeoutSteps)
-{
-    ptMotor->tCalib = (motor_adc_calib_t){.wTimeoutSteps = wTimeoutSteps};
-}
-
 /** @brief Reject zero offsets that cannot represent bipolar current.
  * @param ptCalibration Completed ADC calibration. @return Offset validity. */
 static bool _motor_AdcOffsetsValid(const motor_adc_calib_t *ptCalibration)
@@ -40,15 +31,12 @@ static bool _motor_AdcOffsetsValid(const motor_adc_calib_t *ptCalibration)
 }
 
 /** @brief Sample and range-check the bus voltage in millivolts.
- * @param pwMillivolt Output physical bus sample.
+ * @param pwMillivolt Non-null caller-owned physical bus sample.
  * @return Sampling, configuration, or range status. */
 static foc_result_t _motor_SampleDcBusMillivolt(uint32_t *pwMillivolt)
 {
     int64_t llMillivolt = 0;
 
-    if (pwMillivolt == NULL) {
-        return FOC_RESULT_NULL;
-    }
 #if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_NOMINAL
     llMillivolt = (int64_t)FOC_DCBUS_NOMINAL_MILLIVOLT;
 #elif FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
@@ -103,12 +91,18 @@ static bool _motor_NormalizeCurrent(uint32_t wRaw, uint32_t wOffset,
     delta = -delta;
 #endif
     /* Ib is a scale, not an ADC range. Keep both backends' wide Q15 domain. */
-    int64_t scaled = delta * FOC_Q_SCALE / FOC_CURRENT_COUNTS_PER_BASE;
-    if (scaled > INT32_MAX || scaled <= INT32_MIN || wRaw == UINT32_MAX) {
+    int64_t scaled = delta * FOC_Q_SCALE;
+    if (scaled >= ((int64_t)INT32_MAX + 1) * FOC_CURRENT_COUNTS_PER_BASE ||
+        scaled <= (int64_t)INT32_MIN * FOC_CURRENT_COUNTS_PER_BASE ||
+        wRaw == UINT32_MAX) {
         return false;
     }
 #if defined(FOC_NUMERIC_FIXED)
-    *pqCurrent = (foc_scalar_t)scaled;
+    *pqCurrent = (foc_scalar_t)(scaled / FOC_CURRENT_COUNTS_PER_BASE);
+#elif FOC_CURRENT_COUNTS_PER_BASE <= FOC_Q_SCALE
+    /* The checked Q15 range above implies INT32_MIN < delta < INT32_MAX+1.
+     * Narrow only after validation; avoid the software int64-to-float call. */
+    *pqCurrent = (foc_scalar_t)(int32_t)delta / FOC_CURRENT_COUNTS_PER_BASE;
 #else
     *pqCurrent = (foc_scalar_t)delta / FOC_CURRENT_COUNTS_PER_BASE;
 #endif
@@ -199,6 +193,8 @@ static bool _motor_ConfigValid(const motor_cfg_t *ptConfig)
            ptConfig->tLimits.qMaxSpeedReference <= FOC_ONE &&
            ptConfig->tLimits.qMaxPhaseCurrent > FOC_ZERO &&
            ptConfig->tLimits.qMaxPhaseCurrent <= FOC_ONE &&
+           foc_scalar_is_finite(ptConfig->tLimits.qMaxIq) &&
+           ptConfig->tLimits.qMaxIq >= FOC_ZERO &&
            ptConfig->tLimits.qMaxModulation > FOC_ZERO &&
            ptConfig->tLimits.qMaxModulation <= FOC_ONE &&
            isfinite(ptConfig->fAdcCalibrationTimeoutSeconds) &&
@@ -210,7 +206,7 @@ static bool _motor_ConfigValid(const motor_cfg_t *ptConfig)
                FOC_NANOSECONDS_PER_SECOND &&
            ptConfig->wSpeedLoopFrequencyHz != 0U &&
            ptConfig->qAlignCurrent > FOC_ZERO &&
-           ptConfig->qAlignCurrent <= FOC_ONE;
+           ptConfig->qAlignCurrent <= ptConfig->tLimits.qMaxPhaseCurrent;
 }
 
 /** @brief Derive an ISR deadline once, rounding up to a complete tick.
@@ -334,7 +330,6 @@ static void _motor_AdcCalibrationStep(motor_t *ptMotor)
 static void _motor_SpeedLoopStep(motor_t *ptMotor)
 {
     foc_scalar_t qDifference = FOC_ZERO;
-    const foc_scalar_t qCurrentLimit = ptMotor->tSpeed.qIqLimit;
 
     if (ptMotor->tCommand.eMode != FOC_MODE_SPEED) {
         return;
@@ -354,11 +349,10 @@ static void _motor_SpeedLoopStep(motor_t *ptMotor)
         ptMotor->tCommand.qSpeedReferencePu = foc_add_sat(
             ptMotor->tCommand.qSpeedReferencePu, qDifference);
     }
-    ptMotor->tCommand.tCurrentReference.qQ = foc_sat(foc_pid_Step(
+    ptMotor->tCommand.tCurrentReference.qQ = foc_pid_Step(
         &ptMotor->tSpeed.tPi,
         ptMotor->tCommand.qSpeedReferencePu,
-        ptMotor->tInput.qElectricalSpeedPu),
-        FOC_ZERO - qCurrentLimit, qCurrentLimit);
+        ptMotor->tInput.qElectricalSpeedPu);
 }
 
 /** @brief Prepare current and prior-interval voltage for position feedback.
@@ -404,9 +398,7 @@ static motor_isr_phase_t _motor_PrepareRun(
             ptMotor->tLimits.qMaxPhaseCurrent ||
         foc_abs(ptMotor->tCommand.tCurrentReference.qQ) >=
             ptMotor->tSpeed.qIqLimit;
-    if (ptMotor->bIdentificationActive) {
-        ptSample->tHardDragCandidate = (motor_electrical_feedback_t){0};
-    } else if (ptMotor->tStart.bObserverActive) {
+    if (ptMotor->bIdentificationActive || ptMotor->tStart.bObserverActive) {
         ptSample->tHardDragCandidate = (motor_electrical_feedback_t){0};
     } else if (ptMotor->tStart.bSensorless) {
         eResult = motor_startup_IsrStep(
@@ -470,6 +462,10 @@ static motor_isr_phase_t _motor_AlignStep(motor_t *ptMotor)
         ptMotor->eState = MOTOR_STATE_RUNNING;
         return MOTOR_ISR_NO_CONTROL;
     }
+    if (ptMotor->tAlign.eCompletion == MOTOR_ALIGN_STOP) {
+        motor_Stop(ptMotor);
+        return MOTOR_ISR_NO_CONTROL;
+    }
     ptMotor->tAlign.bCapturePending = true;
     return MOTOR_ISR_CAPTURE_ZERO;
 }
@@ -494,6 +490,7 @@ static foc_result_t _motor_ConfigureStartup(motor_t *ptMotor,
 
         if (ptConfig->wStartupMaxRunSteps <=
                 ptConfig->wStartupRampSteps ||
+            !foc_scalar_is_finite(ptConfig->qStartupIqPu) ||
             ptConfig->qStartupIqPu <= FOC_ZERO ||
             ptConfig->qStartupIqPu >
                 ptConfig->tLimits.qMaxPhaseCurrent ||
@@ -502,8 +499,8 @@ static foc_result_t _motor_ConfigureStartup(motor_t *ptMotor,
                  ptConfig->tLimits.qMaxIq) ||
             ptConfig->qStartupIqPu >
                 ptConfig->tSpeedPiParams.qOutputMaximum ||
-            ptConfig->qAlignCurrent >
-                ptConfig->tLimits.qMaxPhaseCurrent ||
+            ptConfig->qStartupIqPu <
+                ptConfig->tSpeedPiParams.qOutputMinimum ||
             !foc_scalar_is_finite(
                 ptConfig->qStartupClosedLoopSpeedStepPu) ||
             ptConfig->qStartupClosedLoopSpeedStepPu >
@@ -544,6 +541,29 @@ static foc_result_t _motor_ConfigureStartup(motor_t *ptMotor,
                 ? 0U - (uint32_t)ullStep : (uint32_t)ullStep;
     }
     return FOC_RESULT_OK;
+}
+
+/** @brief Bind speed PI to the current range actually available to Motor.
+ * @param ptMotor Motor with effective Iq limit.
+ * @param ptParams User's PI configuration.
+ * @return Initialization status; an empty output intersection is invalid. */
+static foc_result_t _motor_ConfigureSpeedPi(motor_t *ptMotor,
+    const foc_pid_params_t *ptParams)
+{
+    foc_pid_params_t tParams = *ptParams;
+    const foc_scalar_t qLimit = ptMotor->tSpeed.qIqLimit;
+
+    if (!foc_scalar_is_finite(tParams.qOutputMinimum) ||
+        !foc_scalar_is_finite(tParams.qOutputMaximum)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    }
+    if (tParams.qOutputMinimum < FOC_ZERO - qLimit) {
+        tParams.qOutputMinimum = FOC_ZERO - qLimit;
+    }
+    if (tParams.qOutputMaximum > qLimit) {
+        tParams.qOutputMaximum = qLimit;
+    }
+    return foc_pid_Init(&ptMotor->tSpeed.tPi, &tParams);
 }
 
 foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
@@ -608,15 +628,16 @@ foc_result_t motor_Init(motor_t *ptMotor, const motor_cfg_t *ptConfig)
     eResult = foc_core_Init(&ptMotor->tCore, &ptConfig->tCurrentPiParams,
                             ptMotor->tLimits.qMaxModulation);
     if (eResult == FOC_RESULT_OK) {
-        eResult = foc_pid_Init(&ptMotor->tSpeed.tPi,
-                               &ptConfig->tSpeedPiParams);
+        eResult = _motor_ConfigureSpeedPi(ptMotor,
+                                         &ptConfig->tSpeedPiParams);
     }
     if (eResult != FOC_RESULT_OK) {
         _motor_EnterFault(ptMotor, MOTOR_FAULT_MATH);
         return eResult;
     }
     foc_core_Reset(&ptMotor->tCore, &ptMotor->tOutput);
-    _motor_ResetAdcCalibration(ptMotor, wAdcCalibrationTimeoutSteps);
+    ptMotor->tCalib = (motor_adc_calib_t){
+        .wTimeoutSteps = wAdcCalibrationTimeoutSteps};
     /* Publish ADC_CAL only after all control state is ready. */
     ptMotor->eState = MOTOR_STATE_ADC_CAL;
     FOC_PORT_START_ADC_TRIGGER();
@@ -747,12 +768,6 @@ foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
     return eResult;
 }
 
-bool motor_SensorlessStartConfigured(const motor_t *ptMotor)
-{
-    return ptMotor != NULL &&
-           motor_startup_IsConfigured(&ptMotor->tStart.tTrajectory);
-}
-
 /** @brief Start one fixed-axis alignment/injection PWM session.
  * @param ptMotor Idle Motor. @return Validated start or hardware failure. */
 foc_result_t motor_StartIdentification(motor_t *ptMotor)
@@ -851,9 +866,12 @@ foc_result_t motor_ClearFault(motor_t *ptMotor)
     ptMotor->bControlPrepared = false;
     ptMotor->tAlign.bCapturePending = false;
     foc_pid_Reset(&ptMotor->tSpeed.tPi);
-    if (bAdcCalibrationFault) {
-        _motor_ResetAdcCalibration(ptMotor, ptMotor->tCalib.wTimeoutSteps);
+    if (bAdcCalibrationFault || !ptMotor->tCalib.bIsCalibrated) {
+        ptMotor->tCalib = (motor_adc_calib_t){
+            .wTimeoutSteps = ptMotor->tCalib.wTimeoutSteps};
         ptMotor->eState = MOTOR_STATE_ADC_CAL;
+        /* Restart ADC sampling after break/stop; PWM output remains off. */
+        FOC_PORT_START_ADC_TRIGGER();
     } else {
         ptMotor->eState = MOTOR_STATE_IDLE;
     }
@@ -895,9 +913,6 @@ static foc_result_t _motor_SetDqReference(motor_t *ptMotor,
     foc_scalar_t qMagSq = FOC_ZERO;
     foc_scalar_t qLimSq = FOC_ZERO;
 
-    if (ptMotor == NULL || ptReference == NULL) {
-        return FOC_RESULT_NULL;
-    }
     /* NaN/Inf 会使幅值比较恒为 false 而被放行，必须先拒 */
     if (!foc_scalar_is_finite(qD) || !foc_scalar_is_finite(qQ)) {
         return FOC_RESULT_INVALID_ARGUMENT;
@@ -1037,18 +1052,25 @@ foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
         perfc_port_resume_global_interrupt(tIrqState);
         return FOC_RESULT_OUT_OF_RANGE;
     }
-    ptMotor->tCommand.qSpeedReferencePu = qSpeedReferencePu;
+    if (ptMotor->tStart.bSensorless) {
+        ptMotor->tStart.qTargetSpeedPu = qSpeedReferencePu;
+    } else {
+        ptMotor->tCommand.qSpeedReferencePu = qSpeedReferencePu;
+    }
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;
 }
 
-foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor)
+foc_result_t motor_RequestAlignment(motor_t *ptMotor, bool bCaptureZero)
 {
     perfc_global_interrupt_status_t tIrqState = 0U;
     foc_result_t eResult = FOC_RESULT_OK;
 
     if (ptMotor == NULL) {
         return FOC_RESULT_NULL;
+    }
+    if (FOC_PORT_PWM_GET_FAULT()) {
+        return FOC_RESULT_SAFETY;
     }
     tIrqState = perfc_port_disable_global_interrupt();
     if (ptMotor->eState != MOTOR_STATE_IDLE ||
@@ -1060,7 +1082,8 @@ foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor)
     ptMotor->tCommand.eMode = FOC_MODE_CURRENT;
     ptMotor->tCommand.tCurrentReference.qD = ptMotor->tAlign.qCurrentPu;
     ptMotor->tAlign.wStepCount = 0U;
-    ptMotor->tAlign.eCompletion = MOTOR_ALIGN_CAPTURE_ZERO;
+    ptMotor->tAlign.eCompletion = bCaptureZero ? MOTOR_ALIGN_CAPTURE_ZERO :
+                                              MOTOR_ALIGN_STOP;
     ptMotor->bElectricalZeroValid = false;
     eResult = _motor_EnablePwm(ptMotor, MOTOR_STATE_ALIGN);
     perfc_port_resume_global_interrupt(tIrqState);
@@ -1208,6 +1231,7 @@ foc_result_t motor_GetStatus(const motor_t *ptMotor,
     ptStatus->bPwmEnabled = ptMotor->bPwmEnabled;
     ptStatus->bElectricalZeroValid = ptMotor->bElectricalZeroValid;
     ptStatus->bIdentificationActive = ptMotor->bIdentificationActive;
+    ptStatus->bAngleValid = ptMotor->tInput.bAngleValid;
     perfc_port_resume_global_interrupt(tIrqState);
     return FOC_RESULT_OK;
 }

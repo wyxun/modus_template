@@ -42,7 +42,7 @@ void foc_pll_Reset(foc_pll_t *ptPll, foc_angle_t tInitialAngle)
         return;
     }
     foc_pid_Reset(&ptPll->tLoopFilter);
-    ptPll->tAngle = foc_angle_wrap(tInitialAngle);
+    ptPll->tAngle = tInitialAngle;
     ptPll->qSpeed = FOC_ZERO;
     ptPll->hwLockCounter = 0U;
     ptPll->bIsLocked = false;

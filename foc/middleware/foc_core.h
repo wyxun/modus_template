@@ -106,16 +106,6 @@ foc_result_t foc_clarke(foc_scalar_t qIu,
                         foc_scalar_t qIw,
                         foc_ab_t *ptAB);
 /**
- * @brief  Park 变换：αβ → dq 旋转坐标系
- * @param  ptAB    αβ 输入
- * @param  tTheta  电角度
- * @param  ptDQ    输出 dq 分量
- * @return         FOC_RESULT_OK 或错误码
- */
-foc_result_t foc_park(const foc_ab_t *ptAB,
-                      foc_angle_t tTheta,
-                      foc_dq_t *ptDQ);
-/**
  * @brief  Park 变换（使用缓存的 sin/cos 值）
  * @param  ptAB   αβ 输入
  * @param  qSin   sin(θ) 预计算值
@@ -127,16 +117,6 @@ foc_result_t foc_park_cached(const foc_ab_t *ptAB,
                              foc_scalar_t qSin,
                              foc_scalar_t qCos,
                              foc_dq_t *ptDQ);
-/**
- * @brief  逆 Park 变换：dq → αβ 坐标系
- * @param  ptDQ    dq 输入
- * @param  tTheta  电角度
- * @param  ptAB    输出 αβ 分量
- * @return         FOC_RESULT_OK 或错误码
- */
-foc_result_t foc_ipark(const foc_dq_t *ptDQ,
-                       foc_angle_t tTheta,
-                       foc_ab_t *ptAB);
 /**
  * @brief  逆 Park 变换（使用缓存的 sin/cos 值）
  * @param  ptDQ   dq 输入

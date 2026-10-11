@@ -116,7 +116,8 @@ foc_result_t foc_PwmClearFault(void);
 
 /* A target that owns a fixed encoder may define these before foc_encoder.h is
  * parsed. The fallback keeps a static build explicitly disabled instead of
- * silently reintroducing a runtime sensor object. */
+ * silently reintroducing a runtime sensor object. READ writes a foc_angle_t
+ * mechanical BAM32 angle; raw count resolution belongs to the provider. */
 #if defined(FOC_ENCODER_STATIC_BINDING)
 #ifndef FOC_ENCODER_PORT_INIT
 #define FOC_ENCODER_PORT_INIT() FOC_RESULT_DISABLED

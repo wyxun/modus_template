@@ -106,6 +106,7 @@ typedef enum {
     MOTOR_ALIGN_CAPTURE_ZERO = 0,
     MOTOR_ALIGN_START_RUN,
     MOTOR_ALIGN_START_IDENTIFICATION,
+    MOTOR_ALIGN_STOP,
 } motor_align_completion_t;
 
 typedef struct {
@@ -151,6 +152,7 @@ typedef struct {
     bool bPwmEnabled;
     bool bElectricalZeroValid;
     bool bIdentificationActive;
+    bool bAngleValid; /**< Last control input's angle validity. */
 } motor_status_t;
 
 /**
@@ -181,7 +183,6 @@ foc_result_t motor_SampleDcBusPuIsr(const motor_t *ptMotor,
 foc_result_t motor_Start(motor_t *ptMotor, foc_control_mode_e eMode);
 foc_result_t motor_StartSensorlessSpeed(motor_t *ptMotor,
                                         foc_scalar_t qTargetSpeedPu);
-bool motor_SensorlessStartConfigured(const motor_t *ptMotor);
 
 /** @brief Align at a fixed stator angle, then hold zero voltage for R/L.
  * @param ptMotor Idle, calibrated Motor.
@@ -209,6 +210,7 @@ void motor_Stop(motor_t *ptMotor);
  * @brief Clear a latched fault while PWM is already stopped.
  * @param ptMotor Motor object.
  * @return FOC_RESULT_OK or a state error.
+ * @note Incomplete or failed ADC calibration restarts safe sampling.
  */
 foc_result_t motor_ClearFault(motor_t *ptMotor);
 
@@ -270,16 +272,16 @@ foc_result_t motor_SetCurrentReference(motor_t *ptMotor,
  * @param ptMotor Motor object.
  * @param qSpeedReferencePu Electrical speed reference in PU.
  * @return FOC_RESULT_OK or an argument/state error.
+ * @note After sensorless takeover, updates the target of the existing ramp.
  */
 foc_result_t motor_SetSpeedReference(motor_t *ptMotor,
                                      foc_scalar_t qSpeedReferencePu);
 
-/**
- * @brief Request a non-blocking electrical-zero alignment sequence.
- * @param ptMotor Motor object.
- * @return FOC_RESULT_OK or a safety/state error.
- */
-foc_result_t motor_RequestPositionCalibration(motor_t *ptMotor);
+/** @brief Hold a fixed stator vector, then stop or request position capture.
+ * @param ptMotor Idle, current-calibrated Motor.
+ * @param bCaptureZero True for sensor zero capture; false for rotor hold only.
+ * @return Checked alignment start status; completion returns to IDLE. */
+foc_result_t motor_RequestAlignment(motor_t *ptMotor, bool bCaptureZero);
 
 /**
  * @brief Sample one ISR period before App obtains electrical feedback.

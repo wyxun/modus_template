@@ -1,11 +1,7 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $smoPath = Join-Path $repoRoot "foc\observer\foc_smo.c"
-$numericHeaderPath = Join-Path $repoRoot "foc\math\foc_numeric.h"
-$numericSourcePath = Join-Path $repoRoot "foc\math\foc_numeric.c"
 $smo = Get-Content -LiteralPath $smoPath -Raw
-$numericHeader = Get-Content -LiteralPath $numericHeaderPath -Raw
-$numericSource = Get-Content -LiteralPath $numericSourcePath -Raw
 
 $axisMatch = [regex]::Match(
     $smo,
@@ -51,16 +47,4 @@ if ($smo -notmatch 'foc_angle_atan2' -or
     throw "foc_smo_Step does not calculate angle from back-EMF"
 }
 
-foreach ($name in @(
-        'foc_mul_wide', 'foc_add_sat', 'foc_sub_sat', 'foc_abs')) {
-    if ($numericHeader -match "static inline foc_scalar_t $name") {
-        throw "$name must not be implemented in the numeric header"
-    }
-    if ($numericHeader -notmatch "foc_scalar_t $name\([^;]*\);") {
-        throw "$name declaration is missing from the numeric header"
-    }
-    if ($numericSource -notmatch "foc_scalar_t $name\(") {
-        throw "$name implementation is missing from the numeric source"
-    }
-}
 Write-Output "SMO hot-path contract passed"

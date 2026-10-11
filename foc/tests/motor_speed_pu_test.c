@@ -265,6 +265,19 @@ int main(void)
     assert(!tSample.tHardDragCandidate.bValid);
     motor_IsrControlStep(&tMotor, &tFeedback);
     test_AssertNear(s_tLastCommand.tCurrentReference.qQ, 0.02f);
+    /* A changed target follows the existing closed-loop ramp. */
+    assert(motor_SetSpeedReference(&tMotor, FOC_SCALAR(0.3f)) ==
+           FOC_RESULT_OK);
+    test_AssertNear(tMotor.tCommand.qSpeedReferencePu, 0.2f);
+    for (uint32_t i = 0U; i < 120U; i++) {
+        assert(motor_IsrPrepare(&tMotor, &tSample) ==
+               MOTOR_ISR_CONTROL_READY);
+        assert(motor_IsrControlStep(&tMotor, &tFeedback) == FOC_RESULT_OK);
+        if (i == 0U) {
+            test_AssertNear(tMotor.tCommand.qSpeedReferencePu, 0.201f);
+        }
+    }
+    test_AssertNear(tMotor.tCommand.qSpeedReferencePu, 0.3f);
     motor_ApplyPositionEventIsr(&tMotor,
         MOTOR_POSITION_EVENT_OBSERVER_LOST,
         FOC_ZERO);
@@ -287,7 +300,7 @@ int main(void)
     assert(!tMotor.bPwmEnabled);
     /* ALIGN completion is explicit even after a failed sensorless run. */
     assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
-    assert(motor_RequestPositionCalibration(&tMotor) == FOC_RESULT_OK);
+    assert(motor_RequestAlignment(&tMotor, true) == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_CAPTURE_ZERO);
     assert(s_tLastInput.bAngleValid);
     assert(s_tLastInput.tElectricalAngle.wBam32 == 0U);
@@ -303,5 +316,39 @@ int main(void)
     assert(tMotor.tCalib.wElapsedSteps == 0U);
     assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
     assert(tMotor.eState == MOTOR_STATE_IDLE);
+    /* PI must see the actual actuator range, including tracking at takeover. */
+    tConfig.wStartupRampSteps = 0U;
+    tConfig.tLimits.qMaxIq = FOC_SCALAR(0.2f);
+    assert(foc_gain_from_float(0.0f,
+        &tConfig.tSpeedPiParams.tKp) == FOC_RESULT_OK);
+    assert(foc_gain_from_float(0.1f,
+        &tConfig.tSpeedPiParams.tKiTs) == FOC_RESULT_OK);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_OK);
+    assert(motor_IsrPrepare(&tMotor, &tSample) == MOTOR_ISR_NO_CONTROL);
+    assert(motor_Start(&tMotor, FOC_MODE_SPEED) == FOC_RESULT_OK);
+    assert(motor_SetSpeedReference(&tMotor, FOC_SCALAR(0.8f)) ==
+           FOC_RESULT_OK);
+    tFeedback.qElectricalSpeedPu = FOC_ZERO;
+    for (uint32_t i = 0U; i < 20U; i++) {
+        assert(motor_IsrPrepare(&tMotor, &tSample) ==
+               MOTOR_ISR_CONTROL_READY);
+        assert(motor_IsrControlStep(&tMotor, &tFeedback) == FOC_RESULT_OK);
+    }
+    assert(tMotor.tSpeed.tPi.qIntegrator <= FOC_SCALAR(0.2f));
+    assert(tMotor.tSpeed.tPi.tParams.qOutputMaximum == FOC_SCALAR(0.2f));
+    assert(tMotor.tSpeed.tPi.tParams.qOutputMinimum == FOC_SCALAR(-0.2f));
+    /* Preserve a narrower user interval; reject an empty intersection. */
+    tConfig.tSpeedPiParams.qOutputMinimum = FOC_SCALAR(-0.1f);
+    tConfig.tSpeedPiParams.qOutputMaximum = FOC_SCALAR(0.1f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_OK);
+    assert(tMotor.tSpeed.tPi.tParams.qOutputMaximum == FOC_SCALAR(0.1f));
+    tConfig.tSpeedPiParams.qOutputMinimum = FOC_SCALAR(0.3f);
+    tConfig.tSpeedPiParams.qOutputMaximum = FOC_SCALAR(0.4f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_INVALID_ARGUMENT);
+    /* Startup tracking must be representable in the user's PI interval. */
+    tConfig.wStartupRampSteps = 20U;
+    tConfig.tSpeedPiParams.qOutputMinimum = FOC_SCALAR(0.1f);
+    tConfig.tSpeedPiParams.qOutputMaximum = FOC_SCALAR(0.2f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_INVALID_ARGUMENT);
     return 0;
 }

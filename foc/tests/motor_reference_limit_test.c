@@ -129,6 +129,18 @@ int main(void)
 #endif
     motor_Stop(&tMotor);
 
+    /* ALIGN is constrained even when sensorless startup is disabled. */
+    tConfig.tLimits.qMaxPhaseCurrent = FOC_SCALAR(0.14f);
+    tConfig.qAlignCurrent = FOC_SCALAR(0.2f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_INVALID_ARGUMENT);
+    tConfig.qAlignCurrent = tConfig.tLimits.qMaxPhaseCurrent;
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_OK);
+    tConfig.tLimits.qMaxIq = FOC_SCALAR(-0.1f);
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_INVALID_ARGUMENT);
+#if defined(FOC_NUMERIC_FLOAT)
+    tConfig.tLimits.qMaxIq = NAN;
+    assert(motor_Init(&tMotor, &tConfig) == FOC_RESULT_INVALID_ARGUMENT);
+#endif
     printf("Motor reference limit tests passed!\n");
     return 0;
 }

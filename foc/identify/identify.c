@@ -242,16 +242,6 @@ static fsm_rt_t _identify_PrepareStationary(identify_t *ptThis,
     return fsm_rt_on_going;
 }
 
-/**
- * @brief Snapshot the active algorithm for typed ISR sample assembly.
- * @param ptThis Identification object.
- * @return Active operation or NONE.
- */
-identify_operation_t identify_ActiveOperationIsr(const identify_t *ptThis)
-{
-    return ptThis == NULL ? IDENTIFY_OPERATION_NONE : ptThis->eOperation;
-}
-
 /** @brief Latch an ISR failure for one foreground diagnostic line.
  * @param ptThis Identification object. @param eCause Failure category.
  * @param eResult Failure result. @return None. */

@@ -112,7 +112,6 @@ typedef struct {
     /* Keep layout identical even if the target binding macro becomes
      * visible after this header in another translation unit. */
     motor_position_provider_t tSensor;
-    const void *pSensorState;
     foc_scalar_t qMechanicalToElectricalSpeedPuGain;
     foc_angle_t tElectricalZero;
     uint32_t wLastRunGeneration;
@@ -156,10 +155,6 @@ motor_position_event_t motor_position_TakeEvent(
 #ifndef FOC_SENSOR_POSITION_GET
 #define FOC_SENSOR_POSITION_GET(P, T, O)                                        \
     ((P)->tSensor.fnGetPosition((P)->tSensor.pContext, (T), (O)))
-#endif
-#ifndef FOC_SENSOR_POSITION_CAPTURE_ZERO
-#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O)                               \
-    FOC_SENSOR_POSITION_GET((P), (T), (O))
 #endif
 
 #ifndef FOC_POSITION_GET

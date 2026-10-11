@@ -68,7 +68,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
         $commonArgs + $includeArgs + $numericDefine + $waveformDefine +
         $sourceFiles + @("-Wl,--gc-sections", "-lm", "-o", $testExe)
     )
-    & gcc @linkArgs
+    & $gccCmd @linkArgs
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -91,7 +91,7 @@ foreach ($backend in @("FLOAT", "FIXED")) {
                 "-Wl,--gc-sections", "-lm", "-o", $alternateTestExe
             )
         )
-        & gcc @alternateArgs
+        & $gccCmd @alternateArgs
         if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
         }
@@ -111,8 +111,17 @@ $overLimitArgs = @(
         (Join-Path $repoRoot "foc/tests/foc_app_encoder_command_test.c")
     )
 )
-$overLimitOutput = & gcc @overLimitArgs 2>&1
-if ($LASTEXITCODE -eq 0 -or
+# Windows PowerShell emits NativeCommandError for expected GCC stderr.
+# Capture it without terminating before checking the actual exit status.
+$previousErrorPreference = $ErrorActionPreference
+try {
+    $ErrorActionPreference = 'Continue'
+    $overLimitOutput = & $gccCmd @overLimitArgs 2>&1
+    $overLimitExit = $LASTEXITCODE
+} finally {
+    $ErrorActionPreference = $previousErrorPreference
+}
+if ($overLimitExit -eq 0 -or
     ($overLimitOutput -join "`n") -notmatch "at most six channels") {
     throw "Waveform configuration must fail compilation above six channels"
 }

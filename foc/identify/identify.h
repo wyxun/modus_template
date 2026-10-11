@@ -7,10 +7,12 @@
 #define FOC_IDENTIFY_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include "foc_config.h"
 #include "foc_types.h"
+#include "app/motor_config.h"
 
 /* Foreground orchestration borrows Motor; algorithm data imports no hardware. */
 typedef struct motor_t motor_t;
@@ -28,22 +30,6 @@ typedef struct motor_t motor_t;
 #endif
 
 #define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_COUNT      (2U)
-#define IDENTIFY_RESISTANCE_SAMPLE_COUNT             (100U)
-#define IDENTIFY_RESISTANCE_SAMPLE_HZ                (100U)
-#define IDENTIFY_RESISTANCE_SETTLE_TIME_MS           (100U)
-#define IDENTIFY_RESISTANCE_SETTLE_TIMEOUT_MS        (500U)
-#define IDENTIFY_RESISTANCE_CAPTURE_TIMEOUT_MS       (1500U)
-#define IDENTIFY_ALIGNMENT_TIMEOUT_MS                (5000U)
-#define IDENTIFY_RESISTANCE_MIN_CURRENT_PU                                      \
-    FOC_SCALAR(0.025f)
-/* Measured alpha-beta magnitude limit, checked before ISR decimation. */
-#define IDENTIFY_RESISTANCE_MAX_CURRENT_PU                                      \
-    FOC_SCALAR(0.14f)
-
-#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_0_PU                                  \
-    FOC_SCALAR(0.04f)
-#define IDENTIFY_RESISTANCE_VOLTAGE_LEVEL_1_PU                                  \
-    FOC_SCALAR(0.09f)
 
 #if (IDENTIFY_RESISTANCE_SAMPLE_HZ == 0U) ||                                    \
     (FOC_HF_ISR_HZ == 0U) ||                                                    \
@@ -339,7 +325,11 @@ void identify_InductanceIsrStep(identify_t *ptThis,
 /** @brief Snapshot the active capture operation for typed ISR dispatch.
  * @param ptThis Identification object. @return NONE when idle or null.
  * @note ISR-only; foreground uses identify_GetStatus(). */
-identify_operation_t identify_ActiveOperationIsr(const identify_t *ptThis);
+static inline identify_operation_t identify_ActiveOperationIsr(
+    const identify_t *ptThis)
+{
+    return ptThis == NULL ? IDENTIFY_OPERATION_NONE : ptThis->eOperation;
+}
 
 /** @brief Latch an ISR failure; output is deferred to identify_Run().
  * @param ptThis Identification object.

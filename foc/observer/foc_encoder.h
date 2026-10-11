@@ -19,7 +19,8 @@
 #if !defined(FOC_ENCODER_STATIC_BINDING)
 typedef struct {
     foc_result_t (*fnInit)(void *pContext);
-    foc_result_t (*fnRead)(void *pContext, uint16_t *phwRawAngle);
+    /* Provider owns raw counts/resolution; publish one mechanical BAM32 turn. */
+    foc_result_t (*fnRead)(void *pContext, foc_angle_t *ptMechanicalAngle);
 } foc_encoder_sensor_ops_t;
 
 typedef struct {
@@ -58,7 +59,7 @@ typedef struct {
     uint32_t wTickFrequency;
     uint32_t wInvalidTimeoutTicks;
     uint32_t wLastSampleTick;
-    uint16_t hwLastRawAngle;
+    foc_angle_t tLastMechanicalAngle;
     /* Publication metadata is atomic on the target and orders slot access. */
     volatile uint8_t chPublishedIndex;
     volatile bool bHasSample;
@@ -75,7 +76,7 @@ typedef struct {
 } foc_encoder_status_t;
 
 /**
- * @brief Initialize the encoder and its raw sensor provider.
+ * @brief Initialize the encoder and its mechanical angle provider.
  * @param ptEncoder Encoder object.
  * @param ptConfig Mechanical filter configuration and, for a dynamic build,
  *                 the sensor binding.
@@ -85,7 +86,7 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
                               const foc_encoder_cfg_t *ptConfig);
 
 /**
- * @brief Read one raw sensor sample and publish mechanical feedback.
+ * @brief Read one mechanical BAM32 sample and publish filtered feedback.
  * @param ptEncoder Encoder object.
  * @return FOC_RESULT_OK or the sensor read error.
  */
@@ -122,17 +123,6 @@ foc_result_t foc_encoder_GetStatus(const foc_encoder_t *ptEncoder,
  * @return FOC_RESULT_OK or a safety/argument error.
  */
 foc_result_t foc_encoder_GetPosition(const void *pEncoder,
-                                     uint32_t wNowTick,
-                                     foc_position_t *ptPosition);
-
-/**
- * @brief Capture the current mechanical position for Motor alignment.
- * @param ptEncoder Encoder object.
- * @param wNowTick Low 32 bits of the current system tick.
- * @param ptPosition Output position snapshot.
- * @return FOC_RESULT_OK or a safety/argument error.
- */
-foc_result_t foc_encoder_CaptureZero(const void *pEncoder,
                                      uint32_t wNowTick,
                                      foc_position_t *ptPosition);
 

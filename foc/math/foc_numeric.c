@@ -27,83 +27,6 @@ foc_scalar_t foc_from_float(float fValue)
 #endif
 }
 
-float foc_to_float(foc_scalar_t qValue)
-{
-#if defined(FOC_NUMERIC_FLOAT)
-    return qValue;
-#else
-    return (float)qValue / (float)FOC_Q_SCALE;
-#endif
-}
-
-foc_scalar_t foc_add_sat(foc_scalar_t qA, foc_scalar_t qB)
-{
-#if defined(FOC_NUMERIC_FLOAT)
-    return qA + qB;
-#else
-    if (qB > 0 && qA > INT32_MAX - qB) {
-        return INT32_MAX;
-    }
-    if (qB < 0 && qA < INT32_MIN - qB) {
-        return INT32_MIN;
-    }
-    return qA + qB;
-#endif
-}
-
-foc_scalar_t foc_sub_sat(foc_scalar_t qA, foc_scalar_t qB)
-{
-#if defined(FOC_NUMERIC_FLOAT)
-    return qA - qB;
-#else
-    if (qB < 0 && qA > INT32_MAX + qB) {
-        return INT32_MAX;
-    }
-    if (qB > 0 && qA < INT32_MIN + qB) {
-        return INT32_MIN;
-    }
-    return qA - qB;
-#endif
-}
-
-foc_scalar_t foc_mul_pu(foc_scalar_t qA, foc_scalar_t qB)
-{
-#if defined(FOC_NUMERIC_FLOAT)
-    return qA * qB;
-#else
-    int32_t nProduct;
-    uint32_t wMagnitude;
-    bool bNegative;
-
-    qA = foc_sat(qA, FOC_NEG_ONE, FOC_ONE);
-    qB = foc_sat(qB, FOC_NEG_ONE, FOC_ONE);
-    nProduct = qA * qB;
-    bNegative = nProduct < 0;
-    wMagnitude = bNegative ? (uint32_t)(-nProduct) : (uint32_t)nProduct;
-    wMagnitude = (wMagnitude + (1u << (FOC_Q_FRACTION_BITS - 1))) >>
-                 FOC_Q_FRACTION_BITS;
-
-    return bNegative ? -(foc_scalar_t)wMagnitude : (foc_scalar_t)wMagnitude;
-#endif
-}
-
-foc_scalar_t foc_mul_wide(foc_scalar_t qA, foc_scalar_t qB)
-{
-#if defined(FOC_NUMERIC_FLOAT)
-    return qA * qB;
-#else
-    int64_t llProduct = (int64_t)qA * (int64_t)qB;
-    llProduct /= FOC_Q_SCALE;
-    if (llProduct > INT32_MAX) {
-        return INT32_MAX;
-    }
-    if (llProduct < INT32_MIN) {
-        return INT32_MIN;
-    }
-    return (foc_scalar_t)llProduct;
-#endif
-}
-
 foc_result_t foc_div_checked(foc_scalar_t qNumerator,
                              foc_scalar_t qDenominator,
                              foc_scalar_t *pqResult)
@@ -133,29 +56,6 @@ foc_result_t foc_div_checked(foc_scalar_t qNumerator,
     *pqResult = (foc_scalar_t)llResult;
 #endif
     return FOC_RESULT_OK;
-}
-
-foc_scalar_t foc_sat(foc_scalar_t qValue,
-                     foc_scalar_t qMinimum,
-                     foc_scalar_t qMaximum)
-{
-    if (qValue < qMinimum) {
-        return qMinimum;
-    }
-    if (qValue > qMaximum) {
-        return qMaximum;
-    }
-    return qValue;
-}
-
-foc_scalar_t foc_abs(foc_scalar_t qValue)
-{
-#if defined(FOC_NUMERIC_FIXED)
-    if (qValue == INT32_MIN) {
-        return INT32_MAX;
-    }
-#endif
-    return qValue < FOC_ZERO ? -qValue : qValue;
 }
 
 foc_result_t foc_gain_Init(foc_gain_t *ptGain,

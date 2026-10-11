@@ -26,7 +26,6 @@ foc_result_t foc_cogging_Get(const foc_cogging_t *ptCogging,
                              foc_angle_t tMechanicalAngle,
                              foc_scalar_t *pqCompensation)
 {
-    foc_angle_t tWrapped;
     uint16_t hwIndex;
     uint16_t hwNext;
     foc_scalar_t qFraction;
@@ -39,9 +38,9 @@ foc_result_t foc_cogging_Get(const foc_cogging_t *ptCogging,
     if (ptCogging->hwCount < 2U) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
-    tWrapped = foc_angle_wrap(tMechanicalAngle);
     {
-        uint64_t wPosition = (uint64_t)tWrapped.wBam32 * (uint64_t)ptCogging->hwCount;
+        uint64_t wPosition = (uint64_t)tMechanicalAngle.wBam32 *
+                             (uint64_t)ptCogging->hwCount;
         hwIndex = (uint16_t)(wPosition >> 32);
         uint32_t wFraction32 = (uint32_t)wPosition;
 #if defined(FOC_NUMERIC_FLOAT)

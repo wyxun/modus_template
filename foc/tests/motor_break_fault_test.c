@@ -13,9 +13,11 @@ static bool s_bBreakFault = false;
 static bool s_bClearOk = true;
 static bool s_bStopOk = true;
 static motor_t *s_ptTriggerFaultMotor = NULL;
+static uint32_t s_wTriggerStarts = 0U;
 
 void foc_port_StartAdcTrigger(void)
 {
+    s_wTriggerStarts++;
     if (s_ptTriggerFaultMotor != NULL) {
         /* Inject a synchronous ISR fault at the trigger-enable boundary. */
         motor_IdentificationAbortIsr(s_ptTriggerFaultMotor, MOTOR_FAULT_PWM);
@@ -125,7 +127,18 @@ int main(void)
 
     eResult = motor_Init(&tMotor, &tConfig);
     assert(eResult == FOC_RESULT_OK);
+    /* A break before calibration completes must restart safe sampling. */
+    const uint32_t wStarts = s_wTriggerStarts;
+    s_bBreakFault = true;
+    motor_PollBreakFault(&tMotor);
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_ADC_CAL);
+    assert(s_wTriggerStarts == wStarts + 1U);
+    assert(!tMotor.bPwmEnabled);
+    assert(!tMotor.tCalib.bIsCalibrated);
+    assert(motor_Start(&tMotor, FOC_MODE_CURRENT) == FOC_RESULT_BUSY);
     assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.tCalib.bIsCalibrated);
 
     /* 1. Latched break blocks motor_Start. */
     s_bBreakFault = true;
@@ -195,6 +208,23 @@ int main(void)
     assert(tMotor.eState == MOTOR_STATE_FAULT);
     assert((tMotor.wFaults & MOTOR_FAULT_PWM) != 0U);
     s_ptTriggerFaultMotor = NULL;
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_ADC_CAL);
+    assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.eState == MOTOR_STATE_IDLE);
+    /* An explicit ADC fault discards stale offsets and restarts the trigger. */
+    const uint32_t wCalStarts = s_wTriggerStarts;
+    const uint32_t wTimeout = tMotor.tCalib.wTimeoutSteps;
+    motor_IdentificationAbortIsr(&tMotor, MOTOR_FAULT_ADC_CAL);
+    assert(motor_ClearFault(&tMotor) == FOC_RESULT_OK);
+    assert(tMotor.eState == MOTOR_STATE_ADC_CAL);
+    assert(!tMotor.bPwmEnabled && !tMotor.tCalib.bIsCalibrated);
+    assert(tMotor.tCalib.wTimeoutSteps == wTimeout);
+    assert(tMotor.tCalib.wElapsedSteps == 0U);
+    assert(tMotor.tCalib.hwSampleCount == 0U);
+    assert(s_wTriggerStarts == wCalStarts + 1U);
+    assert(motor_IsrPrepare(&tMotor, NULL) == MOTOR_ISR_NO_CONTROL);
+    assert(tMotor.eState == MOTOR_STATE_IDLE);
     printf("Motor break fault tests passed!\n");
     return 0;
 }

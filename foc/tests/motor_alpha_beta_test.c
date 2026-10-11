@@ -308,7 +308,7 @@ int main(void)
     motor_position_ResetObserver(&tPosition);
     assert(tPosition.tObserver.tSmo.tAxis[0].z_prev ==
            FOC_ZERO);
-    eResult = motor_RequestPositionCalibration(&tMotor);
+    eResult = motor_RequestAlignment(&tMotor, true);
     assert(eResult == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CAPTURE_ZERO);

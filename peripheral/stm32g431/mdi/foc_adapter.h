@@ -152,21 +152,21 @@ static inline foc_result_t mdi_g431_foc_encoder_init(void)
     return FOC_RESULT_OK;
 }
 
-/** @brief Read AS5600 raw angle through the typed MDI I2C transaction. */
-static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
+/** @brief Convert AS5600 12-bit counts to mechanical BAM32 at the port. */
+static inline foc_result_t mdi_g431_foc_encoder_read(foc_angle_t *ptAngle)
 {
     uint8_t achData[2] = {0U, 0U};
     mdi_status_t eStatus;
 
-    if (phwRawAngle == NULL) {
+    if (ptAngle == NULL) {
         return FOC_RESULT_NULL;
     }
     eStatus = MDI_I2C_Reg8_Read(encoder_angle, 0x0CU, achData, 2U);
     if (eStatus != MDI_OK) {
         return mdi_g431_foc_status(eStatus);
     }
-    *phwRawAngle = (uint16_t)((((uint16_t)achData[0] << 8U) |
-                               achData[1]) & 0x0FFFU);
+    ptAngle->wBam32 = ((((uint32_t)achData[0] << 8U) |
+                        (uint32_t)achData[1]) & 0x0FFFU) << 20U;
     return FOC_RESULT_OK;
 }
 
@@ -205,9 +205,6 @@ static inline foc_result_t mdi_g431_foc_encoder_read(uint16_t *phwRawAngle)
 #define FOC_POSITION_STATIC_BINDING 1
 #undef FOC_SENSOR_POSITION_GET
 #define FOC_SENSOR_POSITION_GET(P, T, O)                                        \
-    foc_encoder_GetPosition((P)->pSensorState, (T), (O))
-#undef FOC_SENSOR_POSITION_CAPTURE_ZERO
-#define FOC_SENSOR_POSITION_CAPTURE_ZERO(P, T, O)                               \
-    foc_encoder_CaptureZero((P)->pSensorState, (T), (O))
+    foc_encoder_GetPosition((P)->tSensor.pContext, (T), (O))
 
 #endif /* STM32G431_MDI_FOC_ADAPTER_H */

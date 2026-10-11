@@ -6,7 +6,7 @@
 #ifndef FOC_LADRC_H
 #define FOC_LADRC_H
 
-#include "foc_controller.h"
+#include "foc_numeric.h"
 
 typedef struct {
     foc_gain_t tTrackingPosition;       /**< 跟踪器位置增益 */
@@ -68,11 +68,4 @@ void foc_ladrc_Track(foc_ladrc_t *ptLadrc,
 foc_scalar_t foc_ladrc_Step(foc_ladrc_t *ptLadrc,
                             foc_scalar_t qReference,
                             foc_scalar_t qFeedback);
-/**
- * @brief  获取 LADRC 的标准控制器接口
- * @param  ptLadrc  LADRC 实例指针
- * @return          控制器接口
- */
-foc_controller_if_t foc_ladrc_ControllerInterface(foc_ladrc_t *ptLadrc);
-
 #endif /* FOC_LADRC_H */

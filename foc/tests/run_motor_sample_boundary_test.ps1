@@ -1,20 +1,28 @@
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
-$gcc = 'D:/0_software/msys64/mingw64/bin/gcc.exe'
+$gccCommand = Get-Command gcc -ErrorAction SilentlyContinue
+$gcc = if ($gccCommand) { $gccCommand.Source } else { $null }
+if (-not $gcc) {
+    foreach ($candidate in @('D:/0_software/msys64/mingw64/bin/gcc.exe',
+                             'D:/software/msys64/mingw64/bin/gcc.exe')) {
+        if (Test-Path -LiteralPath $candidate) { $gcc = $candidate; break }
+    }
+}
+if (-not $gcc) { throw 'GCC is required for the Motor sample boundary test' }
 $env:PATH = (Split-Path $gcc) + ';' + $env:PATH
 $includes = @('modus/src', 'modus/src/mdi', 'modus/src/arch',
     'modus/src/arch/cortex-m', 'modus/src/utilities', 'modus/lib/plooc',
     'modus/lib/perf_counter', 'foc', 'foc/math', 'foc/hal', 'foc/motor',
     'foc/middleware', 'foc/control', 'foc/modulation') |
     ForEach-Object { '-I' + (Join-Path $repoRoot $_) }
-$sources = @('foc/tests/motor_sample_boundary_test.c', 'foc/motor/motor.c',
+$sources = @('foc/tests/motor_sample_boundary_test.c',
     'foc/motor/motor_startup.c', 'foc/middleware/foc_core.c',
     'foc/modulation/foc_modulation.c', 'foc/control/foc_pid.c',
     'foc/math/foc_numeric.c', 'foc/math/foc_angle.c',
     'foc/math/foc_trig_lut.c') |
     ForEach-Object { Join-Path $repoRoot $_ }
 foreach ($backend in @('FLOAT', 'FIXED')) {
-  foreach ($counts in @(119, 1000)) {
+  foreach ($counts in @(119, 1000, 32768, 32769)) {
    foreach ($polarity in @(0, 1)) {
     $exe = Join-Path $env:TEMP "motor_sample_${backend}_${counts}_${polarity}.exe"
     & $gcc -std=gnu11 -O0 -Wall -Wextra -Werror @includes @sources `

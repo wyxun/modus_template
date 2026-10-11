@@ -7,6 +7,7 @@
 
 #include <assert.h>
 #include <math.h>
+#include <stdint.h>
 #include <stddef.h>
 
 #include "foc_core.h"
@@ -26,12 +27,74 @@ static void test_AssertNear(foc_scalar_t qActual, float fExpected)
 }
 
 /**
+ * @brief Reject invalid gains and non-finite PID bounds.
+ * @param None.
+ * @return None.
+ */
+static void test_PidValidation(void)
+{
+    foc_pid_t tPid = {0};
+    foc_pid_params_t tPi = {
+        .qOutputMinimum = FOC_NEG_ONE,
+        .qOutputMaximum = FOC_ONE,
+        .qIntegratorMinimum = FOC_NEG_ONE,
+        .qIntegratorMaximum = FOC_ONE,
+    };
+    foc_gain_t *aptGain[] = {&tPi.tKp, &tPi.tKiTs, &tPi.tKdOverTs};
+    for (unsigned int i = 0U; i < 3U; ++i) {
+        aptGain[i]->qFraction = FOC_SCALAR(1.1f);
+        assert(foc_pid_Init(&tPid, &tPi) == FOC_RESULT_INVALID_ARGUMENT);
+        aptGain[i]->qFraction = FOC_ZERO;
+    }
+#if defined(FOC_NUMERIC_FLOAT)
+    foc_scalar_t *apqBound[] = {&tPi.qOutputMinimum, &tPi.qOutputMaximum,
+        &tPi.qIntegratorMinimum, &tPi.qIntegratorMaximum};
+    for (unsigned int i = 0U; i < 4U; ++i) {
+        foc_scalar_t qSaved = *apqBound[i];
+        *apqBound[i] = NAN;
+        assert(foc_pid_Init(&tPid, &tPi) == FOC_RESULT_INVALID_ARGUMENT);
+        *apqBound[i] = INFINITY;
+        assert(foc_pid_Init(&tPid, &tPi) == FOC_RESULT_INVALID_ARGUMENT);
+        *apqBound[i] = qSaved;
+    }
+#endif
+    assert(foc_pid_Init(&tPid, &tPi) == FOC_RESULT_OK);
+}
+
+/** @brief Check arithmetic boundaries retained by the inline numeric layer.
+ * @param None. @return None. */
+static void test_NumericBoundaries(void)
+{
+    test_AssertNear(foc_mul_wide(FOC_SCALAR(2.0f), FOC_HALF), 1.0f);
+    assert(foc_sat(FOC_SCALAR(2.0f), FOC_NEG_ONE, FOC_ONE) == FOC_ONE);
+    assert(foc_sat(FOC_SCALAR(-2.0f), FOC_NEG_ONE, FOC_ONE) == FOC_NEG_ONE);
+#if defined(FOC_NUMERIC_FIXED)
+    assert(foc_add_sat(INT32_MAX, 1) == INT32_MAX);
+    assert(foc_add_sat(INT32_MIN, -1) == INT32_MIN);
+    assert(foc_sub_sat(INT32_MIN, 1) == INT32_MIN);
+    assert(foc_sub_sat(INT32_MAX, -1) == INT32_MAX);
+    assert(foc_abs(INT32_MIN) == INT32_MAX);
+    assert(foc_mul_wide(INT32_MAX, FOC_SCALAR(2.0f)) == INT32_MAX);
+    assert(foc_mul_wide(INT32_MIN, FOC_SCALAR(2.0f)) == INT32_MIN);
+    assert(foc_mul_pu(FOC_SCALAR(2.0f), FOC_HALF) == FOC_HALF);
+    assert(foc_mul_pu(-1, FOC_HALF) == -1);
+    assert(foc_mul_wide(-1, FOC_HALF) == 0);
+#else
+    assert(isnan(foc_sat(NAN, FOC_NEG_ONE, FOC_ONE)));
+    assert(foc_mul_pu(2.0f, 0.5f) == 1.0f);
+    assert(signbit(foc_abs(-0.0f)));
+#endif
+}
+
+/**
  * @brief Verify Core consumes one precomputed alpha-beta current sample.
  * @param None.
  * @return Zero on success.
  */
 int main(void)
 {
+    test_PidValidation();
+    test_NumericBoundaries();
     foc_core_state_t tState = {0};
     foc_core_output_t tOutput = {0};
     foc_pid_params_t tPi = {

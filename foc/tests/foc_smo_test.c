@@ -111,7 +111,7 @@ int main(void)
     tMotorParams.wInductanceQMicroHenry = 1500U;
     tConfig.qCurrentEstimateLimit = FOC_ONE;
     eResult = foc_smo_Init(&tSmo, &tMotorParams, &tConfig);
-    assert(eResult == FOC_RESULT_INVALID_ARGUMENT);
+    assert(eResult == FOC_RESULT_DISABLED);
     tMotorParams.wInductanceQMicroHenry = 1000U;
 
     tMotorParams.wCurrentBaseMilliamp = 0U;

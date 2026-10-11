@@ -14,61 +14,49 @@
 
 #include "perf_counter.h"
 
-#define FOC_ENCODER_RESOLUTION       4096U
-#define FOC_ENCODER_HALF_RESOLUTION  2048
 #define FOC_ENCODER_TIMEOUT_MIN_TICK 1U
 #define FOC_ENCODER_FAULT_SENSOR     (1UL << 0)
 
 /**
- * @brief Convert one 12-bit raw angle to BAM32.
- * @param hwRawAngle Raw 12-bit angle.
- * @return Mechanical BAM32 angle.
+ * @brief Calculate the shortest signed BAM32 mechanical displacement.
+ * @param tAngle Current mechanical angle.
+ * @param tLastAngle Previous mechanical angle.
+ * @return Signed BAM32 delta; sampling must resolve less than half a turn.
  */
-static foc_angle_t _foc_encoder_raw_to_angle(uint16_t hwRawAngle)
+static int32_t _foc_encoder_angle_delta(foc_angle_t tAngle,
+                                       foc_angle_t tLastAngle)
 {
-    return (foc_angle_t){(uint32_t)hwRawAngle << 20};
-}
+    int64_t llDelta = (int64_t)tAngle.wBam32 - (int64_t)tLastAngle.wBam32;
 
-/**
- * @brief Calculate the shortest signed raw-angle difference.
- * @param hwRawAngle Current raw angle.
- * @param hwLastRawAngle Previous raw angle.
- * @return Signed raw-angle delta.
- */
-static int16_t _foc_encoder_raw_delta(uint16_t hwRawAngle,
-                                      uint16_t hwLastRawAngle)
-{
-    int32_t nDelta = (int32_t)hwRawAngle - (int32_t)hwLastRawAngle;
-
-    if (nDelta > FOC_ENCODER_HALF_RESOLUTION) {
-        nDelta -= (int32_t)FOC_ENCODER_RESOLUTION;
-    } else if (nDelta < -FOC_ENCODER_HALF_RESOLUTION) {
-        nDelta += (int32_t)FOC_ENCODER_RESOLUTION;
+    if (llDelta > INT32_MAX) {
+        llDelta -= 4294967296LL;
+    } else if (llDelta < INT32_MIN) {
+        llDelta += 4294967296LL;
     } else {
-        /* The raw difference is already the shortest path. */
+        /* The difference is already the shortest path. */
     }
-    return (int16_t)nDelta;
+    return (int32_t)llDelta;
 }
 
 /**
- * @brief Convert a raw delta and tick interval into turn/s.
- * @param nDelta Signed raw-angle delta.
+ * @brief Convert a BAM32 delta and tick interval into turn/s.
+ * @param nDelta Signed BAM32 delta.
  * @param wElapsedTicks Tick interval between sensor completions.
  * @param wTickFrequency System tick frequency.
  * @return Mechanical speed in the selected scalar backend.
  */
-static foc_scalar_t _foc_encoder_sample_speed(int16_t nDelta,
+static foc_scalar_t _foc_encoder_sample_speed(int32_t nDelta,
                                               uint32_t wElapsedTicks,
                                               uint32_t wTickFrequency)
 {
-    if (wElapsedTicks == 0U || wTickFrequency == 0U) {
+    if (wElapsedTicks == 0U) {
         return FOC_ZERO;
     }
 #if defined(FOC_NUMERIC_FIXED)
-    int64_t llSpeed = (int64_t)nDelta * FOC_Q_SCALE;
+    int64_t llSpeed = (int64_t)nDelta * (int64_t)wTickFrequency;
 
-    llSpeed *= (int64_t)wTickFrequency;
-    llSpeed /= (int64_t)FOC_ENCODER_RESOLUTION;
+    /* BAM32 to Q15 after multiplication retains sub-Q15 displacements. */
+    llSpeed /= 131072LL;
     llSpeed /= (int64_t)wElapsedTicks;
     if (llSpeed > INT32_MAX) {
         llSpeed = INT32_MAX;
@@ -80,7 +68,7 @@ static foc_scalar_t _foc_encoder_sample_speed(int16_t nDelta,
     return (foc_scalar_t)llSpeed;
 #else
     return ((foc_scalar_t)nDelta * (foc_scalar_t)wTickFrequency) /
-           ((foc_scalar_t)FOC_ENCODER_RESOLUTION *
+           (4294967296.0f *
             (foc_scalar_t)wElapsedTicks);
 #endif
 }
@@ -89,7 +77,7 @@ static foc_scalar_t _foc_encoder_sample_speed(int16_t nDelta,
  * @brief Convert a tick age into a scalar turn displacement.
  * @param qSpeed Mechanical speed.
  * @param wAgeTicks Tick age of the published sample.
- * @param wTickFrequency System tick frequency.
+ * @param wTickFrequency Nonzero system tick frequency validated by Init.
  * @return Mechanical turn displacement.
  */
 static foc_scalar_t _foc_encoder_age_turns(foc_scalar_t qSpeed,
@@ -99,9 +87,6 @@ static foc_scalar_t _foc_encoder_age_turns(foc_scalar_t qSpeed,
 #if defined(FOC_NUMERIC_FIXED)
     int64_t llTurns = (int64_t)qSpeed * (int64_t)wAgeTicks;
 
-    if (wTickFrequency == 0U) {
-        return FOC_ZERO;
-    }
     llTurns /= (int64_t)wTickFrequency;
     if (llTurns > INT32_MAX) {
         llTurns = INT32_MAX;
@@ -112,9 +97,6 @@ static foc_scalar_t _foc_encoder_age_turns(foc_scalar_t qSpeed,
     }
     return (foc_scalar_t)llTurns;
 #else
-    if (wTickFrequency == 0U) {
-        return FOC_ZERO;
-    }
     return qSpeed * (foc_scalar_t)wAgeTicks /
            (foc_scalar_t)wTickFrequency;
 #endif
@@ -244,7 +226,7 @@ foc_result_t foc_encoder_Init(foc_encoder_t *ptEncoder,
 
 foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
 {
-    uint16_t hwRawAngle = 0U;
+    foc_angle_t tMechanicalAngle = {0U};
     uint32_t wSampleTick = 0U;
     uint32_t wElapsedTicks = 0U;
     foc_position_t tPosition = {0};
@@ -263,14 +245,14 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
         return ptEncoder->eLastError;
     }
 #if defined(FOC_ENCODER_STATIC_BINDING)
-    eResult = FOC_ENCODER_PORT_READ(&hwRawAngle);
+    eResult = FOC_ENCODER_PORT_READ(&tMechanicalAngle);
 #else
     if (ptEncoder->tSensor.ptOps == NULL ||
         ptEncoder->tSensor.ptOps->fnRead == NULL) {
         return FOC_RESULT_DISABLED;
     }
     eResult = ptEncoder->tSensor.ptOps->fnRead(
-        ptEncoder->tSensor.pContext, &hwRawAngle);
+        ptEncoder->tSensor.pContext, &tMechanicalAngle);
 #endif
     if (eResult != FOC_RESULT_OK) {
         ptEncoder->eLastError = eResult;
@@ -278,14 +260,14 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
         return eResult;
     }
     wSampleTick = (uint32_t)get_system_ticks();
-    hwRawAngle = (uint16_t)(hwRawAngle & 0x0FFFU);
-    tPosition.tMechanicalAngle = _foc_encoder_raw_to_angle(hwRawAngle);
+    tPosition.tMechanicalAngle = tMechanicalAngle;
     tPosition.qMechanicalSpeed = FOC_ZERO;
     tPosition.bValid = true;
     if (ptEncoder->bHasSample) {
         wElapsedTicks = wSampleTick - ptEncoder->wLastSampleTick;
         qRawSpeed = _foc_encoder_sample_speed(
-            _foc_encoder_raw_delta(hwRawAngle, ptEncoder->hwLastRawAngle),
+            _foc_encoder_angle_delta(tMechanicalAngle,
+                                      ptEncoder->tLastMechanicalAngle),
             wElapsedTicks, ptEncoder->wTickFrequency);
         qPreviousSpeed = ptEncoder->atPosition[
             ptEncoder->chPublishedIndex].tPosition.qMechanicalSpeed;
@@ -300,7 +282,7 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
     }
     _foc_encoder_apply_direction(ptEncoder, &tPosition);
     _foc_encoder_publish(ptEncoder, &tPosition, wSampleTick);
-    ptEncoder->hwLastRawAngle = hwRawAngle;
+    ptEncoder->tLastMechanicalAngle = tMechanicalAngle;
     ptEncoder->wLastSampleTick = wSampleTick;
     ptEncoder->bHasSample = true;
     ptEncoder->eLastError = FOC_RESULT_OK;
@@ -369,11 +351,4 @@ foc_result_t foc_encoder_GetPosition(const void *pEncoder,
         _foc_encoder_age_turns(ptPosition->qMechanicalSpeed,
                                 wAgeTicks, ptEncoder->wTickFrequency));
     return FOC_RESULT_OK;
-}
-
-foc_result_t foc_encoder_CaptureZero(const void *pEncoder,
-                                     uint32_t wNowTick,
-                                     foc_position_t *ptPosition)
-{
-    return foc_encoder_GetPosition(pEncoder, wNowTick, ptPosition);
 }
