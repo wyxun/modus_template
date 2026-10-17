@@ -16,6 +16,12 @@
 #include "foc_math.h"
 #include "internal/foc_units.h"
 
+/* Current-error half-width in PU; derive its voltage slope once in Init. */
+#define SMO_CURRENT_BOUNDARY_PU FOC_SCALAR(0.1f)
+
+/* Bound the sum to 16 turns even for adversarial adjacent angle jumps. */
+#define SMO_MAX_SPEED_SPAN 32U
+
 /* Preserve separate multiply/add rounding in the original recurrence. */
 #if defined(__clang__)
 #pragma clang fp contract(off)
@@ -149,6 +155,10 @@ static bool _foc_smo_StoreFixedCoefficients(
                          &wSpeedDenominator)) {
         return false;
     }
+    if (!_foc_smo_MultiplyU64(wSpeedDenominator, ptExec->chSpeedSpan,
+                             &wSpeedDenominator)) {
+        return false;
+    }
     /* Init only: Gain1 = R / Ld * Ts. */
     if (!_foc_smo_StoreFixedRatio(wResistanceProduct, wResistanceBase,
                              false, &ptExec->kr) ||
@@ -250,7 +260,8 @@ static bool _foc_smo_StoreFloatCoefficients(
         &ptExec->h);
     /* Init only: convert angle delta in turns to electrical speed PU. */
     return bStored && _foc_smo_StoreCoefficient(
-        (1.0f / Ts) / ptConfig->qElectricalSpeedBaseHz,
+        (1.0f / Ts) / ptConfig->qElectricalSpeedBaseHz /
+            (float)ptExec->chSpeedSpan,
         &ptExec->speed_scale);
 }
 #endif
@@ -301,7 +312,9 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
 {
     foc_smo_exec_t tExec = {0};
     uint32_t wSamplePeriodNanoseconds = 0U;
+    uint32_t wSpeedSpan = 0U;
     bool bStored = false;
+    foc_result_t eResult = FOC_RESULT_OK;
 
     if (ptSmo == NULL) {
         return FOC_RESULT_NULL;
@@ -321,6 +334,15 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
         (FOC_NANOSECONDS_PER_SECOND +
          (ptConfig->wSampleFrequencyHz / 2U)) /
         ptConfig->wSampleFrequencyHz;
+    wSpeedSpan = (ptConfig->wSampleFrequencyHz + 500U) / 1000U;
+    if (wSpeedSpan == 0U) {
+        wSpeedSpan = 1U;
+    } else if (wSpeedSpan > SMO_MAX_SPEED_SPAN) {
+        wSpeedSpan = SMO_MAX_SPEED_SPAN;
+    } else {
+        /* Nearest integral number of intervals to one millisecond. */
+    }
+    tExec.chSpeedSpan = (uint8_t)wSpeedSpan;
 #if defined(FOC_NUMERIC_FIXED)
     bStored = _foc_smo_StoreFixedCoefficients(
         &tExec, ptModel, ptConfig, wSamplePeriodNanoseconds);
@@ -329,6 +351,11 @@ foc_result_t foc_smo_Init(foc_smo_t *ptSmo,
         &tExec, ptModel, ptConfig, wSamplePeriodNanoseconds);
 #endif
     if (!bStored) {
+        return FOC_RESULT_OUT_OF_RANGE;
+    }
+    eResult = foc_div_checked(tExec.h, SMO_CURRENT_BOUNDARY_PU,
+                              &tExec.boundary_gain);
+    if (eResult != FOC_RESULT_OK || tExec.boundary_gain <= FOC_ZERO) {
         return FOC_RESULT_OUT_OF_RANGE;
     }
     tExec.i_limit = ptConfig->qCurrentEstimateLimit;
@@ -376,12 +403,13 @@ static void _foc_smo_AxisStep(const foc_smo_exec_t *c,
         }
     }
     err = s->i_hat - i;
-    if (err > FOC_ZERO) {
+    z = foc_mul_wide(c->boundary_gain, err);
+    if (z > c->h) {
         z = c->h;
-    } else if (err < FOC_ZERO) {
+    } else if (z < FOC_ZERO - c->h) {
         z = FOC_ZERO - c->h;
     } else {
-        z = FOC_ZERO;
+        /* Linear correction inside the current-error boundary. */
     }
     /* e_hat = b0*(z + z_prev) - a1*e_hat; raw z feeds the model. */
     s->e_hat = c->b0 * (z + s->z_prev) - c->a1 * s->e_hat;
@@ -430,12 +458,13 @@ static void _foc_smo_AxisStep(const foc_smo_exec_t *c,
         }
     }
     err = foc_sub_sat(s->i_hat, i);
-    if (err > FOC_ZERO) {
+    z = foc_mul_wide(c->boundary_gain, err);
+    if (z > c->h) {
         z = c->h;
-    } else if (err < FOC_ZERO) {
+    } else if (z < FOC_ZERO - c->h) {
         z = FOC_ZERO - c->h;
     } else {
-        z = FOC_ZERO;
+        /* Linear correction inside the current-error boundary. */
     }
     /* e_hat = b0*(z + z_prev) - a1*e_hat; raw z feeds the model. */
     s->e_hat = foc_sub_sat(
@@ -459,6 +488,9 @@ void foc_smo_Reset(foc_smo_t *ptSmo)
     ptSmo->tAxis[0] = (foc_smo_axis_t){0};
     ptSmo->tAxis[1] = (foc_smo_axis_t){0};
     ptSmo->tPreviousElectricalAngle = (foc_angle_t){0U};
+    ptSmo->qSpeedAngleSum = FOC_ZERO;
+    ptSmo->qHeldSpeedPu = FOC_ZERO;
+    ptSmo->chSpeedSamples = 0U;
     ptSmo->bHasPreviousElectricalAngle = false;
 }
 
@@ -477,6 +509,9 @@ static foc_result_t _foc_smo_OutputStep(foc_smo_t *ptSmo,
     if (ptSmo->tAxis[0].e_hat == FOC_ZERO &&
         ptSmo->tAxis[1].e_hat == FOC_ZERO) {
         ptSmo->bHasPreviousElectricalAngle = false;
+        ptSmo->qSpeedAngleSum = FOC_ZERO;
+        ptSmo->qHeldSpeedPu = FOC_ZERO;
+        ptSmo->chSpeedSamples = 0U;
         *ptOutput = (foc_smo_output_t){0};
         return FOC_RESULT_OK;
     }
@@ -489,20 +524,27 @@ static foc_result_t _foc_smo_OutputStep(foc_smo_t *ptSmo,
         FOC_ZERO - ptSmo->tAxis[0].e_hat,
         ptSmo->tAxis[1].e_hat);
 #endif
-    ptOutput->tEstimate.qElectricalSpeedPu = FOC_ZERO;
     if (ptSmo->bHasPreviousElectricalAngle) {
         qAngleDelta = foc_angle_diff(
             tElectricalAngle, ptSmo->tPreviousElectricalAngle);
-        ptOutput->tEstimate.qElectricalSpeedPu = foc_mul_wide(
-            qAngleDelta, ptSmo->tExec.speed_scale);
+        ptSmo->qSpeedAngleSum = foc_add_sat(
+            ptSmo->qSpeedAngleSum, qAngleDelta);
+        ptSmo->chSpeedSamples++;
+        if (ptSmo->chSpeedSamples >= ptSmo->tExec.chSpeedSpan) {
+            ptSmo->qHeldSpeedPu = foc_mul_wide(
+                ptSmo->qSpeedAngleSum, ptSmo->tExec.speed_scale);
+            ptSmo->qSpeedAngleSum = FOC_ZERO;
+            ptSmo->chSpeedSamples = 0U;
+        }
     }
+    ptOutput->qElectricalSpeedPu = ptSmo->qHeldSpeedPu;
     ptSmo->tPreviousElectricalAngle = tElectricalAngle;
     ptSmo->bHasPreviousElectricalAngle = true;
-    ptOutput->tEstimate.tElectricalAngle = tElectricalAngle;
+    ptOutput->tElectricalAngle = tElectricalAngle;
     ptOutput->qBemfStrengthPu = foc_add_sat(
         foc_abs(ptSmo->tAxis[0].e_hat),
         foc_abs(ptSmo->tAxis[1].e_hat));
-    ptOutput->tEstimate.bValid = true;
+    ptOutput->bValid = true;
     return FOC_RESULT_OK;
 }
 
@@ -518,6 +560,7 @@ foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
                           foc_smo_output_t *ptOutput)
 {
     if (ptSmo == NULL || ptInput == NULL || ptOutput == NULL) {
+        foc_smo_Reset(ptSmo);
         if (ptOutput != NULL) {
             *ptOutput = (foc_smo_output_t){0};
         }
@@ -525,6 +568,7 @@ foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
     }
     if (ptInput->ptCurrentAlphaBeta == NULL ||
         ptInput->ptVoltageModelAlphaBeta == NULL) {
+        foc_smo_Reset(ptSmo);
         *ptOutput = (foc_smo_output_t){0};
         return FOC_RESULT_NULL;
     }

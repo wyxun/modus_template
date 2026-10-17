@@ -118,10 +118,10 @@ static void MX_ADC1_Init(void)
     LL_ADC_REG_Init(ADC1, &ADC_REG_Init);
 
     LL_ADC_SetGainCompensation(ADC1, 0);
-    /* Four conversions per injected rank, averaged back to 12-bit codes.
+    /* Keep the 14-bit sum of four conversions per injected rank.
      * Regular VBUS/temperature/pot conversions remain un-oversampled. */
     LL_ADC_ConfigOverSamplingRatioShift(
-        ADC1, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_RIGHT_2);
+        ADC1, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_NONE);
     LL_ADC_SetOverSamplingScope(ADC1, LL_ADC_OVS_GRP_INJECTED);
 
     /* ---- Common config ---- */
@@ -210,7 +210,7 @@ static void MX_ADC2_Init(void)
 
     LL_ADC_SetGainCompensation(ADC2, 0);
     LL_ADC_ConfigOverSamplingRatioShift(
-        ADC2, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_RIGHT_2);
+        ADC2, LL_ADC_OVS_RATIO_4, LL_ADC_OVS_SHIFT_NONE);
     LL_ADC_SetOverSamplingScope(ADC2, LL_ADC_OVS_GRP_INJECTED);
 
     /* ---- Injected group ---- */

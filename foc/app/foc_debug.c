@@ -7,10 +7,7 @@
 
 #include "foc_debug.h"
 
-#include <ctype.h>
 #include <math.h>
-#include <stdio.h>
-#include <string.h>
 
 #include "mdebug/util_debug.h"
 #include "motor_config.h"
@@ -30,16 +27,54 @@ extern foc_app_t tFocApp;
 #define FOC_WAVEFORM_CHANNEL_INVALID 0xFFU
 
 typedef enum {
-    FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE = 0,
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_ANGLE
+    FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SPEED
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_SPEED,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_FILTERED_SPEED
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_FILTERED_SPEED,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
     FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_STRENGTH
+    FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_STRENGTH,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_IQ
     FOC_DEBUG_WAVEFORM_SOURCE_IQ,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_ALPHA
+    FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_ALPHA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_BETA
+    FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_BETA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_BETA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_ALPHA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_BETA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_ALPHA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
     FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_BETA,
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_REFERENCE
+    FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_REFERENCE,
+#endif
     FOC_DEBUG_WAVEFORM_SOURCE_COUNT,
 } foc_debug_waveform_source_e;
 
@@ -55,11 +90,26 @@ static const foc_debug_waveform_channel_t s_atWaveformChannels[] = {
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
     {"SMO_mT", FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE},
 #endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SPEED
+    {"SmoSpd", FOC_DEBUG_WAVEFORM_SOURCE_SMO_SPEED},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_FILTERED_SPEED
+    {"FiltSpd", FOC_DEBUG_WAVEFORM_SOURCE_SMO_FILTERED_SPEED},
+#endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR
     {"Err_mT", FOC_DEBUG_WAVEFORM_SOURCE_ANGLE_ERROR},
 #endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_STRENGTH
+    {"Bemf_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_STRENGTH},
+#endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_IQ
     {"Iq_mpu", FOC_DEBUG_WAVEFORM_SOURCE_IQ},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_ALPHA
+    {"Ialpha", FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_ALPHA},
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_BETA
+    {"Ibeta", FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_BETA},
 #endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
     {"Ealpha_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA},
@@ -79,9 +129,16 @@ static const foc_debug_waveform_channel_t s_atWaveformChannels[] = {
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA
     {"Zbeta_mpu", FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_BETA},
 #endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_REFERENCE
+    {"EncAbs", FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_REFERENCE},
+#endif
 };
 
 static float s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_COUNT];
+
+_Static_assert(FOC_DEBUG_WAVEFORM_SOURCE_COUNT ==
+                   FOC_DEBUG_WAVEFORM_CHANNEL_COUNT,
+               "Only selected waveform values need staging storage");
 
 _Static_assert(sizeof(s_atWaveformChannels) /
                    sizeof(s_atWaveformChannels[0]) ==
@@ -92,6 +149,41 @@ void foc_debug_CaptureWaveform(void)
 {
     const foc_app_t *ptThis = &tFocApp;
     const motor_t *ptMotor = &ptThis->tMotor;
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_REFERENCE
+    {
+        foc_position_t tReference = {0};
+        float fTurns = -1.0f;
+        if (ptThis->bEncoderEnabled) {
+            const foc_result_t eReference = foc_encoder_GetPosition(
+                &ptThis->tEncoder, (uint32_t)get_system_ticks(), &tReference);
+            if (eReference == FOC_RESULT_OK && tReference.bValid) {
+                const foc_angle_t tElectrical = {
+                    .wBam32 = tReference.tMechanicalAngle.wBam32 *
+                              (uint32_t)ptMotor->tParams.chPolePairs};
+                fTurns = foc_angle_to_turns(tElectrical);
+            }
+        }
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_REFERENCE] =
+            fTurns;
+    }
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_ALPHA ||                                  \
+    FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_BETA ||                                  \
+    FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA ||                        \
+    FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
+    const bool bCurrentActive = ptMotor->eState == MOTOR_STATE_RUNNING &&
+                                ptMotor->bPwmEnabled;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_ALPHA
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_ALPHA] =
+        bCurrentActive && isfinite(ptMotor->tInput.tCurrentAlphaBeta.qAlpha) ?
+        ptMotor->tInput.tCurrentAlphaBeta.qAlpha : -2.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_CURRENT_BETA
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_CURRENT_BETA] =
+        bCurrentActive && isfinite(ptMotor->tInput.tCurrentAlphaBeta.qBeta) ?
+        ptMotor->tInput.tCurrentAlphaBeta.qBeta : -2.0f;
+#endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_IQ
     s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_IQ] =
         foc_to_float(ptMotor->tOutput.tCurrent.qQ);
@@ -103,11 +195,41 @@ void foc_debug_CaptureWaveform(void)
 #endif
 
 #if FOC_OBSERVER_HAS_SMO &&                                                     \
-    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE ||                                \
-     FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR)
+    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_SPEED ||                                    \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_FILTERED_SPEED)
     {
-        const foc_observer_output_t *ptObserverOutput =
-            &ptThis->tPosition.tEstimates.tSmo.tEstimate;
+        const bool active = ptMotor->eState == MOTOR_STATE_RUNNING &&
+            ptMotor->bPwmEnabled && ptThis->tPosition.tEstimate.bValid;
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SPEED
+        const float speed = ptThis->tPosition.tEstimate.qElectricalSpeedPu;
+
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_SPEED] =
+            active && fabsf(speed) <= 32.0f ? speed : -2.0f;
+#endif
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_FILTERED_SPEED
+        const float filtered =
+            ptThis->tPosition.tTracking.qObserverSpeedFilteredPu;
+
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_FILTERED_SPEED] =
+            active && ptThis->tPosition.tTracking.bObserverSpeedReady &&
+                fabsf(filtered) <= 32.0f ? filtered : -2.0f;
+#endif
+    }
+#endif
+
+#if FOC_OBSERVER_HAS_SMO &&                                                     \
+    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE ||                                     \
+     FOC_DEBUG_WAVEFORM_ENABLE_ANGLE_ERROR ||                                   \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_STRENGTH)
+    {
+        const foc_smo_output_t *ptObserverOutput =
+            &ptThis->tPosition.tEstimate;
+
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_STRENGTH
+        s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_STRENGTH] =
+            ptObserverOutput->bValid ?
+            foc_to_float(ptObserverOutput->qBemfStrengthPu) : -1.0f;
+#endif
 
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
         if (ptObserverOutput->bValid) {
@@ -130,6 +252,9 @@ void foc_debug_CaptureWaveform(void)
 #endif
     }
 #else
+#if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_STRENGTH
+    s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_STRENGTH] = -1.0f;
+#endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_ANGLE
     s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_ANGLE] = -1.0f;
 #endif
@@ -139,14 +264,14 @@ void foc_debug_CaptureWaveform(void)
 #endif
 
 #if FOC_OBSERVER_HAS_SMO &&                                                     \
-    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA ||                           \
-     FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA ||                            \
-     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA ||                  \
-     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA ||                   \
-     FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA ||                        \
+    (FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA ||                                \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_BETA ||                                 \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA ||                       \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA ||                        \
+     FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA ||                             \
      FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_BETA)
     {
-        const foc_smo_t *ptSmo = &ptThis->tPosition.tObserver.tSmo;
+        const foc_smo_t *ptSmo = &ptThis->tPosition.tSmo;
 
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_BEMF_ALPHA
         s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_BEMF_ALPHA] =
@@ -161,16 +286,16 @@ void foc_debug_CaptureWaveform(void)
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_ALPHA
         s_afWaveformValues[
             FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_ALPHA] =
-            ptSmo->bInitialized ?
+            bCurrentActive && ptSmo->bInitialized ?
             foc_to_float(ptMotor->tInput.tCurrentAlphaBeta.qAlpha) -
-                foc_to_float(ptSmo->tAxis[0].i_hat) : -1.0f;
+                foc_to_float(ptSmo->tAxis[0].i_hat) : -2.0f;
 #endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_CURRENT_ERROR_BETA
         s_afWaveformValues[
             FOC_DEBUG_WAVEFORM_SOURCE_SMO_CURRENT_ERROR_BETA] =
-            ptSmo->bInitialized ?
+            bCurrentActive && ptSmo->bInitialized ?
             foc_to_float(ptMotor->tInput.tCurrentAlphaBeta.qBeta) -
-                foc_to_float(ptSmo->tAxis[1].i_hat) : -1.0f;
+                foc_to_float(ptSmo->tAxis[1].i_hat) : -2.0f;
 #endif
 #if FOC_DEBUG_WAVEFORM_ENABLE_SMO_SLIDING_ALPHA
         s_afWaveformValues[FOC_DEBUG_WAVEFORM_SOURCE_SMO_SLIDING_ALPHA] =
@@ -209,11 +334,13 @@ void foc_debug_WaveformInit(foc_app_t *ptThis,
         const uint8_t chSource = ptChannel->chSource;
         const char *pchName = ptChannel->pchName;
 
+#if FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_ANGLE
         if (chSource == FOC_DEBUG_WAVEFORM_SOURCE_ENCODER_ANGLE &&
             ptThis->tPosition.eSource ==
                 MOTOR_POSITION_SOURCE_HARD_DRAG) {
             pchName = "Ctrl_mT";
         }
+#endif
         chChannel = mwaveform.AddVariable(
             pchName, 1000.0f, &s_afWaveformValues[chSource],
             MWAVEFORM_VAR_FLOAT);
@@ -323,7 +450,7 @@ static void foc_debug_PrintStatus(const motor_t *ptMotor)
               (unsigned)tFocApp.tPosition.tHandoff.eFeedbackState,
               (unsigned long)tFocApp.tPosition.tHandoff.wQualifiedCount,
               (unsigned long)tFocApp.tPosition.tHandoff.wBlendCount,
-              (double)foc_to_float(tFocApp.tPosition.tEstimates.tSmo
+              (double)foc_to_float(tFocApp.tPosition.tEstimate
                                    .qBemfStrengthPu));
     }
 #endif
@@ -349,6 +476,47 @@ static void foc_debug_PrintEncoder(const foc_encoder_t *ptEncoder)
           (unsigned)tPosition.bValid,
           foc_angle_to_turns(tPosition.tMechanicalAngle) * 360.0f,
           foc_to_float(tPosition.qMechanicalSpeed));
+}
+
+/** @brief Read filter settings or select an SF code with PWM disabled.
+ * @param ptApp App with the fixed encoder. @param pchArgs Command suffix.
+ * @return Checked status; all bus work runs in the foreground. */
+static foc_result_t foc_debug_EncoderCommand(
+    foc_app_t *ptApp, const char *pchArgs)
+{
+    uint16_t hwConfig = 0U;
+    uint32_t wFilter = 0U;
+    motor_status_t tStatus = {0};
+    foc_result_t eResult = FOC_RESULT_OK;
+
+    if (mshell_AtEnd(pchArgs)) {
+        foc_debug_PrintEncoder(&ptApp->tEncoder);
+        return FOC_RESULT_OK;
+    }
+    eResult = motor_GetStatus(&ptApp->tMotor, &tStatus);
+    if (eResult != FOC_RESULT_OK) { return eResult; }
+    if (tStatus.eState != MOTOR_STATE_IDLE || tStatus.bPwmEnabled) {
+        return FOC_RESULT_BUSY;
+    }
+    if (mshell_ConsumeWord(&pchArgs, "filter")) {
+        if (mshell_ParseUint32(&pchArgs, &wFilter) != MSHELL_PARSE_OK ||
+            !mshell_AtEnd(pchArgs) || wFilter > 3U) {
+            return FOC_RESULT_INVALID_ARGUMENT;
+        }
+        eResult = FOC_ENCODER_PORT_SET_SLOW_FILTER((uint8_t)wFilter);
+        if (eResult != FOC_RESULT_OK) { return eResult; }
+    } else if (!mshell_ConsumeWord(&pchArgs, "config") ||
+               !mshell_AtEnd(pchArgs)) {
+        return FOC_RESULT_INVALID_ARGUMENT;
+    } else {
+        /* Read-only configuration query. */
+    }
+    eResult = FOC_ENCODER_PORT_READ_CONFIG(&hwConfig);
+    if (eResult != FOC_RESULT_OK) { return eResult; }
+    MLOGF(I, "encoder conf=0x%04X sf=%u fth=%u pm=%u\r\n",
+          (unsigned)hwConfig, (unsigned)((hwConfig >> 8U) & 3U),
+          (unsigned)((hwConfig >> 10U) & 7U), (unsigned)(hwConfig & 3U));
+    return FOC_RESULT_OK;
 }
 
 /**
@@ -442,30 +610,44 @@ static void foc_debug_CmdMotor(const char *args)
 {
     float fD = 0.0f;
     float fQ = 0.0f;
-    int nScanned = 0;
     bool bStarted = false;
     foc_result_t eResult = FOC_RESULT_OK;
+    const char *pchArgs = args;
 
     if (args == NULL) {
         return;
     }
-    if (strncmp(args, "stop", 4U) == 0) {
-        tFocApp.eCurrentStepState = FOC_APP_CURRENT_STEP_IDLE;
-        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
-        return;
-    } else if (strncmp(args, "clear", 5U) == 0) {
-        eResult = motor_ClearFault(&tFocApp.tMotor);
-    } else if (strncmp(args, "align", 5U) == 0) {
-        eResult = motor_RequestAlignment(&tFocApp.tMotor, false);
-    } else if (strncmp(args, "calibrate", 9U) == 0) {
-        if (motor_position_UsesHardDrag(&tFocApp.tPosition)) {
+    if (mshell_ConsumeWord(&pchArgs, "stop")) {
+        if (!mshell_AtEnd(pchArgs)) {
+            eResult = FOC_RESULT_INVALID_ARGUMENT;
+        } else {
+            tFocApp.eCurrentStepState = FOC_APP_CURRENT_STEP_IDLE;
+            identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+            return;
+        }
+    } else if (mshell_ConsumeWord(&pchArgs, "clear")) {
+        if (mshell_AtEnd(pchArgs)) {
+            eResult = motor_ClearFault(&tFocApp.tMotor);
+        } else {
+            eResult = FOC_RESULT_INVALID_ARGUMENT;
+        }
+    } else if (mshell_ConsumeWord(&pchArgs, "align")) {
+        if (mshell_AtEnd(pchArgs)) {
+            eResult = motor_RequestAlignment(&tFocApp.tMotor, false);
+        } else {
+            eResult = FOC_RESULT_INVALID_ARGUMENT;
+        }
+    } else if (mshell_ConsumeWord(&pchArgs, "calibrate")) {
+        if (!mshell_AtEnd(pchArgs)) {
+            eResult = FOC_RESULT_INVALID_ARGUMENT;
+        } else if (motor_position_UsesHardDrag(&tFocApp.tPosition)) {
             eResult = FOC_RESULT_DISABLED;
         } else {
             eResult = motor_RequestAlignment(&tFocApp.tMotor, true);
         }
-    } else if (strncmp(args, "speed", 5U) == 0) {
-        nScanned = sscanf(args + 5, "%f", &fQ);
-        if (nScanned != 1 || !isfinite(fQ) || fabsf(fQ) > 1.0f) {
+    } else if (mshell_ConsumeWord(&pchArgs, "speed")) {
+        if (mshell_Parse(&pchArgs, &fQ) != MSHELL_PARSE_OK ||
+            !mshell_AtEnd(pchArgs) || fabsf(fQ) > 1.0f) {
             eResult = FOC_RESULT_INVALID_ARGUMENT;
         } else if (motor_position_UsesHardDrag(&tFocApp.tPosition)) {
             eResult = motor_StartSensorlessSpeed(
@@ -479,28 +661,31 @@ static void foc_debug_CmdMotor(const char *args)
                     &tFocApp.tMotor, foc_from_float(fQ));
             }
         }
-    } else if (strncmp(args, "current", 7U) == 0) {
-        nScanned = sscanf(args + 7, "%f %f", &fD, &fQ);
-        if (nScanned != 2) {
+    } else if (mshell_ConsumeWord(&pchArgs, "current")) {
+        if (mshell_Parse(&pchArgs, &fD) != MSHELL_PARSE_OK ||
+            mshell_Parse(&pchArgs, &fQ) != MSHELL_PARSE_OK ||
+            !mshell_AtEnd(pchArgs)) {
             eResult = FOC_RESULT_INVALID_ARGUMENT;
         } else {
             eResult = foc_debug_SetCurrentCommand(
                 &tFocApp.tMotor, fD, fQ, &bStarted);
         }
-    } else if (strncmp(args, "step", 4U) == 0) {
+    } else if (mshell_ConsumeWord(&pchArgs, "step")) {
         uint32_t wPulseMilliseconds = 0U;
 
-        nScanned = sscanf(args + 4, "%f %u", &fQ,
-                          &wPulseMilliseconds);
-        if (nScanned != 2) {
+        if (mshell_Parse(&pchArgs, &fQ) != MSHELL_PARSE_OK ||
+            mshell_ParseUint32(&pchArgs, &wPulseMilliseconds) !=
+                MSHELL_PARSE_OK ||
+            !mshell_AtEnd(pchArgs)) {
             eResult = FOC_RESULT_INVALID_ARGUMENT;
         } else {
             eResult = foc_debug_StartCurrentStep(
                 &tFocApp, fQ, wPulseMilliseconds);
         }
-    } else if (strncmp(args, "voltage", 7U) == 0) {
-        nScanned = sscanf(args + 7, "%f %f", &fD, &fQ);
-        if (nScanned != 2) {
+    } else if (mshell_ConsumeWord(&pchArgs, "voltage")) {
+        if (mshell_Parse(&pchArgs, &fD) != MSHELL_PARSE_OK ||
+            mshell_Parse(&pchArgs, &fQ) != MSHELL_PARSE_OK ||
+            !mshell_AtEnd(pchArgs)) {
             eResult = FOC_RESULT_INVALID_ARGUMENT;
         } else {
             eResult = motor_Start(&tFocApp.tMotor, FOC_MODE_VOLTAGE);
@@ -511,19 +696,23 @@ static void foc_debug_CmdMotor(const char *args)
                     foc_from_float(fD), foc_from_float(fQ));
             }
         }
-    } else if (strncmp(args, "status", 6U) == 0) {
-        foc_debug_PrintStatus(&tFocApp.tMotor);
-        return;
-    } else if (strncmp(args, "encoder", 7U) == 0) {
-        foc_debug_PrintEncoder(&tFocApp.tEncoder);
-        return;
+    } else if (mshell_ConsumeWord(&pchArgs, "status")) {
+        if (mshell_AtEnd(pchArgs)) {
+            foc_debug_PrintStatus(&tFocApp.tMotor);
+            return;
+        }
+        eResult = FOC_RESULT_INVALID_ARGUMENT;
+    } else if (mshell_ConsumeWord(&pchArgs, "encoder")) {
+        eResult = foc_debug_EncoderCommand(&tFocApp, pchArgs);
+        if (eResult == FOC_RESULT_OK) { return; }
     } else {
         MLOGF(I, "usage: motor speed <pu> | current <d> <q> | "
               "voltage <d> <q> | align | calibrate | stop | clear\r\n"
               "       align: rotor hold; calibrate: encoder zero\r\n"
               "       motor step <Iq pu> <pulse ms> (25..150 ms)\r\n"
               "       current reference updates live in current mode\r\n"
-              "       motor status | encoder\r\n");
+              "       motor status | encoder [config | filter <0..3>]\r\n"
+              "       values: decimal pu, no exponent or unit suffix\r\n");
         return;
     }
     if (bStarted && eResult != FOC_RESULT_OK) {
@@ -536,32 +725,6 @@ static void foc_debug_CmdMotor(const char *args)
 
 MODUS_SHELL_CMD(motor, foc_debug_CmdMotor,
                 "FOC Motor: control/align/calibrate/stop/clear/status/encoder");
-
-/**
- * @brief Compare a shell argument with a complete keyword.
- * @param pchArgs Shell argument string.
- * @param pchKeyword Keyword to compare.
- * @return true when the argument is exactly the keyword.
- */
-static bool foc_debug_IsKeyword(const char *pchArgs,
-                              const char *pchKeyword)
-{
-    size_t wLength = 0U;
-    const char *pchTail = NULL;
-
-    if (pchArgs == NULL || pchKeyword == NULL) {
-        return false;
-    }
-    wLength = strlen(pchKeyword);
-    if (strncmp(pchArgs, pchKeyword, wLength) != 0) {
-        return false;
-    }
-    pchTail = pchArgs + wLength;
-    while (isspace((unsigned char)*pchTail) != 0) {
-        pchTail++;
-    }
-    return *pchTail == '\0';
-}
 
 /**
  * @brief Print the identification status.
@@ -593,15 +756,24 @@ static void foc_debug_CmdIdentify(const char *args)
     foc_result_t eResult = FOC_RESULT_OK;
     bool bStartResistance = false;
     bool bStartInductance = false;
+    const char *pchArgs = args;
 
     if (args == NULL) {
         return;
     }
-    bStartResistance = foc_debug_IsKeyword(args, "resistance");
-    bStartInductance = foc_debug_IsKeyword(args, "inductance");
+    if (mshell_ConsumeWord(&pchArgs, "resistance")) {
+        bStartResistance = true;
+    } else if (mshell_ConsumeWord(&pchArgs, "inductance")) {
+        bStartInductance = true;
+    }
     if (bStartResistance || bStartInductance) {
         motor_status_t tMotorStatus = {0};
 
+        if (!mshell_AtEnd(pchArgs)) {
+            MLOGF(I, "usage: identify resistance | inductance | status | "
+                  "stop | reset\r\n");
+            return;
+        }
         eResult = motor_GetStatus(&tFocApp.tMotor, &tMotorStatus);
         if (eResult == FOC_RESULT_OK &&
             (tMotorStatus.eState != MOTOR_STATE_IDLE ||
@@ -632,16 +804,26 @@ static void foc_debug_CmdIdentify(const char *args)
             eResult = identify_StartInductance(
                 &tFocApp.tIdentify, &tConfig);
         }
-    } else if (foc_debug_IsKeyword(args, "status")) {
-        foc_debug_PrintIdentifyStatus(&tFocApp.tIdentify);
-        return;
-    } else if (foc_debug_IsKeyword(args, "stop")) {
-        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
-        return;
-    } else if (foc_debug_IsKeyword(args, "reset")) {
-        identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
-        eResult = identify_Reset(
-            &tFocApp.tIdentify, &tFocApp.tMotor);
+    } else if (mshell_ConsumeWord(&pchArgs, "status")) {
+        if (mshell_AtEnd(pchArgs)) {
+            foc_debug_PrintIdentifyStatus(&tFocApp.tIdentify);
+            return;
+        }
+        eResult = FOC_RESULT_INVALID_ARGUMENT;
+    } else if (mshell_ConsumeWord(&pchArgs, "stop")) {
+        if (mshell_AtEnd(pchArgs)) {
+            identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+            return;
+        }
+        eResult = FOC_RESULT_INVALID_ARGUMENT;
+    } else if (mshell_ConsumeWord(&pchArgs, "reset")) {
+        if (mshell_AtEnd(pchArgs)) {
+            identify_Stop(&tFocApp.tIdentify, &tFocApp.tMotor);
+            eResult = identify_Reset(
+                &tFocApp.tIdentify, &tFocApp.tMotor);
+        } else {
+            eResult = FOC_RESULT_INVALID_ARGUMENT;
+        }
     } else {
         MLOGF(I, "usage: identify resistance | inductance | status | "
               "stop | reset\r\n");

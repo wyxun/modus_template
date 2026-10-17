@@ -111,12 +111,12 @@ MDI_ADC_CHANNEL_VIEW_BIND(adc_potentiometer, g_awG431AdcMean[2],
                           0x0FFFU, 0U, g_wG431AdcSequence,
                           g_bG431AdcMeanValid)
 
-/* DR and JDR are right-aligned 12-bit counts. Injected 4x oversampling
- * uses a 2-bit right shift in hardware, preserving the count scale. */
+/* Regular DR stays 12-bit. Injected JDR keeps the right-aligned 4x sum;
+ * target current scaling uses 476 sum counts per 3.5 A (4 * 119). */
 #define G431_CURRENT_CHANNELS(X) \
-    X(u, ADC1->JDR1, 0x0FFFU, 0) \
-    X(v, ADC2->JDR2, 0x0FFFU, 0) \
-    X(w, ADC2->JDR1, 0x0FFFU, 0)
+    X(u, ADC1->JDR1, 0x3FFFU, 0) \
+    X(v, ADC2->JDR2, 0x3FFFU, 0) \
+    X(w, ADC2->JDR1, 0x3FFFU, 0)
 #define G431_PHASE_CURRENT_READY (ADC1->ISR & ADC_ISR_JEOS)
 #define G431_PHASE_CURRENT_CLEAR (ADC1->ISR = ADC_ISR_JEOS)
 MDI_SAMPLE_READY_BIND(phase_current_completed, G431_CURRENT_CHANNELS,

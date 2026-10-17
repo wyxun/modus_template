@@ -135,9 +135,9 @@ static foc_app_cfg_t test_Config(motor_position_source_t eSource)
     tCfg.tEncoderCfg.ptSensor = &g_tFocEncoderSensorInterface;
 #endif
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    tCfg.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 10000U;
-    tCfg.tObserverCfg.tSmo.wSlidingGainMillivolt = 3500U;
-    tCfg.tObserverCfg.tSmo.qCurrentEstimateLimit = FOC_ONE;
+    tCfg.tSmoCfg.wBemfCutoffRadiansPerSecond = 10000U;
+    tCfg.tSmoCfg.wSlidingGainMillivolt = 3500U;
+    tCfg.tSmoCfg.qCurrentEstimateLimit = FOC_ONE;
 #endif
     return tCfg;
 }
@@ -214,7 +214,7 @@ static void test_InitContracts(void)
            (int)FOC_RESULT_DISABLED);
     assert(!tFocApp.bReady && !s_bPwm);
     tCfg.bObserverTakeover = false;
-    tCfg.tObserverCfg.tSmo.wBemfCutoffRadiansPerSecond = 0U;
+    tCfg.tSmoCfg.wBemfCutoffRadiansPerSecond = 0U;
     assert(foc_app_Init((uintptr_t)&tFocApp, (uintptr_t)&tCfg) ==
            (int)FOC_RESULT_INVALID_ARGUMENT);
     assert(!tFocApp.bReady && !s_bPwm);
@@ -235,7 +235,7 @@ static void test_Composition(motor_position_source_t eSource, bool bSalient)
            MODUS_SUCCESS);
     assert(tFocApp.bReady);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    assert(tFocApp.tPosition.tObserver.bInitialized == !bSalient);
+    assert(tFocApp.tPosition.tSmo.bInitialized == !bSalient);
 #endif
     test_Tick();
     assert(motor_GetStatus(&tFocApp.tMotor, &tStatus) == FOC_RESULT_OK);
@@ -266,7 +266,7 @@ static void test_Composition(motor_position_source_t eSource, bool bSalient)
     assert(s_bPwm && s_wSubmits > wSubmits);
     wGeneration = tFocApp.tPosition.wLastRunGeneration;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    assert(tFocApp.tPosition.tObserver.tSmo.tAxis[0].e_hat == FOC_ZERO);
+    assert(tFocApp.tPosition.tSmo.tAxis[0].e_hat == FOC_ZERO);
 #endif
     if (eSource == MOTOR_POSITION_SOURCE_SENSOR) {
         s_lTick += 3000;
@@ -305,6 +305,9 @@ static void test_HardDragSpeed(void)
     assert(tFocApp.tMotor.eState == MOTOR_STATE_ALIGN);
     test_Tick();
     assert(tFocApp.tMotor.eState == MOTOR_STATE_RUNNING);
+    assert(tFocApp.tMotor.tCommand.tCurrentReference.qD ==
+           tCfg.tMotorCfg.qStartupIqPu);
+    assert(tFocApp.tMotor.tCommand.tCurrentReference.qQ == FOC_ZERO);
     for (unsigned i = 0U; i < 4U; i++) {
         test_Tick();
         assert(fabsf(foc_to_float(tFocApp.tMotor.tInput.qElectricalSpeedPu)
@@ -320,8 +323,29 @@ static void test_HardDragSpeed(void)
     assert(tFocApp.tMotor.wFaults == MOTOR_FAULT_POSITION);
 }
 
+/** @brief Validate the bench profile against real module initializers. */
+static void test_HandoffProfile(void)
+{
+#if FOC_OBSERVER_HAS_SMO
+    foc_app_cfg_t tCfg = {FOC_APP_INIT_CONFIG};
+    tCfg.bObserverTakeover = true;
+    tCfg.bObserverAutoTakeover = true;
+    assert(tCfg.ePositionSource == MOTOR_POSITION_SOURCE_HARD_DRAG);
+    assert(tCfg.tMotorCfg.wStartupRampSteps == 60000U);
+    assert(tCfg.tMotorCfg.wStartupMaxRunSteps == 200000U);
+    assert(tCfg.tMotorCfg.nHardDragElectricalMilliHz == 0);
+    assert(tCfg.qObserverMinSpeedPu == FOC_SCALAR(0.4f));
+    assert(foc_app_Init((uintptr_t)&tFocApp,
+                        (uintptr_t)&tCfg) == MODUS_SUCCESS);
+    assert(!s_bPwm);
+    assert(tFocApp.tPosition.tHandoff.bAutoTakeover);
+    motor_Stop(&tFocApp.tMotor);
+#endif
+}
+
 int main(void)
 {
+    test_HandoffProfile();
     test_InitContracts();
     test_Composition(MOTOR_POSITION_SOURCE_SENSOR, false);
     test_Composition(MOTOR_POSITION_SOURCE_HARD_DRAG, false);

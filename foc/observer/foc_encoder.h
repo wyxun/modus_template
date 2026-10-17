@@ -58,8 +58,6 @@ typedef struct {
     foc_encoder_position_slot_t atPosition[2];
     uint32_t wTickFrequency;
     uint32_t wInvalidTimeoutTicks;
-    uint32_t wLastSampleTick;
-    foc_angle_t tLastMechanicalAngle;
     /* Publication metadata is atomic on the target and orders slot access. */
     volatile uint8_t chPublishedIndex;
     volatile bool bHasSample;

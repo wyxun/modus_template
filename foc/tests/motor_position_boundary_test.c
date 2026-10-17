@@ -2,12 +2,14 @@
 
 #include "motor_position.h"
 
+static foc_angle_t s_tAngle = {0x20000000U};
+
 static foc_result_t test_GetSensor(const void *pContext, uint32_t wNowTick,
                                    foc_position_t *ptPosition)
 {
     (void)pContext;
     (void)wNowTick;
-    ptPosition->tMechanicalAngle = (foc_angle_t){0x20000000U};
+    ptPosition->tMechanicalAngle = s_tAngle;
     ptPosition->qMechanicalSpeed = FOC_SCALAR(10.0f);
     ptPosition->bValid = true;
     return FOC_RESULT_OK;
@@ -26,6 +28,13 @@ int main(void)
     tCfg.chPolePairs = 7U;
     tCfg.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
     assert(motor_position_Init(&tPosition, &tCfg) == FOC_RESULT_OK);
+    assert(FOC_POSITION_GET(&tPosition, 0U, &tSample, &tFeedback) ==
+           FOC_RESULT_SAFETY);
+    assert(!tFeedback.bValid);
+    /* Capture a physical zero before consuming sensor feedback. */
+    s_tAngle.wBam32 = 0U;
+    assert(motor_position_CaptureZero(&tPosition, 0U) == FOC_RESULT_OK);
+    s_tAngle.wBam32 = 0x20000000U;
     assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     assert(tFeedback.bValid);
@@ -49,8 +58,11 @@ int main(void)
     motor_position_InvalidateZero(&tPosition);
     assert(!motor_position_ZeroValid(&tPosition));
     assert(FOC_POSITION_GET(&tPosition, 4U, &tSample, &tFeedback) ==
+           FOC_RESULT_SAFETY);
+    assert(!tFeedback.bValid);
+    assert(motor_position_CaptureZero(&tPosition, 4U) == FOC_RESULT_OK);
+    assert(FOC_POSITION_GET(&tPosition, 4U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
-    assert(tFeedback.tElectricalAngle.wBam32 == 0xE0000000U);
 
     tCfg.eSource = MOTOR_POSITION_SOURCE_HARD_DRAG;
     tCfg.tSensor = (motor_position_provider_t){0};

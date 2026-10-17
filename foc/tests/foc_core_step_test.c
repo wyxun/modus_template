@@ -128,8 +128,6 @@ int main(void)
 
     eResult = foc_core_step(&tState, &tCommand, &tInput, &tOutput);
     assert(eResult == FOC_RESULT_OK);
-    test_AssertNear(tOutput.tCurrentAlphaBeta.qAlpha, 0.5f);
-    test_AssertNear(tOutput.tCurrentAlphaBeta.qBeta, 0.25f);
     test_AssertNear(tOutput.tCurrent.qD, 0.25f);
     test_AssertNear(tOutput.tCurrent.qQ, -0.5f);
     test_AssertNear(tOutput.tVoltageAlphaBeta.qAlpha, -0.2f);

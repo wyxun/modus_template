@@ -24,7 +24,6 @@ FOC_SOURCES = foc/math/foc_numeric.c \
               foc/control/foc_pid.c \
               foc/modulation/foc_modulation.c \
               foc/observer/foc_encoder.c \
-              foc/observer/foc_observer.c \
               foc/observer/foc_smo.c \
               foc/identify/identify.c \
               foc/identify/identify_resistance.c \

@@ -9,16 +9,19 @@ $target = Get-Content (Join-Path $root 'target/stm32g431/target.mk') -Raw
 $checks = @(
     @($hal, 'ADC_Init\.DataAlignment\s*=\s*LL_ADC_DATA_ALIGN_RIGHT', 2),
     @($hal, 'LL_ADC_OVS_GRP_INJECTED', 2),
-    @($hal, 'LL_ADC_OVS_RATIO_4,\s*LL_ADC_OVS_SHIFT_RIGHT_2', 2),
+    @($hal, 'LL_ADC_OVS_RATIO_4,\s*LL_ADC_OVS_SHIFT_NONE', 2),
+    @($hal, 'TriggerSource\s*=\s*LL_ADC_INJ_TRIG_EXT_TIM1_CH4', 2),
+    @($hal, 'SequencerLength\s*=\s*LL_ADC_INJ_SEQ_SCAN_ENABLE_2RANKS', 2),
+    @($hal, 'LL_ADC_SAMPLINGTIME_6CYCLES_5', 3),
     @($mdi, 'MDI_ADC_CHANNEL_VIEW_BIND\(adc_bus_voltage,[\s\S]*?0x0FFFU, 0U', 1),
     @($mdi, 'MDI_ADC_CHANNEL_VIEW_BIND\(adc_temperature,[\s\S]*?0x0FFFU, 0U', 1),
     @($mdi, 'MDI_ADC_CHANNEL_VIEW_BIND\(adc_potentiometer,[\s\S]*?0x0FFFU, 0U', 1),
-    @($mdi, 'X\(u, ADC1->JDR1, 0x0FFFU, 0\)', 1),
-    @($mdi, 'X\(v, ADC2->JDR2, 0x0FFFU, 0\)', 1),
-    @($mdi, 'X\(w, ADC2->JDR1, 0x0FFFU, 0\)', 1),
+    @($mdi, 'X\(u, ADC1->JDR1, 0x3FFFU, 0\)', 1),
+    @($mdi, 'X\(v, ADC2->JDR2, 0x3FFFU, 0\)', 1),
+    @($mdi, 'X\(w, ADC2->JDR1, 0x3FFFU, 0\)', 1),
     @($scale, 'FOC_CURRENT_COUNTS_PER_BASE\s+119U', 1),
     @($scale, 'FOC_CURRENT_BASE_MILLIAMP\s+3500U', 1),
-    @($target, '-DFOC_CURRENT_COUNTS_PER_BASE=119U', 1),
+    @($target, '-DFOC_CURRENT_COUNTS_PER_BASE=476U', 1),
     @($target, '-DFOC_CURRENT_BASE_MILLIAMP=3500U', 1)
 )
 
@@ -34,7 +37,8 @@ $signalGain = (1.0 / 10000.0) /
     (1.0 / 10000.0 + 1.0 / 22000.0 + 1.0 / 976.0)
 $countsPerAmp = $signalGain * 16.0 * 0.020 * 4095.0 / 3.3
 $expected = $countsPerAmp * 3.5
-if ([math]::Round($expected) -ne 119.0) {
+# Preserve the already rounded physical scale: 4 * 119, not a new gain tune.
+if (4.0 * [math]::Round($expected) -ne 476.0) {
     throw "Current base mismatch: expected $expected counts"
 }
 

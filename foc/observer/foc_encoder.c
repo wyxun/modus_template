@@ -264,13 +264,19 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
     tPosition.qMechanicalSpeed = FOC_ZERO;
     tPosition.bValid = true;
     if (ptEncoder->bHasSample) {
-        wElapsedTicks = wSampleTick - ptEncoder->wLastSampleTick;
+        const foc_encoder_position_slot_t *ptPrevious =
+            &ptEncoder->atPosition[ptEncoder->chPublishedIndex];
+        foc_angle_t tPreviousAngle = ptPrevious->tPosition.tMechanicalAngle;
+
+        /* The published slot owns the previous angle and completion tick. */
+        if (ptEncoder->bDirectionInvert) {
+            tPreviousAngle.wBam32 = 0U - tPreviousAngle.wBam32;
+        }
+        wElapsedTicks = wSampleTick - ptPrevious->wSampleTick;
         qRawSpeed = _foc_encoder_sample_speed(
-            _foc_encoder_angle_delta(tMechanicalAngle,
-                                      ptEncoder->tLastMechanicalAngle),
+            _foc_encoder_angle_delta(tMechanicalAngle, tPreviousAngle),
             wElapsedTicks, ptEncoder->wTickFrequency);
-        qPreviousSpeed = ptEncoder->atPosition[
-            ptEncoder->chPublishedIndex].tPosition.qMechanicalSpeed;
+        qPreviousSpeed = ptPrevious->tPosition.qMechanicalSpeed;
         if (ptEncoder->bDirectionInvert) {
             qPreviousSpeed = foc_sub_sat(FOC_ZERO, qPreviousSpeed);
         }
@@ -282,8 +288,6 @@ foc_result_t foc_encoder_Run(foc_encoder_t *ptEncoder)
     }
     _foc_encoder_apply_direction(ptEncoder, &tPosition);
     _foc_encoder_publish(ptEncoder, &tPosition, wSampleTick);
-    ptEncoder->tLastMechanicalAngle = tMechanicalAngle;
-    ptEncoder->wLastSampleTick = wSampleTick;
     ptEncoder->bHasSample = true;
     ptEncoder->eLastError = FOC_RESULT_OK;
     ptEncoder->wFaults = 0U;

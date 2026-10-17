@@ -42,11 +42,18 @@ typedef struct {
     foc_scalar_t qQ;
 } foc_dq_t;
 
+typedef enum {
+    MOTOR_POSITION_EVENT_NONE = 0,
+    MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
+    MOTOR_POSITION_EVENT_OBSERVER_LOST,
+} motor_position_event_t;
+
 /** @brief The sole electrical feedback consumed by one Core step. */
 typedef struct {
     foc_angle_t tElectricalAngle;
     foc_scalar_t qElectricalSpeedPu;
     bool bValid;
+    motor_position_event_t eEvent; /**< This step only; never latched. */
 } motor_electrical_feedback_t;
 
 /** @brief i[k] and model u[k-1]; Observer publishes the next feedback. */
@@ -60,19 +67,6 @@ typedef struct {
     bool bPwmSaturated; /**< Prior submitted interval reached duty limits. */
     bool bAlignActive; /**< ALIGN was active at this Prepare entry. */
 } motor_position_sample_t;
-
-typedef enum {
-    MOTOR_POSITION_EVENT_NONE = 0,
-    MOTOR_POSITION_EVENT_OBSERVER_ACTIVE,
-    MOTOR_POSITION_EVENT_OBSERVER_LOST,
-} motor_position_event_t;
-
-/** @brief Algorithm-independent estimate; qualification belongs to Position. */
-typedef struct {
-    foc_angle_t tElectricalAngle;
-    foc_scalar_t qElectricalSpeedPu; /**< Shared control-chain speed base. */
-    bool bValid;
-} foc_observer_output_t;
 
 typedef struct {
     foc_scalar_t qU;

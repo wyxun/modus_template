@@ -1,7 +1,7 @@
 
 # FOC 模块架构与实时数据流
 
-第 1～6 节用于通用设计分析，不代表本仓库已实现所有算法或采用该顺序；当前源码契约以第 7 节为准。完整实现说明见 [当前架构文档](../../../../foc/docs/foc-architecture.md)。本节同步于 2026-10-09。
+第 1～6 节用于通用设计分析，不代表本仓库已实现所有算法或采用该顺序；当前源码契约以第 7 节为准。完整实现说明见 [当前架构文档](../../../../foc/docs/foc-architecture.md)。本节同步于 2026-10-15。
 
 ## 1. 顶层数据流
 
@@ -40,7 +40,7 @@ sensor / estimator / forced angle -> select electrical feedback
 
 ## 3. 快速环与慢速环
 
-以下是单周期采样/更新的设计分析示例；本仓库运行次序见 7.3，Observer 当前在控制提交之后更新：
+以下是单周期采样/更新的设计分析示例；本仓库运行次序见 7.3，SMO 当前在控制提交之后更新：
 
 1. 定时器触发 ADC；
 2. ADC/DMA 完成中断取得样本；
@@ -102,33 +102,35 @@ sensor / estimator / forced angle -> select electrical feedback
 ### 7.1 责任和实际链路
 
 ```text
-Motor -- i[k], u_model[k-1], 限幅信息 --> Position --> Observer --> SMO
-Motor <-- 电角度、速度 pu、有效性 ------ Position <-- 估计与质量 -----+
+Motor -- i[k], u_model[k-1], 限幅信息 --> Position --> SMO
+Motor <-- 电角度、速度 pu、有效性、事件 -- Position <-- 估计与质量 --+
   |
-  +-- 命令 + 当前电流 + 最终反馈 --> Core -- 电压模型/占空比/限幅 --> Motor
+  +-- 命令 + 当前电流 + 最终反馈 --> Core -- 调制度/占空比/限幅 --> Motor
                                                                       |
                                                                    PWM 端口
 ```
 
-Motor 的速度环调用 PI 操作，Core 执行电流 PI、Park/逆 Park 和调制。Position 选择和补偿角度来源并产生接管/丢失事件；Motor 消费事件，转换运行模式或锁存故障。Observer 当前仅实现 SMO。传感器与 Motor/Startup 强拖候选也进入 Position；未来 HFI/Flux/EKF 独立接入 Observer，不改变既有 SMO 输入语义。Core 只产生数学输出，Motor 负责硬件 PWM 提交。
+Motor 的速度环调用 PI 操作，Core 执行电流 PI、Park/逆 Park 和调制。Position 选择和补偿角度来源，在本拍反馈的 `eEvent` 中发布接管/丢失事件；`motor_IsrControlStep()` 内部消费事件，转换运行模式或锁存故障。当前 Position 直接拥有并调用唯一的 SMO，已删除 `foc_observer.c/h` 包装层。传感器与 Motor/Startup 强拖候选也进入 Position；未来确需多算法模块时，按真实输入输出放在 ISR 编排同级，不在 Position 内预建嵌套层，不改变既有 SMO 输入语义。Core 只产生数学输出，Motor 负责硬件 PWM 提交。
 
 ### 7.2 最小接口与单位
 
 | 边界 | 传递的数据 | 归属与解释 |
 |---|---|---|
 | Motor 元数据 → Position 初始化 | 相 Rs/Ld/Lq、电压/电流基值、极对数等只读物理数据 | `motor_params_t` 是纯数据；初始化适配器挑出消费者需要的字段 |
-| Position → Observer 初始化 | `foc_electrical_model_t`、选定后端配置 | 当前电气模型只有 Rs/Ld/Lq、Vbase/Ibase 五个物理字段；仅 Init 使用并生成 pu 离散系数，不保留调用者指针 |
+| Position → SMO 初始化 | `foc_electrical_model_t`、`foc_smo_cfg_t tSmoCfg` | 当前电气模型只有 Rs/Ld/Lq、Vbase/Ibase 五个物理字段；仅 Init 使用并生成 pu 离散系数，不保留调用者指针 |
 | Motor → Position 每拍 | `motor_position_sample_t` | 电流 alpha-beta pu、前一控制区间模型电压 alpha-beta、强拖候选反馈、运行代次、限幅信息 |
-| Position → Observer 每拍 | `foc_observer_input_t` | 按算法组合独立输入；当前 `tSmo` 为 `foc_smo_input_t`，仅借用电流与上一控制区间模型电压的 const 指针，调用结束即失效 |
-| Observer → Position | `foc_observer_estimates_t` | Step 输出调用者拥有的候选快照；当前 `tSmo.tEstimate` 仅含角度 BAM32、速度 PU 和有效性，SMO 自有 `qBemfStrengthPu` 表示 BEMF 的 1-范数 |
-| Position → Motor | `motor_electrical_feedback_t` 与 `motor_position_event_t` | 选定电角度、速度 pu、有效性；接管/丢失事件不进入算法公式 |
+| Position → SMO 每拍 | `foc_smo_input_t` | 仅借用电流与上一控制区间模型电压的 const 指针，调用结束即失效 |
+| SMO → Position | 扁平 `foc_smo_output_t tEstimate` | Step 输出调用者拥有的候选快照，直接含角度 BAM32、速度 PU、有效性及 SMO 自有 `qBemfStrengthPu`（BEMF 的 1-范数） |
+| Position → Motor | `motor_electrical_feedback_t`，内含 `motor_position_event_t eEvent` | 选定电角度、速度 pu、有效性和本拍瞬时事件；不锁存事件，无 `TakeEvent` API；事件不进入算法公式 |
 | Motor → Core | `foc_core_command_t` 与 `foc_core_input_t` | 模式、当前 alpha-beta 电流、最终电角度与速度 pu；当前电压模式参考是旧调制标度，不能直接视作实测母线下的电压 PU |
-| Core → Motor | `foc_core_output_t` | 当前电流 dq/alpha-beta、旧调制标度电压 dq/alpha-beta、占空比和电压/PWM 边界标志；输出缓冲归调用者，Core 通过 Step/Reset 写入，消费者只读 |
+| Core → Motor | `foc_core_output_t` | 当前电流 dq、旧调制标度电压 dq/alpha-beta、占空比和电压/PWM 边界标志；输出缓冲归调用者，Core 通过 Step/Reset 写入，消费者只读 |
 | Motor → 端口 | 原始采样请求、归一化三相占空比、安全生命周期操作 | 原始 ADC 不进入算法；算法不接触定时器、ADC、编码器或硬件停机 |
+
+Core 输入保留 `tCurrentAlphaBeta`，输出不再复制该输入。Motor 原始 ADC 样本在本次采样内局部使用；运行时有效 Iq 上限只保存在 `tLimits.qMaxIq`，不另存重复缓存。Encoder 从上一份已发布快照读取角度、滤波速度和采样完成 tick，计算本次差分，不另存上一角度/tick。
 
 电气模型中的物理量只在初始化换算；不需要额外保存完整 pu 参数副本，代数合并产生离散系数即可。新后端确需磁链等参数时，在实际实现与校验同时落地时扩展有单位的模型/配置，不先增加保留字段或函数指针。
 
-BEMF 的 1-范数是当前 SMO 接管策略的证据；EKF 协方差、磁链残差等不是同一个量。新增后端需要在 Observer/Position 之间定义该证据的纯数据语义及资格策略，Motor 继续只接收最终反馈和事件。`bValid` 只报告估计自身有效性，不能替代 Position 的接管资格判定。
+BEMF 的 1-范数是当前 SMO 接管策略的证据；EKF 协方差、磁链残差等不是同一个量。新增后端需要在估计算法/Position 之间定义该证据的纯数据语义及资格策略，Motor 继续只接收最终反馈和事件。`bValid` 只报告估计自身有效性，不能替代 Position 的接管资格判定。
 
 ### 7.3 当前拍关系
 
@@ -136,9 +138,9 @@ BEMF 的 1-范数是当前 SMO 接管策略的证据；EKF 协方差、磁链残
 
 1. Motor 在 Prepare 内保存本拍电流，并用上一份提交占空比和实测母线重构前一控制区间电压；发布模型有效性和上一周期 PWM 饱和标志。
 2. `motor_IsrPrepare` 采集 `i[k]`，保存执行 Core 前已有的 `u_model[k-1]`、强拖候选和运行代次；返回 CONTROL_READY 才执行以下普通运行分支；IDENTIFICATION_READY 使用 7.6 的固定轴分支。
-3. Position 使用已发布的上一轮估计、传感器缓存或强拖候选，返回本拍最终电反馈。
-4. Motor 消费接管/丢失事件；`motor_IsrControlStep` 分频推进速度环、执行一次 Core，再提交本拍新占空比，返回控制状态。
-5. 启用 Observer 且位置与控制结果均 OK 时，Position 用第 2 步的快照推进 Observer；新估计供下一拍选择反馈。控制失败后清除候选与观测历史；模型无效时不推进估算。
+3. Position 使用已发布的上一轮估计、传感器缓存或强拖候选，返回本拍最终电反馈及瞬时 `eEvent`。
+4. `motor_IsrControlStep` 先在内部消费反馈的接管/丢失事件，再分频推进速度环、执行一次 Core，提交本拍新占空比并返回控制状态；失效事件进入安全停机。
+5. 启用 SMO 且位置与控制结果均 OK 时，Position 用第 2 步的快照直接推进 SMO；新估计供下一拍选择反馈。控制失败后清除候选与观测历史；模型无效时不推进估算。
 6. App 按 Identify 当前操作组装对应独立 PU 样本。电压直接取第 1 步共享 Motor 快照；样本有效性包含本拍控制成功条件。子算法返回请求后，App 同 ISR 经 Motor 应用，详见 7.6。
 
 Prepare 与 Control 的配对守卫不能删除。运行代次用于重启时重置候选和观测历史；无效反馈使 Motor 锁存位置故障，不得用上次值冒充本拍有效反馈。
@@ -151,11 +153,11 @@ ALIGN 在 Prepare 内完成自己的采样/Core/PWM，捕获零位时返回 CAPT
 
 ALIGN 用固定 0 电角度励磁，dq 与 alpha-beta 轴重合，无需编码器估计。完成动作由 Motor 显式指定：无感启动进入 RUN；编码器校准请求 Position 捕获机械零点。捕获零点确需编码器，不能把这个后处理要求解释为励磁依赖编码器。
 
-Core 电压字段保持调制度语义；Motor 根据上一份提交占空比及实测母线发布统一理想电压 PU，Observer 和 Identify 消费同一份模型与有效性。模型无效不把零电压当有效输入。当前模型尚无死区/压降及 PWM 生效点的硬件证据，不能据主机回归称为已验证的实际施加电压。修改 Core 输出到电压 PU 时必须同时核对 PI 增益、母线除法及限幅，不能只更改字段名称。
+Core 电压字段保持调制度语义；Motor 根据上一份提交占空比及实测母线发布统一理想电压 PU，SMO 和 Identify 消费同一份模型与有效性。模型无效不把零电压当有效输入。当前模型尚无死区/压降及 PWM 生效点的硬件证据，不能据主机回归称为已验证的实际施加电压。修改 Core 输出到电压 PU 时必须同时核对 PI 增益、母线除法及限幅，不能只更改字段名称。
 
 ### 7.5 可执行验收
 
-`foc/tests/run_foc_module_boundary_test.ps1` 检查 Motor 与具体算法隔离、Core/Observer 的直接依赖、纯数据类型及 App 的调用顺序；对 Motor 头文件额外用 GCC `-M` 检查启用 Observer 配置下的实际传递性依赖。直接引入和经 Startup 间接引入 Position/SMO 的负例都必须被拒绝。守卫不覆盖任意模块、所有条件编译组合，也不证明运行语义或电压模型正确；还必须编译浮点/定点模块，检查逐拍结果以及复位、错误和接管路径。
+`foc/tests/run_foc_module_boundary_test.ps1` 检查 Motor 与具体算法隔离、Core/SMO 的直接依赖、纯数据类型及 App 的调用顺序；对 Motor 头文件额外用 GCC `-M` 检查启用 SMO 配置下的实际传递性依赖。直接引入和经 Startup 间接引入 Position/SMO 的负例都必须被拒绝。守卫不覆盖任意模块、所有条件编译组合，也不证明运行语义或电压模型正确；还必须编译浮点/定点模块，检查逐拍结果以及复位、错误和接管路径。
 
 ### 7.6 Identify 算法隔离与数值边界
 
@@ -163,31 +165,33 @@ Rs、Ld 各有固定的采样类型和类型明确的 ISR 入口。新增磁链�
 
 Motor 在 Prepare 内通过 `motor_SampleDcBusPuIsr()` 读取并归一化母线，以上一份提交占空比重构共享理想 αβ 电压 PU。App 不再保存占空比、另采母线或做三角变换，直接组装 Rs/Ld 独立样本。两种算法都不接收编码器角度或速度，模型包含占空比裁剪与母线变化；硬件时序、死区和器件压降仍需验证。公开 ISR 入口与实现留在各自源文件，内部采集/计算只接受自身子状态；父层仅在入口管理活动操作及锁存错误，日志开关不改变安全判定。
 
-子算法只产生无量纲调制度请求或中止请求；App 在同一 ISR 内经 Motor 语义 API 应用，优先处理中止。当前 `motor_IdentificationApplyIsr()` 仅更新参考，下一控制步骤才计算并提交 PWM，不在当前 ISR 重新执行 Core；中止则立即安全停止。Motor 拒绝调制度请求时，同时锁存 Identify 错误并停止 Motor。前台 `identify_Run()` 仅为 Rs/Ld 执行有 5 s 超时的固定矢量对齐准备，调用 `motor_StartIdentification()`；完成后 Motor 保持 PWM、切到固定零角度电压模式。`MOTOR_ISR_IDENTIFICATION_READY` 分支跳过 Position/Observer，Motor 只在这个会话内允许无反馈控制；普通运行仍要求有效反馈。Stop/Fault 清除会话，普通电流/电压设定不得覆盖该会话。对齐期间不启动子算法采集。前台 Encoder 与 Identify 独立推进；Encoder 失败不阻塞辨识，不通过辨识操作枚举决定传感器是否运行。新增旋转辨识必须选择自己的准备流程。
+子算法只产生无量纲调制度请求或中止请求；App 在同一 ISR 内经 Motor 语义 API 应用，优先处理中止。当前 `motor_IdentificationApplyIsr()` 仅更新参考，下一控制步骤才计算并提交 PWM，不在当前 ISR 重新执行 Core；中止则立即安全停止。Motor 拒绝调制度请求时，同时锁存 Identify 错误并停止 Motor。前台 `identify_Run()` 仅为 Rs/Ld 执行有 5 s 超时的固定矢量对齐准备，调用 `motor_StartIdentification()`；完成后 Motor 保持 PWM、切到固定零角度电压模式。`MOTOR_ISR_IDENTIFICATION_READY` 分支跳过 Position/SMO，Motor 只在这个会话内允许无反馈控制；普通运行仍要求有效反馈。Stop/Fault 清除会话，普通电流/电压设定不得覆盖该会话。对齐期间不启动子算法采集。前台 Encoder 与 Identify 独立推进；Encoder 失败不阻塞辨识，不通过辨识操作枚举决定传感器是否运行。新增旋转辨识必须选择自己的准备流程。
 
 Ld 使用连续横轴电流扰动门槛，不把固定零转速当实测运动证据。它不能证明转子静止；测量沿对齐 α 轴的增量电感时，转子必须保持静止，凸极电机须保持对齐。注入请求在 k 拍提交参考，k+1 拍计算 PWM，k+2 拍才采到对应区间，捕获延迟不得低于 2 + 母线采样延迟拍；硬件 PWM 生效点仍需单独验证。
 
-`identify_Run()` 用带操作标签的 `identify_result_t` 一次性发布 PU 结果，实例内仍保留结果；`identify_ResultToPhysical()` 仅在前台显示时换算 mΩ/µH。成功的 R 结果更新 Identify 内供后续 L 使用的电阻 PU；本次没有自动更新正在运行的 Observer 系数。模型更新必须安排在安全更新点并重算相关离散系数。
+`identify_Run()` 用带操作标签的 `identify_result_t` 一次性发布 PU 结果，实例内仍保留结果；`identify_ResultToPhysical()` 仅在前台显示时换算 mΩ/µH。成功的 R 结果更新 Identify 内供后续 L 使用的电阻 PU；本次没有自动更新正在运行的 SMO 系数。模型更新必须安排在安全更新点并重算相关离散系数。
 
 采样状态归所属实例。Ld 的注入计划、ISR 采样状态、流程与结果按职责组合，不使用文件静态可变状态隐藏成员。头文件可见性是按值组合的 C 类型要求，不允许外部业务直接操作运行成员。
 
 `run_identify_pu_boundary_test.ps1` 守卫独立输入类型及 ISR 依赖；Rs/Ld 数值回归分别在 `identify_resistance_test.c`、`identify_inductance_failure_test.c`，覆盖实测模型电压、物理 RL 瞬态、异常与实例基值隔离。新增算法增加独立测试。修改共享基值、坐标符号或模型拍语义时，应作为影响既有算法的单独变更，同时运行这两组回归和 App 请求提交测试。
 
 
-### 7.7 Observer 独立算法与组合契约
+### 7.7 单 SMO 契约与多算法扩展边界
 
-Observer 配置、输入和候选结果按算法分组；每个算法定义自己的 cfg/input/output/state 类型。基础坐标和 `foc_observer_output_t` 可共用，算法证据不得塞进通用估计，也不得借用另一个算法的指标语义。新增算法向组合类型添加自己的成员，不改变既有 SMO 的字段含义。
+当前只实现 SMO，Position 直接持有 `foc_smo_t tSmo` 和扁平 `foc_smo_output_t tEstimate`，初始化配置为 `foc_smo_cfg_t tSmoCfg`。SMO 定义自己的 cfg/input/output/state 类型；不保留通用 Observer 输出、嵌套候选或只转发单算法的组合包装。输出直接包含角度、速度、有效性及 SMO 自有 BEMF 证据。
 
-`FOC_OBSERVER_BACKEND` 保留已有构建参数名，按算法位集合解释。Observer 的 Init/Step/Reset 使用独立条件编译块直接调用启用算法；并行算法各自持有实例状态，不使用 union、文件静态可变状态或运行时函数指针分派。当前仅 NONE/SMO 可运行，HFI 位保留但显式编译拒绝；`FOC_ENABLE_HFI=1` 也不得假成功。新增 HFI 必须同时提供算法、注入通道及 Position 策略。
+`FOC_OBSERVER_BACKEND` 保留已有构建参数名，按算法位集合解释。Position 在对应编译条件下直接调用 SMO 的 Init/Step/Reset。当前仅 NONE/SMO 可运行，HFI 位保留但显式编译拒绝；`FOC_ENABLE_HFI=1` 也不得假成功。新增 HFI 必须同时提供算法、注入通道及 Position 策略。
 
-Position 保存 Step 输出的候选纯数据，不读取或写入 Observer/算法运行成员。Observer 不选择位置源、不决定强拖接管、不提交 PWM。强拖候选仍来自 Startup/Motor；纯强拖、SMO 旁路观测、强拖切 SMO 由 Position 的既有策略区分。Observer Reset 清历史并保留系数，Position 在同一生命周期边界清空自己保存的候选。
+Position 保存 Step 输出的候选纯数据，不读取或写入算法运行成员。SMO 不选择位置源、不决定强拖接管、不提交 PWM。强拖候选仍来自 Startup/Motor；纯强拖、SMO 旁路观测、强拖切 SMO 由 Position 的既有策略区分。SMO Reset 清历史并保留系数，Position 在同一生命周期边界清空自己保存的候选。
+
+未来多算法模块必须基于真实算法输入、输出及消费者设计，并放在 ISR 编排层与 Position、Motor 同级接线；当前不为未来需求创建嵌套包装、通用结果或保留字段。各算法独立持有状态、输入和证据，不使用 union 共用并发状态、文件静态可变状态或运行时函数指针分派，不改变既有 SMO 字段含义。
 
 HFI+SMO 扩展需同时保留两套状态、独立输入和证据，并约定一致的坐标、PU 基值及估计时刻。HFI 的注入请求经 Motor/Core 合成、限幅并提交，采样对应注入时序；SMO 对注入分量的处理也必须明确。Position 管理双向资格确认、滞回及环绕角度渐变；这些尚未实现，不能把当前强拖切 SMO 状态机当作双无感实现。扩展必须保留 SMO 逐拍回归和三条强拖路径回归。
 
 
 ### 7.8 实现范围与文档同步
 
-当前 `motor_config.h` 选择 HARD_DRAG、启用 I/f 斜坡配置与 SMO 接管策略，自动接管关闭；不能沿用历史文档“默认 Encoder、斜坡关闭”的描述。配置快照与完整时序集中在 [当前架构文档](../../../../foc/docs/foc-architecture.md)，这里不复制数值。
+当前 `motor_config.h` 选择 SENSOR、关闭 I/f 启动斜坡，SMO 作为影子观测器运行；接管与自动接管关闭。默认四路波形用于编码器/SMO 原始角度、环绕角差和反电势强度对照。配置快照与完整时序集中在 [当前架构文档](../../../../foc/docs/foc-architecture.md)。
 
 App 通过 Prepare 的 ALIGN 快照和 Position 启动预算语义 API 接线，不读取内部生命周期枚举或交接计数。电流基值不作为 ADC 量程，Motor 保留宽 PU 测量值并检查表达范围，Clarke/Park 宽乘法保持 FLOAT/FIXED 一致。实时三层调用深度规定仍与当前分层调用链不一致，不因内联或主机测试而视为合规。硬件过流、位置有效性及模型有效性分别处理。
 

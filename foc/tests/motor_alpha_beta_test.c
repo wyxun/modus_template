@@ -10,7 +10,7 @@
 
 #include "motor.h"
 #include "motor_position.h"
-#include "foc_observer.h"
+#include "foc_smo.h"
 
 static foc_core_input_t s_tLastCoreInput = {0};
 static foc_current_abc_t s_tSample = {0};
@@ -209,13 +209,11 @@ int main(void)
     motor_position_cfg_t tPositionCfg = {0};
     motor_position_sample_t tSample = {0};
     motor_electrical_feedback_t tFeedback = {0};
-    const foc_observer_cfg_t tObserverConfig = {
-        .tSmo = {
-            .wSampleFrequencyHz = 20000U,
-            .wBemfCutoffRadiansPerSecond = 10000U,
-            .wSlidingGainMillivolt = 3500U,
-            .qCurrentEstimateLimit = FOC_ONE,
-        },
+    const foc_smo_cfg_t tObserverConfig = {
+        .wSampleFrequencyHz = 20000U,
+        .wBemfCutoffRadiansPerSecond = 10000U,
+        .wSlidingGainMillivolt = 3500U,
+        .qCurrentEstimateLimit = FOC_ONE,
     };
     foc_result_t eResult = FOC_RESULT_OK;
     foc_scalar_t qBusPu = FOC_ZERO;
@@ -235,7 +233,7 @@ int main(void)
     tPositionCfg.tSensor.pContext = &s_chPositionContext;
     tPositionCfg.chPolePairs = 7U;
     tPositionCfg.qElectricalSpeedBaseHz = FOC_SCALAR(100.0f);
-    tPositionCfg.tObserverCfg = tObserverConfig;
+    tPositionCfg.tSmoCfg = tObserverConfig;
     tConfig.tCurrentPiParams.qOutputMinimum = FOC_NEG_ONE;
     tConfig.tCurrentPiParams.qOutputMaximum = FOC_ONE;
     tConfig.tCurrentPiParams.qIntegratorMinimum = FOC_NEG_ONE;
@@ -268,6 +266,7 @@ int main(void)
     s_wDcBusRaw = 8000U;
     tPositionCfg.ptMotorParams = &tMotor.tParams;
     assert(motor_position_Init(&tPosition, &tPositionCfg) == FOC_RESULT_OK);
+    tPosition.bElectricalZeroValid = true; /* Fixture zero is BAM32=0. */
     assert(tMotor.tParams.wCurrentBaseMilliamp == FOC_CURRENT_BASE_MILLIAMP);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_NO_CONTROL);
@@ -275,9 +274,6 @@ int main(void)
     assert(eResult == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CONTROL_READY);
-    assert(tMotor.tCalib.tLatestSample.wU == s_tLastRawSample.wU);
-    assert(tMotor.tCalib.tLatestSample.wV == s_tLastRawSample.wV);
-    assert(tMotor.tCalib.tLatestSample.wW == s_tLastRawSample.wW);
     assert(FOC_POSITION_GET(&tPosition, 1U, &tSample, &tFeedback) ==
            FOC_RESULT_OK);
     motor_IsrControlStep(&tMotor, &tFeedback);
@@ -285,7 +281,7 @@ int main(void)
 
     assert(s_wClarkeCalls == 1U);
     assert(s_wCoreCalls == 1U);
-    assert(tPosition.tObserver.tSmo.tAxis[0].z_prev <
+    assert(tPosition.tSmo.tAxis[0].z_prev <
            FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,
@@ -301,27 +297,24 @@ int main(void)
     motor_position_ObserverStep(&tPosition, &tSample);
     assert(s_wClarkeCalls == 2U);
     assert(s_wCoreCalls == 2U);
-    assert(foc_to_float(tPosition.tObserver.tSmo.tAxis[0].i_hat) >
+    assert(foc_to_float(tPosition.tSmo.tAxis[0].i_hat) >
            0.006f);
 
     motor_Stop(&tMotor);
     motor_position_ResetObserver(&tPosition);
-    assert(tPosition.tObserver.tSmo.tAxis[0].z_prev ==
+    assert(tPosition.tSmo.tAxis[0].z_prev ==
            FOC_ZERO);
     eResult = motor_RequestAlignment(&tMotor, true);
     assert(eResult == FOC_RESULT_OK);
     assert(motor_IsrPrepare(&tMotor, &tSample) ==
            MOTOR_ISR_CAPTURE_ZERO);
-    assert(tMotor.tCalib.tLatestSample.wU == s_tLastRawSample.wU);
-    assert(tMotor.tCalib.tLatestSample.wV == s_tLastRawSample.wV);
-    assert(tMotor.tCalib.tLatestSample.wW == s_tLastRawSample.wW);
     assert(motor_position_CaptureZero(&tPosition, 3U) == FOC_RESULT_OK);
     motor_CompleteAlignIsr(&tMotor, FOC_RESULT_OK);
 
     assert(s_wClarkeCalls == 3U);
     assert(s_wCoreCalls == 3U);
     assert(s_tLastCoreInput.tElectricalAngle.wBam32 == 0U);
-    assert(tPosition.tObserver.tSmo.tAxis[0].z_prev ==
+    assert(tPosition.tSmo.tAxis[0].z_prev ==
            FOC_ZERO);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qAlpha, 0.2f);
     test_AssertNear(s_tLastCoreInput.tCurrentAlphaBeta.qBeta,

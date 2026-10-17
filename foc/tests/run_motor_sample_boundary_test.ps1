@@ -22,13 +22,15 @@ $sources = @('foc/tests/motor_sample_boundary_test.c',
     'foc/math/foc_trig_lut.c') |
     ForEach-Object { Join-Path $repoRoot $_ }
 foreach ($backend in @('FLOAT', 'FIXED')) {
-  foreach ($counts in @(119, 1000, 32768, 32769)) {
+  foreach ($counts in @(119, 476, 1000, 32768, 32769)) {
    foreach ($polarity in @(0, 1)) {
+    $calibrationSamples = if ($counts -eq 476) { 200 } else { 1 }
     $exe = Join-Path $env:TEMP "motor_sample_${backend}_${counts}_${polarity}.exe"
     & $gcc -std=gnu11 -O0 -Wall -Wextra -Werror @includes @sources `
         '-D__PERFC_USE_USER_CUSTOM_PORTING__=1' `
         '-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>' `
-        '-D__COMPILER_HAS_GNU_EXTENSIONS__=1' '-DFOC_OFFSET_CALIB_TIMES=1U' `
+        '-D__COMPILER_HAS_GNU_EXTENSIONS__=1' `
+        "-DFOC_OFFSET_CALIB_TIMES=${calibrationSamples}U" `
         "-DFOC_CURRENT_COUNTS_PER_BASE=$counts" '-DFOC_TRIG_BACKEND=1' `
         "-DFOC_CURRENT_SAMPLE_INVERTED=$polarity" `
         '-DFOC_DCBUS_SOURCE=2U' '-DFOC_DCBUS_MV_PER_COUNT_NUM=1U' `

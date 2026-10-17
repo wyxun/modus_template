@@ -4,13 +4,21 @@
 #include <math.h>
 #include "../motor/motor.c"
 
-static foc_current_sample_t raw = {2048U, 2048U, 2048U};
+#if FOC_CURRENT_COUNTS_PER_BASE == 476U
+#define TEST_CURRENT_ZERO_CODE 10236U
+#else
+#define TEST_CURRENT_ZERO_CODE 2048U
+#endif
+static foc_current_sample_t raw = {
+    TEST_CURRENT_ZERO_CODE, TEST_CURRENT_ZERO_CODE, TEST_CURRENT_ZERO_CODE};
 static uint32_t bus = 12000U;
 static bool pwm;
 static uint32_t busReads;
+static bool currentReadFailed;
 
 foc_result_t foc_SampleCurrent(foc_current_sample_t *out)
 {
+    if (currentReadFailed) { return FOC_RESULT_SAFETY; }
     *out = raw;
     return FOC_RESULT_OK;
 }
@@ -36,6 +44,35 @@ static void near(foc_scalar_t actual, float expected)
     assert(fabsf(foc_to_float(actual) - expected) < 0.0003f);
 }
 
+/** @brief Exercise real calibration with full-width raw samples.
+ * @param motor Motor in ADC_CAL. @return None. */
+static void test_Calibrate(motor_t *motor)
+{
+    motor_position_sample_t sample = {0};
+    uint64_t sum = 0U;
+
+    assert(!pwm && !motor->tCalib.bIsCalibrated);
+    assert(motor_Start(motor, FOC_MODE_VOLTAGE) == FOC_RESULT_BUSY);
+    for (uint32_t n = 0U; n < FOC_OFFSET_CALIB_TIMES; n++) {
+        uint32_t code = TEST_CURRENT_ZERO_CODE + (n % 4U == 3U ? 1U : 0U);
+        raw = (foc_current_sample_t){code, code, code};
+        sum += code;
+        assert(motor_IsrPrepare(motor, &sample) == MOTOR_ISR_NO_CONTROL);
+        assert(!pwm);
+    }
+    assert(motor->eState == MOTOR_STATE_IDLE);
+    assert(motor->tCalib.bIsCalibrated);
+    assert(motor->tCalib.hwSampleCount == FOC_OFFSET_CALIB_TIMES);
+    assert(motor->tCalib.ullSumU == sum);
+    assert(motor->tCalib.ullSumV == sum);
+    assert(motor->tCalib.ullSumW == sum);
+    assert(motor->tCalib.wOffsetU == sum / FOC_OFFSET_CALIB_TIMES);
+    assert(motor->tCalib.wOffsetV == sum / FOC_OFFSET_CALIB_TIMES);
+    assert(motor->tCalib.wOffsetW == sum / FOC_OFFSET_CALIB_TIMES);
+    raw = (foc_current_sample_t){TEST_CURRENT_ZERO_CODE,
+        TEST_CURRENT_ZERO_CODE, TEST_CURRENT_ZERO_CODE};
+}
+
 /** @brief Fixed-bus identification ignores later ADC publication windows.
  * @param cfg Initialized control profile. @return None. */
 static void test_IdentificationBusSnapshot(const motor_cfg_t *cfg)
@@ -44,10 +81,11 @@ static void test_IdentificationBusSnapshot(const motor_cfg_t *cfg)
     motor_position_sample_t sample = {0};
     uint32_t reads = 0U;
 
-    raw = (foc_current_sample_t){2048U, 2048U, 2048U};
+    raw = (foc_current_sample_t){TEST_CURRENT_ZERO_CODE,
+        TEST_CURRENT_ZERO_CODE, TEST_CURRENT_ZERO_CODE};
     bus = 12000U;
     assert(motor_Init(&motor, cfg) == FOC_RESULT_OK);
-    assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
+    test_Calibrate(&motor);
     bus = FOC_PORT_ADC_SAMPLE_INVALID;
     assert(motor_StartIdentification(&motor) == FOC_RESULT_SAFETY);
     assert(!pwm);
@@ -100,7 +138,8 @@ static void test_IdentificationBusSnapshot(const motor_cfg_t *cfg)
  * @param None. @return None. */
 static void test_CurrentConversion(void)
 {
-    const uint32_t values[] = {0U, 1U, 2048U, 4095U, 65535U,
+    const uint32_t values[] = {0U, 1U, 2048U, 4095U, 8192U, 8193U,
+        10236U, 16380U, 65535U,
         7798783U, 7798784U, INT32_MAX, 2147483648U, UINT32_MAX - 1U,
         UINT32_MAX};
     for (unsigned i = 0U; i < sizeof(values) / sizeof(values[0]); i++) {
@@ -124,6 +163,25 @@ static void test_CurrentConversion(void)
                 assert(actual == (float)delta / FOC_CURRENT_COUNTS_PER_BASE);
 #endif
             }
+        }
+    }
+    if (FOC_CURRENT_COUNTS_PER_BASE == 476U) {
+        for (int32_t delta = -119; delta <= 119; delta++) {
+            foc_scalar_t actual = FOC_ZERO;
+            int32_t signedDelta = FOC_CURRENT_SAMPLE_INVERTED ?
+                                  -delta : delta;
+            assert(_motor_NormalizeCurrent(
+                (uint32_t)(10236 + 4 * delta), 10236U, &actual));
+#if defined(FOC_NUMERIC_FIXED)
+            assert(actual == (int64_t)signedDelta * FOC_Q_SCALE / 119);
+#else
+            assert(actual == (float)signedDelta / 119.0f);
+#endif
+        }
+        for (uint32_t low = 1U; low <= 3U; low++) {
+            foc_scalar_t actual = FOC_ZERO;
+            assert(_motor_NormalizeCurrent(10236U + low, 10236U, &actual));
+            assert(actual != FOC_ZERO);
         }
     }
 }
@@ -156,7 +214,14 @@ int main(void)
         .fAlignTimeSeconds = 0.01f, .qAlignCurrent = FOC_SCALAR(0.05f),
     };
     assert(motor_Init(&motor, &cfg) == FOC_RESULT_OK);
+    currentReadFailed = true;
     assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_NO_CONTROL);
+    assert(motor.eState == MOTOR_STATE_FAULT && !pwm);
+    assert((motor.wFaults & MOTOR_FAULT_ADC_CAL) != 0U);
+    currentReadFailed = false;
+    assert(motor_ClearFault(&motor) == FOC_RESULT_OK);
+    assert(motor.tCalib.hwSampleCount == 0U && motor.tCalib.ullSumU == 0U);
+    test_Calibrate(&motor);
     assert(motor_Start(&motor, FOC_MODE_VOLTAGE) == FOC_RESULT_OK);
     assert(motor_SetVoltageReference(&motor, FOC_SCALAR(0.8f), FOC_ZERO) ==
            FOC_RESULT_OK);
@@ -174,8 +239,10 @@ int main(void)
     uint32_t du = 5U * FOC_CURRENT_COUNTS_PER_BASE / 4U;
     uint32_t dv = FOC_CURRENT_COUNTS_PER_BASE / 4U;
     uint32_t dw = FOC_CURRENT_COUNTS_PER_BASE / 2U;
-    raw = (foc_current_sample_t){2048 + sign * (int32_t)du,
-        2048 + sign * (int32_t)dv, 2048 - sign * (int32_t)dw};
+    raw = (foc_current_sample_t){
+        (uint32_t)((int32_t)TEST_CURRENT_ZERO_CODE + sign * (int32_t)du),
+        (uint32_t)((int32_t)TEST_CURRENT_ZERO_CODE + sign * (int32_t)dv),
+        (uint32_t)((int32_t)TEST_CURRENT_ZERO_CODE - sign * (int32_t)dw)};
     assert(motor_IsrPrepare(&motor, &sample) == MOTOR_ISR_CONTROL_READY);
     float i = (float)du / FOC_CURRENT_COUNTS_PER_BASE;
     near(sample.tCurrentAlphaBeta.qAlpha, i);

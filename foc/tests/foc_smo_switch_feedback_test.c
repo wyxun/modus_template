@@ -38,6 +38,8 @@ int main(void)
     const foc_smo_input_t tInput = {&tCurrent, &tVoltage};
     foc_result_t eResult = FOC_RESULT_OK;
     float fExpectedCurrent = 0.0f;
+    float fExpectedSliding = 0.0f;
+    float fExpectedBemf = 0.0f;
 
     eResult = foc_smo_Init(&tSmo, &tParams, &tConfig);
     assert(eResult == FOC_RESULT_OK);
@@ -47,6 +49,11 @@ int main(void)
     fExpectedCurrent = -0.5f *
         foc_to_float(tSmo.tExec.ku) *
         foc_to_float(tSmo.tExec.h);
+    fExpectedSliding = foc_to_float(tSmo.tExec.h) *
+        fmaxf(-1.0f, fminf(1.0f, fExpectedCurrent / 0.1f));
+    fExpectedBemf = foc_to_float(tSmo.tExec.b0) *
+        (fExpectedSliding + foc_to_float(tSmo.tExec.h)) -
+        foc_to_float(tSmo.tExec.a1) * 0.1f;
 
     eResult = foc_smo_Step(&tSmo, &tInput,
                            &tOutput);
@@ -55,7 +62,7 @@ int main(void)
                tSmo.tAxis[0].i_hat) -
                  fExpectedCurrent) < 0.001f);
     assert(fabsf(foc_to_float(tSmo.tAxis[0].e_hat) -
-                 0.06f) < 0.001f);
-    assert(tOutput.tEstimate.bValid);
+                 fExpectedBemf) < 0.001f);
+    assert(tOutput.bValid);
     return 0;
 }

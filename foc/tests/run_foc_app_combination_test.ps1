@@ -14,7 +14,6 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/math/foc_trig_lut.c"),
     (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/observer/foc_encoder.c"),
-    (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
     (Join-Path $repoRoot "foc/identify/identify.c"),
     (Join-Path $repoRoot "foc/identify/identify_resistance.c"),
@@ -61,7 +60,9 @@ foreach ($backend in @("FLOAT", "FIXED")) {
                 $bindingArgs = @("-include", $staticHeader)
             }
             $compileArgs = @($commonArgs + $includeArgs + $bindingArgs + @(
-                "-DFOC_NUMERIC_$backend=1", "-DFOC_OBSERVER_BACKEND=$observer"
+                "-DFOC_NUMERIC_$backend=1", "-DFOC_OBSERVER_BACKEND=$observer",
+                "-DMOTOR_CONFIG_OBSERVER_TAKEOVER=0",
+                "-DMOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER=0"
             ) + $sourceFiles + @("-Wl,--gc-sections", "-lm", "-o", $testExe))
             & $gccCmd @compileArgs
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

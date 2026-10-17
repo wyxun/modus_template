@@ -97,6 +97,10 @@ MDI_INLINE foc_result_t mdi_g431_foc_set_duty(
  * @brief Read the published mean DC-bus ADC count.
  * @param eChannel Logical FOC ADC channel token.
  * @return Right-aligned ADC count or FOC_PORT_ADC_SAMPLE_INVALID.
+ * @note The ISR reads one aligned 32-bit word, so the previous or next
+ *       complete mean is sufficient. Group SEQ is odd throughout foreground
+ *       reduction; rejecting that window would spuriously reset the SMO.
+ *       First-publication validity still gates this single-channel read.
  */
 MDI_INLINE uint32_t mdi_g431_foc_sample_dcbus_raw(
     foc_port_adc_channel_e eChannel)
@@ -105,7 +109,7 @@ MDI_INLINE uint32_t mdi_g431_foc_sample_dcbus_raw(
         return FOC_PORT_ADC_SAMPLE_INVALID;
     }
 #if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
-    if (!MDI_ADC_IsReady(adc_bus_voltage)) {
+    if (!g_bG431AdcMeanValid) {
         return FOC_PORT_ADC_SAMPLE_INVALID;
     }
     return MDI_ADC_ReadFast(adc_bus_voltage);
@@ -169,6 +173,51 @@ static inline foc_result_t mdi_g431_foc_encoder_read(foc_angle_t *ptAngle)
                         (uint32_t)achData[1]) & 0x0FFFU) << 20U;
     return FOC_RESULT_OK;
 }
+
+/** @brief Read AS5600 volatile CONF; never accesses OTP programming.
+ * @param phwConfig Caller-owned config word. @return Checked I2C status. */
+static inline foc_result_t mdi_g431_foc_encoder_read_config(
+    uint16_t *phwConfig)
+{
+    uint8_t achData[2] = {0U, 0U};
+    mdi_status_t eStatus = MDI_OK;
+
+    if (phwConfig == NULL) { return FOC_RESULT_NULL; }
+    eStatus = MDI_I2C_Reg8_Read(encoder_angle, 0x07U, achData, 2U);
+    if (eStatus != MDI_OK) { return mdi_g431_foc_status(eStatus); }
+    *phwConfig = (uint16_t)(((uint16_t)achData[0] << 8U) | achData[1]);
+    return FOC_RESULT_OK;
+}
+
+/** @brief Change only SF bits in volatile CONF and verify the full word.
+ * @param chFilter SF code 0..3. @return Checked I2C/readback status.
+ * @note Foreground, stopped Motor only; caller enforces the state guard. */
+static inline foc_result_t mdi_g431_foc_encoder_set_slow_filter(
+    uint8_t chFilter)
+{
+    uint16_t hwConfig = 0U;
+    uint16_t hwReadback = 0U;
+    foc_result_t eResult = FOC_RESULT_OK;
+    mdi_status_t eWrite = MDI_OK;
+
+    if (chFilter > 3U) { return FOC_RESULT_OUT_OF_RANGE; }
+    eResult = mdi_g431_foc_encoder_read_config(&hwConfig);
+    if (eResult != FOC_RESULT_OK) { return eResult; }
+    hwConfig = (uint16_t)((hwConfig & 0xFCFFU) |
+                         ((uint16_t)chFilter << 8U));
+    eWrite = MDI_I2C_Reg8_WriteByte(encoder_angle, 0x07U,
+                                    (uint8_t)(hwConfig >> 8U));
+    if (eWrite != MDI_OK) { return mdi_g431_foc_status(eWrite); }
+    eResult = mdi_g431_foc_encoder_read_config(&hwReadback);
+    if (eResult != FOC_RESULT_OK) { return eResult; }
+    return hwReadback == hwConfig ? FOC_RESULT_OK : FOC_RESULT_SAFETY;
+}
+
+#undef FOC_ENCODER_PORT_READ_CONFIG
+#undef FOC_ENCODER_PORT_SET_SLOW_FILTER
+#define FOC_ENCODER_PORT_READ_CONFIG(P) mdi_g431_foc_encoder_read_config(P)
+#define FOC_ENCODER_PORT_SET_SLOW_FILTER(V)                                     \
+    mdi_g431_foc_encoder_set_slow_filter(V)
 
 /* The raw encoder source is a fixed target capability. foc_encoder.c sees
  * these names through the independent FOC port contract and emits direct

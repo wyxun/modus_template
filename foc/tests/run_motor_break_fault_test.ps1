@@ -21,7 +21,6 @@ $sourceFiles = @(
     (Join-Path $repoRoot "foc/motor/motor.c"),
     (Join-Path $repoRoot "foc/modulation/foc_modulation.c"),
     (Join-Path $repoRoot "foc/motor/motor_startup.c"),
-    (Join-Path $repoRoot "foc/observer/foc_observer.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
     (Join-Path $repoRoot "foc/control/foc_pid.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),

@@ -26,21 +26,27 @@
 /* Position source: SENSOR or HARD_DRAG. */
 #define MOTOR_CONFIG_POSITION_SOURCE    MOTOR_POSITION_SOURCE_HARD_DRAG
 
-/* Fixed-frequency current/voltage test; speed uses the startup ramp below. */
-#define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           20000
+/* Ramped startup supplies the forced angle; no fixed-frequency fallback. */
+#define MOTOR_CONFIG_HARD_DRAG_ELECTRICAL_MILLIHZ           0
 
-/* 20 kHz: 2 s I/f ramp, at most 10 s open-loop run after alignment.
- * Automatic SMO handoff remains disabled during hard-drag testing. */
-#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     40000U
+/* Bench handoff trial: motor speed 0.4 = 160 electrical Hz.
+ * At 20 kHz: 3 s ramp, 200 ms qualification, 20 ms blend, 10 s timeout.
+ * Startup is command-triggered; existing safety gates remain active. */
+#define MOTOR_CONFIG_STARTUP_RAMP_STEPS                     60000U
 #define MOTOR_CONFIG_STARTUP_MAX_RUN_STEPS                  200000U
+/* Legacy name; this magnitude drives the rotating forced d-axis field. */
 #define MOTOR_CONFIG_STARTUP_IQ_PU                          0.06f
 #define MOTOR_CONFIG_STARTUP_CLOSED_SPEED_STEP_PU           0.0005f
-#define MOTOR_CONFIG_OBSERVER_TAKEOVER                      false
-#define MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER                 false
+#ifndef MOTOR_CONFIG_OBSERVER_TAKEOVER
+#define MOTOR_CONFIG_OBSERVER_TAKEOVER                      true
+#endif
+#ifndef MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER
+#define MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER                 true
+#endif
 #define MOTOR_CONFIG_OBSERVER_QUALIFICATION_STEPS           4000U
 #define MOTOR_CONFIG_OBSERVER_BLEND_STEPS                   400U
 #define MOTOR_CONFIG_OBSERVER_MIN_BEMF_PU                   0.13f
-#define MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU                  0.075f
+#define MOTOR_CONFIG_OBSERVER_MIN_SPEED_PU                  0.4f
 #define MOTOR_CONFIG_OBSERVER_MAX_SPEED_ERROR_RATIO         0.10f
 #define MOTOR_CONFIG_OBSERVER_MAX_ANGLE_ERROR_TURNS         0.125f
 

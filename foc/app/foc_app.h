@@ -20,7 +20,6 @@
 #include "motor_position.h"
 
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-#include "foc_observer.h"
 #include "foc_smo.h"
 #endif
 
@@ -40,7 +39,7 @@ typedef struct {
     motor_position_source_t ePositionSource;
     foc_encoder_cfg_t tEncoderCfg;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    foc_observer_cfg_t tObserverCfg;
+    foc_smo_cfg_t tSmoCfg;
     bool bObserverTakeover;
     bool bObserverAutoTakeover;
     uint32_t wObserverQualificationSteps;

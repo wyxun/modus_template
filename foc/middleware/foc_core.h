@@ -54,7 +54,6 @@ typedef struct {
 
 /** Read-only control result; no PI state is exposed to the orchestrator. */
 typedef struct {
-    foc_ab_t       tCurrentAlphaBeta;
     foc_dq_t       tCurrent;
     foc_dq_t       tVoltage; /**< Modulation command, not measured voltage PU. */
     foc_ab_t       tVoltageAlphaBeta; /**< Prior-to-clipping modulation. */

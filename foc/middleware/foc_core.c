@@ -35,7 +35,6 @@ void foc_core_Reset(foc_core_state_t *ptState, foc_core_output_t *ptOutput)
     }
     foc_pid_Reset(&ptState->tIdPi);
     foc_pid_Reset(&ptState->tIqPi);
-    ptOutput->tCurrentAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
     ptOutput->tCurrent = (foc_dq_t){FOC_ZERO, FOC_ZERO};
     ptOutput->tVoltage = (foc_dq_t){FOC_ZERO, FOC_ZERO};
     ptOutput->tVoltageAlphaBeta = (foc_ab_t){FOC_ZERO, FOC_ZERO};
@@ -66,9 +65,8 @@ foc_result_t foc_core_step(foc_core_state_t *ptState,
     if (ptCommand->eMode >= FOC_MODE_MAX) {
         return FOC_RESULT_INVALID_ARGUMENT;
     }
-    ptOutput->tCurrentAlphaBeta = ptInput->tCurrentAlphaBeta;
     foc_angle_sincos(ptInput->tElectricalAngle, &qSin, &qCos);
-    eResult = foc_park_cached(&ptOutput->tCurrentAlphaBeta, qSin, qCos,
+    eResult = foc_park_cached(&ptInput->tCurrentAlphaBeta, qSin, qCos,
                               &ptOutput->tCurrent);
     if (eResult != FOC_RESULT_OK) {
         return eResult;

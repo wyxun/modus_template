@@ -18,7 +18,7 @@
 
 typedef struct {
     foc_scalar_t qMaxPhaseCurrent; /**< Reference limit; not ADC full scale. */
-    foc_scalar_t qMaxIq;
+    foc_scalar_t qMaxIq; /**< Config: zero disables; runtime: effective limit. */
     foc_scalar_t qMaxSpeedReference;
     foc_scalar_t qMaxModulation;
 } motor_limits_t;
@@ -32,7 +32,6 @@ typedef struct {
     uint64_t ullSumW;
     uint16_t hwSampleCount;
     bool bIsCalibrated;
-    foc_current_sample_t tLatestSample;
     uint32_t wTimeoutSteps;
     uint32_t wElapsedSteps;
 } motor_adc_calib_t;
@@ -56,6 +55,8 @@ typedef struct {
     int32_t nHardDragElectricalMilliHz; /**< Zero disables the candidate. */
     uint32_t wStartupRampSteps; /**< Zero disables sensorless startup. */
     uint32_t wStartupMaxRunSteps;
+    /** Legacy field name: startup field-current magnitude in current PU.
+     * Applied on forced d; q starts at zero for rotor-frame handoff. */
     foc_scalar_t qStartupIqPu;
     foc_scalar_t qStartupClosedLoopSpeedStepPu;
     uint32_t wControlFrequencyHz;         /**< High-frequency ISR rate. */
@@ -83,7 +84,6 @@ typedef enum {
 
 typedef struct {
     foc_pid_t tPi;
-    foc_scalar_t qIqLimit; /**< min(phase limit, enabled Iq limit), pu. */
     uint8_t chDiv;
     uint8_t chCount;
 } motor_speed_loop_t;
@@ -95,7 +95,7 @@ typedef struct {
     uint32_t wHardDragStepBam32;
     foc_angle_t tHardDragAngle;
     foc_scalar_t qHardDragSpeedPu;
-    foc_scalar_t qIqPu;
+    foc_scalar_t qIqPu; /**< Startup field magnitude; legacy member name. */
     foc_scalar_t qTargetSpeedPu;
     foc_scalar_t qClosedLoopSpeedStepPu;
     bool bSensorless;
@@ -301,8 +301,6 @@ foc_result_t motor_IsrControlStep(
 
 /** @brief Finish an ALIGN capture requested by motor_IsrPrepare. */
 void motor_CompleteAlignIsr(motor_t *ptMotor, foc_result_t eCapture);
-void motor_ApplyPositionEventIsr(motor_t *ptMotor,
-    motor_position_event_t eEvent, foc_scalar_t qObservedSpeedPu);
 
 /**
  * @brief Copy a safe status snapshot.

@@ -127,4 +127,12 @@ foc_result_t foc_PwmClearFault(void);
 #endif
 #endif
 
+/* Foreground-only filter diagnostics; unsupported targets reject explicitly. */
+#ifndef FOC_ENCODER_PORT_READ_CONFIG
+#define FOC_ENCODER_PORT_READ_CONFIG(P) ((void)(P), FOC_RESULT_DISABLED)
+#endif
+#ifndef FOC_ENCODER_PORT_SET_SLOW_FILTER
+#define FOC_ENCODER_PORT_SET_SLOW_FILTER(V) ((void)(V), FOC_RESULT_DISABLED)
+#endif
+
 #endif /* FOC_PORT_H */

@@ -1,8 +1,7 @@
 $ErrorActionPreference = "Stop"
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..\..")).Path
 $sourceFiles = @(
-    (Join-Path $repoRoot "foc/tests/foc_observer_contract_test.c"),
-    (Join-Path $repoRoot "foc/observer/foc_observer.c"),
+    (Join-Path $repoRoot "foc/tests/foc_smo_lifecycle_test.c"),
     (Join-Path $repoRoot "foc/observer/foc_smo.c"),
     (Join-Path $repoRoot "foc/math/foc_numeric.c"),
     (Join-Path $repoRoot "foc/math/foc_angle.c"),
@@ -15,28 +14,27 @@ $includeArgs = @($includePaths | ForEach-Object {
 })
 
 foreach ($backend in @("FLOAT", "FIXED")) {
-    foreach ($algorithms in @(0, 1)) {
-        $testName = "foc_observer_contract_${backend}_${algorithms}.exe"
-        $testExe = Join-Path $env:TEMP $testName
-        $backendDefine = "-DFOC_NUMERIC_$backend=1"
-        $compileArgs = @(
-            "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
-            "-DFOC_TRIG_BACKEND=1",
-            "-DFOC_ENABLE_SMO=1", "-DFOC_OBSERVER_BACKEND=$algorithms",
-            $backendDefine,
-            $includeArgs, $sourceFiles, @("-lm", "-o", $testExe)
-        )
-        & gcc @compileArgs
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-        & $testExe
-        if ($LASTEXITCODE -ne 0) {
-            exit $LASTEXITCODE
-        }
-        Write-Output "$backend Observer set=$algorithms contract tests passed"
+    $testName = "foc_smo_lifecycle_${backend}.exe"
+    $testExe = Join-Path $env:TEMP $testName
+    $backendDefine = "-DFOC_NUMERIC_$backend=1"
+    $compileArgs = @(
+        "-std=gnu11", "-O0", "-Wall", "-Wextra", "-Werror",
+        "-DFOC_TRIG_BACKEND=1",
+        "-DFOC_ENABLE_SMO=1", "-DFOC_OBSERVER_BACKEND=1",
+        $backendDefine,
+        $includeArgs, $sourceFiles, @("-lm", "-o", $testExe)
+    )
+    & gcc @compileArgs
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
     }
+    & $testExe
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
+    Write-Output "$backend SMO lifecycle tests passed"
 }
+
 
 # Unimplemented or contradictory algorithm sets must fail at compile time.
 $configPath = Join-Path $repoRoot 'foc/foc_config.h'

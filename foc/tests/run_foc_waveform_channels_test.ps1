@@ -7,8 +7,10 @@ $source = Get-Content -LiteralPath (
     Join-Path $repoRoot "foc\app\foc_debug.c") -Raw
 
 foreach ($channel in @(
-        "ENCODER_ANGLE", "SMO_ANGLE", "ANGLE_ERROR", "IQ",
-        "SMO_BEMF_ALPHA", "SMO_BEMF_BETA",
+        "ENCODER_ANGLE", "SMO_ANGLE", "SMO_SPEED", "SMO_FILTERED_SPEED",
+        "ANGLE_ERROR", "IQ",
+        "CURRENT_ALPHA", "CURRENT_BETA",
+        "SMO_BEMF_STRENGTH", "SMO_BEMF_ALPHA", "SMO_BEMF_BETA",
         "SMO_CURRENT_ERROR_ALPHA", "SMO_CURRENT_ERROR_BETA",
         "SMO_SLIDING_ALPHA", "SMO_SLIDING_BETA")) {
     if ($header -notmatch "FOC_DEBUG_WAVEFORM_ENABLE_$channel") {
@@ -25,6 +27,8 @@ if ($header -notmatch '#\s*error[^\r\n]*at most six channels') {
 foreach ($expression in @(
         'tInput\.tElectricalAngle',
         'ptObserverOutput->tElectricalAngle',
+        'tEstimate\.qElectricalSpeedPu',
+        'tTracking\.qObserverSpeedFilteredPu',
         'foc_angle_diff\(',
         'tOutput\.tCurrent\.qQ',
         'tAxis\[0\]\.e_hat',

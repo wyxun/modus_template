@@ -48,6 +48,39 @@ static void test_BuildConfig(foc_electrical_model_t *ptMotorParams,
     };
 }
 
+/** @brief Exercise the boundary at zero, inside and outside both edges.
+ * @param None. @return None. */
+static void test_BoundarySwitch(void)
+{
+    const float errors[] = {0.0f, 0.025f, -0.025f, 0.05f, -0.05f,
+                            0.1f, -0.1f, 0.2f, -0.2f};
+    foc_electrical_model_t model = {0};
+    foc_smo_cfg_t cfg = {0};
+    foc_smo_t smo = {0};
+    foc_smo_output_t out = {0};
+    foc_ab_t current = {0};
+    foc_ab_t voltage = {0};
+    const foc_smo_input_t input = {&current, &voltage};
+
+    test_BuildConfig(&model, &cfg);
+    assert(foc_smo_Init(&smo, &model, &cfg) == FOC_RESULT_OK);
+    for (unsigned n = 0U; n < sizeof(errors) / sizeof(errors[0]); n++) {
+        float normalized = fmaxf(-1.0f, fminf(1.0f, errors[n] / 0.1f));
+        float expected = foc_to_float(smo.tExec.h) * normalized;
+
+        foc_smo_Reset(&smo);
+        current.qAlpha = foc_from_float(-errors[n]);
+        current.qBeta = foc_from_float(errors[n]);
+        assert(foc_smo_Step(&smo, &input, &out) == FOC_RESULT_OK);
+        test_AssertNear(smo.tAxis[0].z_prev, expected, 0.0003f);
+        test_AssertNear(smo.tAxis[1].z_prev, -expected, 0.0003f);
+        test_AssertNear(smo.tAxis[0].e_hat,
+                       expected * foc_to_float(smo.tExec.b0), 0.0003f);
+        assert(foc_abs(smo.tAxis[0].z_prev) <= smo.tExec.h);
+        assert(out.bValid == (errors[n] != 0.0f));
+    }
+}
+
 /**
  * @brief Verify the simple SMO model, filter, angle and reset behavior.
  * @param None.
@@ -63,6 +96,8 @@ int main(void)
     foc_ab_t tVoltage = {FOC_SCALAR(0.1f), FOC_ZERO};
     const foc_smo_input_t tInput = {&tCurrent, &tVoltage};
     foc_result_t eResult = FOC_RESULT_OK;
+
+    test_BoundarySwitch();
 
     eResult = foc_smo_Init(NULL, &tMotorParams, &tConfig);
     assert(eResult == FOC_RESULT_NULL);
@@ -82,10 +117,10 @@ int main(void)
     assert(eResult == FOC_RESULT_OK);
     test_AssertNear(tSmo.tAxis[0].i_hat,
                     0.0042857f, 0.0003f);
-    test_AssertNear(tSmo.tAxis[0].e_hat, 0.0583333f, 0.001f);
-    assert(tOutput.tEstimate.bValid);
-    assert(tOutput.tEstimate.tElectricalAngle.wBam32 > 0x80000000U);
-    assert(tOutput.tEstimate.qElectricalSpeedPu == FOC_ZERO);
+    test_AssertNear(tSmo.tAxis[0].e_hat, 0.0025f, 0.0003f);
+    assert(tOutput.bValid);
+    assert(tOutput.tElectricalAngle.wBam32 > 0x80000000U);
+    assert(tOutput.qElectricalSpeedPu == FOC_ZERO);
 
     foc_smo_Reset(&tSmo);
     assert(tSmo.tAxis[0].i_hat == FOC_ZERO);
@@ -131,7 +166,7 @@ int main(void)
     tCurrent.qAlpha = NAN;
     assert(foc_smo_Step(&tSmo, &tInput, &tOutput) ==
            FOC_RESULT_INVALID_ARGUMENT);
-    assert(!tOutput.tEstimate.bValid);
+    assert(!tOutput.bValid);
     assert(tSmo.tAxis[0].i_hat == FOC_ZERO);
 #endif
     return 0;

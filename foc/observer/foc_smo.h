@@ -36,7 +36,9 @@ typedef struct {
 
 /** @brief SMO estimate and its own evidence; not takeover qualification. */
 typedef struct {
-    foc_observer_output_t tEstimate;
+    foc_angle_t tElectricalAngle;
+    foc_scalar_t qElectricalSpeedPu; /**< Window mean, held between updates. */
+    bool bValid; /**< Nonzero EMF only; Position checks takeover quality. */
     foc_scalar_t qBemfStrengthPu; /**< (|e_alpha| + |e_beta|) / Vbase. */
 } foc_smo_output_t;
 
@@ -47,8 +49,10 @@ typedef struct {
     foc_scalar_t b0; /**< wc*Ts / (2 + wc*Ts). */
     foc_scalar_t a1; /**< (wc*Ts - 2) / (2 + wc*Ts). */
     foc_scalar_t h; /**< Sliding voltage pu. */
-    foc_scalar_t speed_scale; /**< 1 / (Ts * electrical base Hz). */
+    foc_scalar_t boundary_gain; /**< h / current boundary PU; Init only. */
+    foc_scalar_t speed_scale; /**< 1 / (N * Ts * electrical base Hz). */
     foc_scalar_t i_limit; /**< Symmetric estimated-current bound, PU. */
+    uint8_t chSpeedSpan; /**< Nearest 1 ms, clamped to 1..32 samples. */
 } foc_smo_exec_t;
 
 /** @brief One stationary-axis current and back-EMF history. */
@@ -65,6 +69,9 @@ typedef struct {
     foc_smo_exec_t tExec;
     foc_smo_axis_t tAxis[2];
     foc_angle_t tPreviousElectricalAngle;
+    foc_scalar_t qSpeedAngleSum;
+    foc_scalar_t qHeldSpeedPu;
+    uint8_t chSpeedSamples;
     bool bHasPreviousElectricalAngle;
     bool bInitialized;
 } foc_smo_t;
@@ -96,6 +103,9 @@ void foc_smo_Reset(foc_smo_t *ptSmo);
  * @param ptOutput Electrical angle, speed PU, and nonzero-EMF indication.
  * @return FOC_RESULT_OK, NULL, or INVALID_ARGUMENT.
  * @note bValid indicates nonzero estimated EMF, not angle qualification.
+ *       Angle updates each step. Speed uses non-overlapping ~1 ms windows
+ *       (1..32 intervals); the first speed is zero until a window completes.
+ *       Each adjacent angle increment must remain within half a turn.
  */
 foc_result_t foc_smo_Step(foc_smo_t *ptSmo,
                           const foc_smo_input_t *ptInput,

@@ -55,7 +55,7 @@ static const foc_encoder_sensor_ops_t s_tSensorOps = {
     .fnRead = test_SensorRead,
 };
 
-/** @brief Check provider resolution, wrapping, inversion and speed precision. */
+/** @brief Check angle/tick wrapping, inversion and speed precision. */
 static void test_Resolution(uint8_t chBits, bool bInvert)
 {
     const uint32_t wCounts = 1UL << chBits;
@@ -73,7 +73,7 @@ static void test_Resolution(uint8_t chBits, bool bInvert)
                          2000.0f / (float)wCounts;
 
     assert(foc_encoder_Init(&tEncoder, &tCfg) == FOC_RESULT_OK);
-    s_lTick = 1000;
+    s_lTick = (int64_t)UINT32_MAX - 499;
     assert(foc_encoder_Run(&tEncoder) == FOC_RESULT_OK);
     tSensor.wRawAngle = 1U;
     s_lTick += 1000;

@@ -72,11 +72,6 @@ Reject-Pattern $types '#\s*include\s*[<"](?!foc_angle\.h[>"])' `
     'Shared value types must not introduce algorithm or hardware dependencies'
 Reject-Pattern $types '\(\s*\*\s*\w+\s*\)\s*\(' `
     'Shared value types must not become a callback interface'
-$observer = Read-Source 'foc/observer/foc_observer.h'
-foreach ($type in @('motor_t', 'motor_params_t', 'motor_position_t')) {
-    Reject-Pattern $observer "\b$type\b" `
-        'Observer initialization must accept the narrow electrical model'
-}
 $smoHeader = Read-Source 'foc/observer/foc_smo.h'
 foreach ($field in @('ptCurrentAlphaBeta', 'ptVoltageModelAlphaBeta')) {
     if ($smoHeader -notmatch "const\s+foc_ab_t\s*\*\s*$field\s*;") {
@@ -84,11 +79,10 @@ foreach ($field in @('ptCurrentAlphaBeta', 'ptVoltageModelAlphaBeta')) {
     }
 }
 Reject-Pattern (Read-Source 'foc/motor/motor_position.c') `
-    'tObserver\s*\.' 'Position must consume candidates, not Observer state'
-if ($observer -notmatch 'foc_smo_input_t\s+tSmo\s*;' -or
-    $observer -notmatch 'foc_smo_output_t\s+tSmo\s*;') {
-    throw 'Observer must compose independent algorithm input/output types'
-}
+    'tSmo\s*\.' 'Position must consume outputs, not SMO history'
+$positionHeader = Read-Source 'foc/motor/motor_position.h'
+Reject-Pattern $positionHeader '(?-i:\bfoc_observer_\w+)|ePendingEvent' `
+    'Position must use direct SMO data and immediate handoff results'
 $coreHeader = Read-Source 'foc/middleware/foc_core.h'
 if ($coreHeader -notmatch 'foc_core_step\([^;]+foc_core_output_t\s*\*') {
     throw 'Core must publish control output through an explicit data parameter'

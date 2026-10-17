@@ -18,15 +18,13 @@
 
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
 #define FOC_APP_INIT_OBSERVER_CONFIG                                            \
-    .tObserverCfg = {                                                           \
-        .tSmo = {                                                               \
-            .wBemfCutoffRadiansPerSecond =                                      \
-                MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND,                \
-            .wSlidingGainMillivolt =                                            \
-                MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT,                        \
-            .qCurrentEstimateLimit = FOC_SCALAR(                                \
-                MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU),                    \
-        },                                                                      \
+    .tSmoCfg = {                                                                \
+        .wBemfCutoffRadiansPerSecond =                                          \
+            MOTOR_CONFIG_SMO_BEMF_CUTOFF_RADIANS_PER_SECOND,                    \
+        .wSlidingGainMillivolt =                                                \
+            MOTOR_CONFIG_SMO_SLIDING_GAIN_MILLIVOLT,                            \
+        .qCurrentEstimateLimit = FOC_SCALAR(                                    \
+            MOTOR_CONFIG_SMO_CURRENT_ESTIMATE_LIMIT_PU),                        \
     },                                                                          \
     .bObserverTakeover = MOTOR_CONFIG_OBSERVER_TAKEOVER,                        \
     .bObserverAutoTakeover = MOTOR_CONFIG_OBSERVER_AUTO_TAKEOVER,               \
@@ -301,11 +299,17 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     ptThis->bEncoderEnabled = false;
     ptThis->bReady = false;
 
-    if (ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_SENSOR) {
+    if (ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_SENSOR
+#if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT) &&                           \
+    FOC_DEBUG_WAVEFORM_ENABLE_ENCODER_REFERENCE
+        || ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_HARD_DRAG
+#endif
+    ) {
         tEncoderConfig = ptConfig->tEncoderCfg;
         eEncoder = foc_encoder_Init(&ptThis->tEncoder,
                                     &tEncoderConfig);
-        if (eEncoder != FOC_RESULT_OK) {
+        if (eEncoder != FOC_RESULT_OK &&
+            ptConfig->ePositionSource == MOTOR_POSITION_SOURCE_SENSOR) {
             return (int)eEncoder;
         }
     } else {
@@ -345,8 +349,8 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
         FOC_HF_ISR_HZ;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     tPositionConfig.ptMotorParams = &ptThis->tMotor.tParams;
-    tPositionConfig.tObserverCfg = ptConfig->tObserverCfg;
-    tPositionConfig.tObserverCfg.tSmo.wSampleFrequencyHz =
+    tPositionConfig.tSmoCfg = ptConfig->tSmoCfg;
+    tPositionConfig.tSmoCfg.wSampleFrequencyHz =
         FOC_HF_ISR_HZ;
     tPositionConfig.bObserverTakeover = ptConfig->bObserverTakeover;
     tPositionConfig.bAutoTakeover = ptConfig->bObserverAutoTakeover;
@@ -578,9 +582,6 @@ void foc_app_HighFrequencyISR(void)
             ePosition = FOC_POSITION_GET(&tFocApp.tPosition,
                                           wNowTick, &tSample,
                                           &tFeedback);
-            motor_ApplyPositionEventIsr(&tFocApp.tMotor,
-                motor_position_TakeEvent(&tFocApp.tPosition),
-                tFeedback.qElectricalSpeedPu);
             eControl = motor_IsrControlStep(&tFocApp.tMotor,
                 ePosition == FOC_RESULT_OK ? &tFeedback : NULL);
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE

@@ -8,7 +8,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "foc_observer.h"
+#include "foc_config.h"
+#include "foc_smo.h"
 #include "foc_position.h"
 
 /** @brief Portable fallback for a mechanical sensor provider. */
@@ -63,13 +64,13 @@ typedef struct {
     foc_scalar_t qElectricalSpeedBaseHz;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
     const struct motor_params_t *ptMotorParams;
-    foc_observer_cfg_t tObserverCfg;
+    foc_smo_cfg_t tSmoCfg;
     bool bObserverTakeover;
     bool bAutoTakeover;
     uint32_t wQualificationSteps;
     uint32_t wBlendSteps;
     foc_scalar_t qMinimumBemfPu;
-    foc_scalar_t qMinimumSpeedPu;
+    foc_scalar_t qMinimumSpeedPu; /**< Forced-speed entry floor, pu. */
     foc_scalar_t qMaximumSpeedErrorRatio;
     foc_scalar_t qMaximumAngleErrorTurns;
 #endif
@@ -85,12 +86,16 @@ typedef struct {
     foc_scalar_t qMinimumSpeedPu;
     foc_scalar_t qMaximumSpeedErrorRatio;
     foc_scalar_t qMaximumAngleErrorTurns;
+    /** Init-derived entry minimum minus its allowed speed error. */
+    foc_scalar_t qMinimumHoldSpeedPu;
     bool bObserverSpeedReady;
 } motor_position_smo_t;
 
+/** Half an electrical degree per ISR, in BAM32. */
+#define MOTOR_POSITION_MAX_BLEND_CORRECTION_BAM32 (UINT32_MAX / 720U)
+
 /** @brief Candidate handoff limits and mutable progress. */
 typedef struct {
-    uint32_t wMaxBlendCorrectionBam32;
     foc_scalar_t qBlendWeight;
     foc_scalar_t qBlendWeightStep;
     foc_angle_t tPreviousObserverAngle;
@@ -101,13 +106,12 @@ typedef struct {
     uint32_t wBlendCount;
     int32_t nBlendCorrectionBam32;
     motor_position_feedback_state_t eFeedbackState;
-    motor_position_event_t ePendingEvent;
     bool bObserverTakeover;
     bool bAutoTakeover;
 } motor_position_handoff_t;
 #endif
 
-/** @brief App-owned position state; the Observer is an optional child. */
+/** @brief Position selection state and the optional direct SMO instance. */
 typedef struct {
     /* Keep layout identical even if the target binding macro becomes
      * visible after this header in another translation unit. */
@@ -119,9 +123,9 @@ typedef struct {
     motor_position_source_t eSource;
     bool bElectricalZeroValid;
 #if FOC_OBSERVER_BACKEND != FOC_OBSERVER_BACKEND_NONE
-    foc_observer_t tObserver;
-    foc_observer_estimates_t tEstimates;
-    motor_position_smo_t tSmo;
+    foc_smo_t tSmo;
+    foc_smo_output_t tEstimate;
+    motor_position_smo_t tTracking;
     motor_position_handoff_t tHandoff;
 #endif
 } motor_position_t;
@@ -148,8 +152,6 @@ void motor_position_InvalidateZero(motor_position_t *ptPosition);
 bool motor_position_ZeroValid(const motor_position_t *ptPosition);
 bool motor_position_UsesHardDrag(const motor_position_t *ptPosition);
 void motor_position_ResetObserver(motor_position_t *ptPosition);
-motor_position_event_t motor_position_TakeEvent(
-    motor_position_t *ptPosition);
 
 /* Target adapters may replace only the raw mechanical sensor binding. */
 #ifndef FOC_SENSOR_POSITION_GET
