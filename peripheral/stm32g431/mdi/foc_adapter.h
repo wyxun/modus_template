@@ -89,6 +89,7 @@ MDI_INLINE foc_result_t mdi_g431_foc_set_duty(
     if (eStatus != MDI_OK) {
         return mdi_g431_foc_status(eStatus);
     }
+    mdi_g431_isr_probe_record_duty();
     /* Bridge CCR preload is disabled; UG here restarts center-aligned TIM1. */
     return FOC_RESULT_OK;
 }
@@ -247,6 +248,8 @@ static inline foc_result_t mdi_g431_foc_encoder_set_slow_filter(
 #define FOC_PORT_PWM_GET_FAULT() mdi_g431_foc_pwm_get_fault()
 #undef FOC_PORT_PWM_CLEAR_FAULT
 #define FOC_PORT_PWM_CLEAR_FAULT() mdi_g431_foc_pwm_clear_fault()
+#undef FOC_PORT_ISR_PROBE_POST_OBSERVER
+#define FOC_PORT_ISR_PROBE_POST_OBSERVER() mdi_g431_isr_probe_record_observer()
 
 /* G431 uses the typed Encoder service as its fixed position provider. The
  * service still owns filtering, age checks and publication state; this only

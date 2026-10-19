@@ -290,7 +290,7 @@ int foc_app_Init(uintptr_t wObjectAddr, uintptr_t wObjectCfgAddr)
     ptThis->chRunPt = 0U;
     ptThis->lForegroundTimestamp = 0;
     ptThis->lForegroundPeriodTicks = perfc_convert_us_to_ticks(1000U);
-#if !defined(__NO_USE_LOG__)
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
     ptThis->tIsrTiming.lReportPeriodTicks = perfc_convert_ms_to_ticks(1000U);
     ptThis->tIsrTiming.lBudgetTicks =
         ptThis->tIsrTiming.lReportPeriodTicks / FOC_HF_ISR_HZ;
@@ -427,7 +427,7 @@ static int foc_app_Clock(uintptr_t wObjectAddr)
     return MODUS_SUCCESS;
 }
 
-#if !defined(__NO_USE_LOG__)
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
 /** @brief Report mean ISR time, or this window's maximum after an overrun.
  * @param ptApp App owning the timing window.
  * @return None.
@@ -484,7 +484,7 @@ static int foc_app_Run(uintptr_t wObjectAddr)
             &ptThis->lForegroundTimestamp, true))
         motor_PollBreakFault(&ptThis->tMotor);
         foc_debug_CurrentStepRun(ptThis);
-#if !defined(__NO_USE_LOG__)
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
         foc_app_ReportIsrTiming(ptThis);
 #endif
         if (!ptThis->bReady) {
@@ -588,6 +588,7 @@ void foc_app_HighFrequencyISR(void)
             if (ePosition == FOC_RESULT_OK && eControl == FOC_RESULT_OK) {
                 motor_position_ObserverStep(&tFocApp.tPosition,
                                              &tSample);
+                FOC_PORT_ISR_PROBE_POST_OBSERVER();
             } else {
                 motor_position_ResetObserver(&tFocApp.tPosition);
             }
@@ -604,7 +605,7 @@ void foc_app_HighFrequencyISR(void)
 #if MWAVEFORM_ENABLE && defined(FOC_NUMERIC_FLOAT)
     mwaveform.Step();
 #endif
-#if !defined(__NO_USE_LOG__)
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
     /* Unsigned subtraction also handles a 32-bit cycle-counter wrap.
      * One invocation must complete within 2^32 ticks; no ISR logging. */
     uint32_t wElapsed = (uint32_t)get_system_ticks() - wNowTick;

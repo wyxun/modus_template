@@ -76,6 +76,8 @@ void TIM1_CC_IRQHandler(void)               {}
 void ADC1_2_IRQHandler(void)
 {
     if ((ADC1->ISR & ADC_ISR_JEOS) != 0U) {
+        g_bG431JeosConsumed = false;
+        uint32_t wEntryCyc = mdi_g431_isr_probe_begin();
         /*
          * MDI's completed-frame provider owns the JEOS acknowledgement when
          * the FOC cycle consumes the frame.  Calling FOC before clearing the
@@ -86,10 +88,8 @@ void ADC1_2_IRQHandler(void)
          */
         foc_app_HighFrequencyISR();
 
-        ADC1->ISR = ADC_ISR_JEOS | ADC_ISR_OVR;
-        ADC2->ISR = ADC_ISR_JEOS | ADC_ISR_OVR;
-        (void)ADC1->ISR;
-        (void)ADC2->ISR;
+        mdi_g431_ack_unconsumed_current_frame();
+        mdi_g431_isr_probe_end(wEntryCyc);
     }
 }
 

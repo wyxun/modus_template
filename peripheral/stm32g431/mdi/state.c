@@ -11,6 +11,7 @@ volatile uint16_t
     g_awG431AdcDma[G431_ADC_DMA_SLOT_COUNT * G431_ADC_BLOCK_SIZE];
 volatile uint32_t g_wG431AdcPublished = 0U;
 volatile uint32_t g_wG431AdcConsumed = 0U;
+volatile bool g_bG431JeosConsumed = false;
 volatile uint32_t g_wG431AdcSequence = 0U;
 mdi_g431_adc_state_t g_tG431Adc = {false, MDI_OK};
 volatile uint32_t g_awG431AdcMean[G431_ADC_CHANNEL_COUNT];
@@ -20,3 +21,4 @@ volatile bool g_bG431FaultLatched = false;
 g431_stream_state_t g_tG431Stream;
 uint8_t g_achG431StreamTx[G431_STREAM_BUFFER_SIZE];
 uint8_t g_achG431StreamRx[G431_STREAM_BUFFER_SIZE];
+mdi_g431_isr_probe_t g_tG431IsrProbe;

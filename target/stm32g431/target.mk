@@ -15,6 +15,8 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 C_DEFS += -DFOC_TRIG_BACKEND=2
 C_DEFS += -DFOC_HF_ISR_HZ=20000U
+# During the board timing trial, keep only the outer DWT ISR probe.
+C_DEFS += -DFOC_ISR_TIMING_DWT_ONLY=1
 # 20 mOhm shunt, 10k/22k/976 input network, PGA x16: about 34 counts/A.
 # Injected ADC keeps the 4x sum: preserve the existing rounded scale * 4.
 C_DEFS += -DFOC_CURRENT_BASE_MILLIAMP=3500U
