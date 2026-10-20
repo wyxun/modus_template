@@ -9,15 +9,6 @@
 #include <stddef.h>
 #include <math.h>
 
-/** @brief Encode already finite turns in (-1,1), without revalidation.
- * @param turns Validated or analytically bounded turns. @return BAM32. */
-static mfoc_angle_t _mfoc_angle_from_unit_turns(float turns)
-{
-    if (turns < 0.0f) { turns += 1.0f; }
-    if (turns >= 1.0f) { turns = 0.0f; }
-    return (mfoc_angle_t){(uint32_t)(turns * 4294967296.0f)};
-}
-
 mfoc_angle_t mfoc_angle_from_turns(float turns)
 {
     if (!isfinite(turns)) { return (mfoc_angle_t){0U}; }
@@ -26,7 +17,9 @@ mfoc_angle_t mfoc_angle_from_turns(float turns)
     if (wrapped <= -1.0f || wrapped >= 1.0f) {
         wrapped = fmodf(wrapped, 1.0f);
     }
-    return _mfoc_angle_from_unit_turns(wrapped);
+    if (wrapped < 0.0f) { wrapped += 1.0f; }
+    if (wrapped >= 1.0f) { wrapped = 0.0f; }
+    return (mfoc_angle_t){(uint32_t)(wrapped * 4294967296.0f)};
 }
 
 mfoc_angle_t mfoc_angle_from_scalar(mfoc_scalar_t turns)
@@ -46,7 +39,12 @@ float mfoc_angle_to_turns(mfoc_angle_t angle)
 
 mfoc_angle_t mfoc_angle_add_scalar(mfoc_angle_t angle, mfoc_scalar_t turns)
 {
-    return mfoc_angle_add(angle, mfoc_angle_from_scalar(turns));
+#if defined(MFOC_NUMERIC_FLOAT)
+    angle.wBam32 += mfoc_angle_from_turns(turns).wBam32;
+#else
+    angle.wBam32 += (uint32_t)turns * 131072U;
+#endif
+    return angle;
 }
 
 mfoc_scalar_t mfoc_angle_diff(mfoc_angle_t target, mfoc_angle_t actual)
@@ -105,10 +103,23 @@ static void _mfoc_normalize_vector(int32_t *x, int32_t *y)
     *y = *y < 0 ? -(int32_t)ay : (int32_t)ay;
 }
 
-/** @brief Integer vectoring with the original 14 Q16 angle constants.
- * @param y Y. @param x X. @return BAM32 phase. */
-static mfoc_angle_t _mfoc_atan2_fixed(int32_t y, int32_t x)
+#endif
+
+/** @brief Extract the phase of a finite vector.
+ * @param y Y component. @param x X component. @return BAM32, zero at origin. */
+mfoc_angle_t mfoc_angle_atan2(mfoc_scalar_t y, mfoc_scalar_t x)
 {
+    if (x == MFOC_ZERO && y == MFOC_ZERO) {
+        return (mfoc_angle_t){0U};
+    }
+#if MFOC_TRIG_BACKEND == MFOC_TRIG_BACKEND_EXTERNAL
+    return mfoc_trig_port_atan2(y, x);
+#elif defined(MFOC_NUMERIC_FLOAT)
+    float turns = atan2f(y, x) * 0.159154943091895f;
+    if (turns < 0.0f) { turns += 1.0f; }
+    if (turns >= 1.0f) { turns = 0.0f; }
+    return (mfoc_angle_t){(uint32_t)(turns * 4294967296.0f)};
+#else
     static const int16_t atan_q16[14] = {
         8192, 4836, 2555, 1297, 651, 326, 163,
         81, 41, 20, 10, 5, 3, 1,
@@ -141,22 +152,6 @@ static mfoc_angle_t _mfoc_atan2_fixed(int32_t y, int32_t x)
         x = next_x;
         y = next_y;
     }
-    return mfoc_angle_from_scalar((mfoc_scalar_t)(angle / 2));
-}
-#endif
-
-mfoc_angle_t mfoc_angle_atan2(mfoc_scalar_t y, mfoc_scalar_t x)
-{
-    if (!mfoc_scalar_is_finite(y) || !mfoc_scalar_is_finite(x) ||
-        (x == MFOC_ZERO && y == MFOC_ZERO)) {
-        return (mfoc_angle_t){0U};
-    }
-#if MFOC_TRIG_BACKEND == MFOC_TRIG_BACKEND_EXTERNAL
-    return mfoc_trig_port_atan2(y, x);
-#elif defined(MFOC_NUMERIC_FLOAT)
-    /* Finite nonzero vector gives a finite angle in [-0.5,0.5]. */
-    return _mfoc_angle_from_unit_turns(atan2f(y, x) * 0.159154943091895f);
-#else
-    return _mfoc_atan2_fixed(y, x);
+    return (mfoc_angle_t){(uint32_t)(angle / 2) * 131072U};
 #endif
 }

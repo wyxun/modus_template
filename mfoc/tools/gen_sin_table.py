@@ -22,5 +22,5 @@ def render():
 
 
 if __name__ == '__main__':
-    target = Path(__file__).resolve().parents[1] / 'src/mfoc_sin_table.inc'
+    target = Path(__file__).resolve().parents[1] / 'base/src/mfoc_sin_table.inc'
     target.write_text(render(), encoding='utf-8')

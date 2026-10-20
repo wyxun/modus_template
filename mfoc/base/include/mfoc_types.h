@@ -26,6 +26,9 @@ typedef enum {
     MFOC_RESULT_INVALID_ARGUMENT,
     MFOC_RESULT_OUT_OF_RANGE,
     MFOC_RESULT_DIVIDE_BY_ZERO,
+    MFOC_RESULT_INVALID_STATE,
+    MFOC_RESULT_IO,
+    MFOC_RESULT_SAFETY,
 } mfoc_result_t;
 
 typedef struct { mfoc_scalar_t qAlpha; mfoc_scalar_t qBeta; } mfoc_ab_t;

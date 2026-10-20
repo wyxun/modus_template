@@ -116,10 +116,19 @@ static void test_angle(void)
     assert(mfoc_angle_to_turns((mfoc_angle_t){UINT32_MAX}) < 1.0f);
     assert(mfoc_angle_add((mfoc_angle_t){UINT32_MAX},
                          (mfoc_angle_t){1U}).wBam32 == 0U);
+    assert(mfoc_angle_add_scalar(half, MFOC_HALF).wBam32 == 0U);
+    assert(mfoc_angle_add_scalar(zero, -MFOC_SCALAR(0.25f)).wBam32 ==
+           0xC0000000U);
     near_value(mfoc_angle_diff(half, zero), -0.5, 0.0);
     near_value(mfoc_angle_diff(zero, half), -0.5, 0.0);
     for (unsigned int i = 0U; i < 20000U; i++) {
         uint32_t delta = random_word();
+        mfoc_scalar_t turns = mfoc_from_float(
+            (float)(delta & 65535U) / 32768.0f - 1.0f);
+        mfoc_angle_t increment = mfoc_angle_from_turns(mfoc_to_float(turns));
+        assert(mfoc_angle_from_scalar(turns).wBam32 == increment.wBam32);
+        assert(mfoc_angle_add_scalar((mfoc_angle_t){delta}, turns).wBam32 ==
+               delta + increment.wBam32);
         int64_t signed_delta = delta < 0x80000000U ? (int64_t)delta :
                                (int64_t)delta - 4294967296LL;
         mfoc_scalar_t actual = mfoc_angle_diff((mfoc_angle_t){delta}, zero);
@@ -238,15 +247,19 @@ static void test_transforms(void)
     assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
         MFOC_SCALAR(2.0f), &roundtrip) == MFOC_RESULT_OK);
     assert(roundtrip.qAlpha == MFOC_ZERO && roundtrip.qBeta == MFOC_ZERO);
-#if defined(MFOC_NUMERIC_FLOAT)
-    roundtrip.qAlpha = NAN;
-    assert(mfoc_svpwm(&roundtrip, &duty, &saturated) ==
-           MFOC_RESULT_INVALID_ARGUMENT);
-#endif
+    roundtrip = (mfoc_ab_t){MFOC_HALF, MFOC_ZERO};
+    assert(mfoc_spwm(&roundtrip, &duty) == MFOC_RESULT_OK);
+    assert(duty.qU == MFOC_ONE);
+    assert(duty.qV == MFOC_SCALAR(0.25f));
+    assert(duty.qW == MFOC_SCALAR(0.25f));
+    roundtrip.qAlpha = MFOC_ONE;
+    assert(mfoc_spwm(&roundtrip, &duty) == MFOC_RESULT_OK);
+    assert(duty.qU == MFOC_ONE);
+    assert(duty.qV == MFOC_ZERO && duty.qW == MFOC_ZERO);
 }
 
 /** @brief Check the bounded reconstruction domain, including maximum bus.
- * @return None; finite validated inputs must always give finite outputs. */
+ * @return None; valid caller-supplied inputs must give finite outputs. */
 static void test_model_boundaries(void)
 {
     mfoc_uvw_t duty = {0};
@@ -266,35 +279,6 @@ static void test_model_boundaries(void)
         assert(mfoc_scalar_is_finite(voltage.qBeta));
         assert(mfoc_abs(voltage.qAlpha) <= maximum_bus);
         assert(mfoc_abs(voltage.qBeta) <= maximum_bus);
-    }
-    mfoc_scalar_t *channels[] = {&duty.qU, &duty.qV, &duty.qW};
-    const mfoc_scalar_t invalid[] = {
-        -MFOC_ONE, MFOC_SCALAR(1.25f),
-#if defined(MFOC_NUMERIC_FLOAT)
-        NAN, INFINITY, -INFINITY,
-#endif
-    };
-    for (unsigned int i = 0U; i < 3U; i++) {
-        for (unsigned int j = 0U; j < sizeof(invalid) / sizeof(invalid[0]); j++) {
-            duty = (mfoc_uvw_t){MFOC_HALF, MFOC_HALF, MFOC_HALF};
-            *channels[i] = invalid[j];
-            voltage = (mfoc_ab_t){MFOC_ONE, MFOC_ONE};
-            assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
-                MFOC_ONE, &voltage) == MFOC_RESULT_OUT_OF_RANGE);
-            assert(voltage.qAlpha == MFOC_ZERO && voltage.qBeta == MFOC_ZERO);
-        }
-    }
-    duty = (mfoc_uvw_t){MFOC_HALF, MFOC_HALF, MFOC_HALF};
-    const mfoc_scalar_t invalid_bus[] = {
-        MFOC_ZERO, -MFOC_ONE,
-#if defined(MFOC_NUMERIC_FLOAT)
-        NAN, INFINITY, -INFINITY,
-#endif
-    };
-    for (unsigned int i = 0U;
-         i < sizeof(invalid_bus) / sizeof(invalid_bus[0]); i++) {
-        assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
-            invalid_bus[i], &voltage) == MFOC_RESULT_OUT_OF_RANGE);
     }
 }
 

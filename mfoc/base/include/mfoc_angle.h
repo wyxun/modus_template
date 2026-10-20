@@ -41,6 +41,7 @@ mfoc_scalar_t mfoc_angle_diff(mfoc_angle_t target, mfoc_angle_t actual);
 void mfoc_angle_sincos(mfoc_angle_t angle, mfoc_scalar_t *sine,
                        mfoc_scalar_t *cosine);
 /** @brief Extract vector phase. @param y Y component. @param x X component.
- * @return BAM32 atan2(y,x), zero for zero vector or non-finite float input. */
+ * @return BAM32 atan2(y,x), zero for zero vector.
+ * @note Caller guarantees finite inputs; no NaN/Inf validation here. */
 mfoc_angle_t mfoc_angle_atan2(mfoc_scalar_t y, mfoc_scalar_t x);
 #endif

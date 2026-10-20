@@ -35,7 +35,7 @@ void mfoc_lut_sincos(uint32_t phase, mfoc_scalar_t *sine,
 void mfoc_trig_port_sincos(uint32_t phase, mfoc_scalar_t *sine,
                           mfoc_scalar_t *cosine);
 /** @brief Target-supplied vector phase. @param y Y. @param x X.
- * @return BAM32. Input zero/non-finite is handled before the target call. */
+ * @return BAM32. Zero vector is handled before the call; inputs are finite. */
 mfoc_angle_t mfoc_trig_port_atan2(mfoc_scalar_t y, mfoc_scalar_t x);
 #endif
 #endif

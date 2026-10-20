@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $library = Split-Path -Parent $PSScriptRoot
-$sources = @(Get-ChildItem -LiteralPath (Join-Path $library 'src') -Filter '*.c' |
+$base = Join-Path $library 'base'
+$sources = @(Get-ChildItem -LiteralPath (Join-Path $base 'src') -Filter '*.c' |
     ForEach-Object { $_.FullName })
 $testSource = Join-Path $PSScriptRoot 'math_test.c'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-' + [guid]::NewGuid())
@@ -15,7 +16,7 @@ foreach ($case in $cases) {
     $exe = Join-Path $output "math-$numeric-$trig.exe"
     $arguments = @('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
         '-ffp-contract=off', "-DMFOC_NUMERIC_$numeric=1",
-        "-DMFOC_TRIG_BACKEND=$trig", "-I$(Join-Path $library 'include')",
+        "-DMFOC_TRIG_BACKEND=$trig", "-I$(Join-Path $base 'include')",
         $testSource) + $sources + @('-lm', '-o', $exe)
     & gcc @arguments
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $numeric/$trig" }
@@ -37,7 +38,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     $arguments = @('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
         '-ffp-contract=off', "-DMFOC_NUMERIC_$numeric=1",
         "-DFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
-        '-DFOC_TRIG_BACKEND=1', "-I$(Join-Path $library 'include')",
+        '-DFOC_TRIG_BACKEND=1', "-I$(Join-Path $base 'include')",
         (Join-Path $PSScriptRoot 'migration_test.c')) + $legacyIncludes +
         $sources + $legacySources + @('-lm', '-o', $exe)
     & gcc @arguments
@@ -46,4 +47,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     if ($LASTEXITCODE -ne 0) { throw "Migration test failed: $numeric" }
     Write-Output "$numeric migration comparison passed"
 }
+& (Join-Path $PSScriptRoot 'run_pi_tests.ps1')
 Write-Output "Host test artifacts: $output"
+
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1')

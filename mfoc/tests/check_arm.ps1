@@ -1,6 +1,10 @@
 param([string]$Toolchain = (Split-Path (Get-Command clang).Source))
 $ErrorActionPreference = 'Stop'
 $library = Split-Path -Parent $PSScriptRoot
+$base = Join-Path $library 'base'
+$sources = @(Get-ChildItem (Join-Path $base 'src') -Filter '*.c') +
+    @(Get-ChildItem (Join-Path $library 'core/src') -Filter '*.c') +
+    @(Get-ChildItem (Join-Path $library 'motor/src') -Filter '*.c')
 $repo = Split-Path -Parent $library
 $clang = Join-Path $Toolchain 'clang.exe'
 $nm = Join-Path $Toolchain 'llvm-nm.exe'
@@ -17,9 +21,11 @@ foreach ($profile in $profiles) {
         "-mfloat-abi=$abi", '-std=c11', '-O2', '-ffp-contract=off',
         '-Wall', '-Wextra', '-Werror', '-ffunction-sections',
         "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
-        "-I$(Join-Path $library 'include')")
+        "-I$(Join-Path $base 'include')",
+        "-I$(Join-Path $library 'core/include')",
+        "-I$(Join-Path $library 'motor/include')")
     if ($abi -eq 'hard') { $arguments += '-mfpu=fpv4-sp-d16' }
-    foreach ($source in Get-ChildItem (Join-Path $library 'src') -Filter '*.c') {
+    foreach ($source in $sources) {
         $object = Join-Path $output "$numeric-$($source.BaseName).o"
         & $clang @arguments -c $source.FullName -o $object
         if ($LASTEXITCODE -ne 0) { throw "ARM build failed: $object" }
@@ -31,6 +37,12 @@ $undefined = & $nm --undefined-only $newTrig
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED trig object' }
 if ($undefined) { throw "FIXED LUT must be self-contained: $undefined" }
 Write-Output 'Cortex-M0 FIXED LUT: no external/soft-float helper symbols'
+$piUndefined = & $nm --undefined-only (Join-Path $output 'FIXED-mfoc_pi.o')
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED PI object' }
+if ($piUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
+    throw "FIXED PI must not use soft-float helpers: $piUndefined"
+}
+Write-Output 'Cortex-M0 FIXED PI: no soft-float helper symbols'
 $legacyTrig = Join-Path $output 'legacy-fixed-trig.o'
 & $clang --target=arm-none-eabi -mcpu=cortex-m0 -mthumb -mfloat-abi=soft `
     -std=c11 -O2 -DFOC_NUMERIC_FIXED=1 -DFOC_TRIG_BACKEND=1 `

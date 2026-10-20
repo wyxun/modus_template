@@ -12,19 +12,12 @@
 /** @brief Reconstruct u_alpha=(2du-dv-dw)/3, u_beta=(dv-dw)/sqrt(3).
  * @param ptDuty Effective interval duty.
  * @param qBusPu Measured bus PU. @param ptVoltage Ideal alpha-beta PU.
- * @return Checked reconstruction status. */
+ * @return NULL or OK; caller validates duty and bus ranges. */
 mfoc_result_t mfoc_modulation_ModelVoltageAlphaBeta(const mfoc_uvw_t *ptDuty,
     mfoc_scalar_t qBusPu, mfoc_ab_t *ptVoltage)
 {
     if (ptDuty == NULL || ptVoltage == NULL) {
         return MFOC_RESULT_NULL;
-    }
-    *ptVoltage = (mfoc_ab_t){0};
-    if (!mfoc_scalar_is_finite(qBusPu) || qBusPu <= MFOC_ZERO ||
-        !(ptDuty->qU >= MFOC_ZERO && ptDuty->qU <= MFOC_ONE) ||
-        !(ptDuty->qV >= MFOC_ZERO && ptDuty->qV <= MFOC_ONE) ||
-        !(ptDuty->qW >= MFOC_ZERO && ptDuty->qW <= MFOC_ONE)) {
-        return MFOC_RESULT_OUT_OF_RANGE;
     }
 #if defined(MFOC_NUMERIC_FLOAT)
     {
@@ -47,44 +40,17 @@ mfoc_result_t mfoc_modulation_ModelVoltageAlphaBeta(const mfoc_uvw_t *ptDuty,
         ptVoltage->qBeta = (mfoc_scalar_t)u_beta;
     }
 #endif
-    /* Ordered duty bounds also reject NaN/Inf. With finite positive bus,
+    /* With caller-guaranteed duty in [0,1] and finite positive bus,
      * |alpha| <= 2/3 and |beta| <= 1/sqrt(3) before bus scaling, so neither
      * float overflow nor fixed carrier overflow is possible here. */
     return MFOC_RESULT_OK;
 }
 
-/** @brief Reconstruct three phase commands with shared alpha/beta products.
- * @param ptVoltage Modulation vector. @param ptPhase Three phase commands.
- * @return None. */
-static void _mfoc_modulation_phase_voltage(const mfoc_ab_t *ptVoltage,
-                                     mfoc_uvw_t *ptPhase)
-{
-    const mfoc_scalar_t qHalf = MFOC_HALF;
-    const mfoc_scalar_t qSqrtThreeHalf = MFOC_SCALAR(0.8660254038f);
-    mfoc_scalar_t qHalfAlpha = mfoc_mul_pu(ptVoltage->qAlpha, qHalf);
-    mfoc_scalar_t qBetaTerm = mfoc_mul_pu(ptVoltage->qBeta,
-                                        qSqrtThreeHalf);
-
-    ptPhase->qU = ptVoltage->qAlpha;
-    ptPhase->qV = mfoc_sub_sat(qBetaTerm, qHalfAlpha);
-    ptPhase->qW = mfoc_sub_sat(-qBetaTerm, qHalfAlpha);
-}
-
-/** @brief Bound the submitted duties. @param ptDuty In/out duties.
- * @return None. */
-static void _mfoc_modulation_clamp_duty(mfoc_uvw_t *ptDuty)
-{
-    ptDuty->qU = mfoc_sat(ptDuty->qU, MFOC_ZERO, MFOC_ONE);
-    ptDuty->qV = mfoc_sat(ptDuty->qV, MFOC_ZERO, MFOC_ONE);
-    ptDuty->qW = mfoc_sat(ptDuty->qW, MFOC_ZERO, MFOC_ONE);
-}
-
 /** @brief Center phases with a shared common-mode offset.
  * @param ptVoltage Modulation vector. @param ptDuty Clamped output.
- * @param pbSaturated Optional clipping flag. @return Checked input status. */
-static mfoc_result_t _mfoc_modulation_common_mode(const mfoc_ab_t *ptVoltage,
-                                           mfoc_uvw_t *ptDuty,
-                                           bool *pbSaturated)
+ * @param pbSaturated Optional clipping flag. @return NULL or OK. */
+mfoc_result_t mfoc_svpwm(const mfoc_ab_t *ptVoltage,
+                       mfoc_uvw_t *ptDuty, bool *pbSaturated)
 {
     mfoc_uvw_t tPhase = {0};
     mfoc_scalar_t qMaximum = MFOC_ZERO;
@@ -94,15 +60,13 @@ static mfoc_result_t _mfoc_modulation_common_mode(const mfoc_ab_t *ptVoltage,
     if (ptVoltage == NULL || ptDuty == NULL) {
         return MFOC_RESULT_NULL;
     }
-    if (!mfoc_scalar_is_finite(ptVoltage->qAlpha) ||
-        !mfoc_scalar_is_finite(ptVoltage->qBeta)) {
-        return MFOC_RESULT_INVALID_ARGUMENT;
-    }
-    if (mfoc_abs(ptVoltage->qAlpha) > MFOC_ONE ||
-        mfoc_abs(ptVoltage->qBeta) > MFOC_ONE) {
-        return MFOC_RESULT_OUT_OF_RANGE;
-    }
-    _mfoc_modulation_phase_voltage(ptVoltage, &tPhase);
+    /* Preserve separate Q15 product rounding before phase subtraction. */
+    mfoc_scalar_t a = mfoc_mul_pu(ptVoltage->qAlpha, MFOC_HALF);
+    mfoc_scalar_t b = mfoc_mul_pu(ptVoltage->qBeta,
+                                 MFOC_SCALAR(0.8660254038f));
+    tPhase.qU = ptVoltage->qAlpha;
+    tPhase.qV = mfoc_sub_sat(b, a);
+    tPhase.qW = mfoc_sub_sat(-b, a);
     qMaximum = tPhase.qU;
     qMinimum = tPhase.qU;
     if (tPhase.qV > qMaximum) qMaximum = tPhase.qV;
@@ -120,16 +84,15 @@ static mfoc_result_t _mfoc_modulation_common_mode(const mfoc_ab_t *ptVoltage,
                        ptDuty->qV <= MFOC_ZERO || ptDuty->qV >= MFOC_ONE ||
                        ptDuty->qW <= MFOC_ZERO || ptDuty->qW >= MFOC_ONE;
     }
-    _mfoc_modulation_clamp_duty(ptDuty);
+    ptDuty->qU = mfoc_sat(ptDuty->qU, MFOC_ZERO, MFOC_ONE);
+    ptDuty->qV = mfoc_sat(ptDuty->qV, MFOC_ZERO, MFOC_ONE);
+    ptDuty->qW = mfoc_sat(ptDuty->qW, MFOC_ZERO, MFOC_ONE);
     return MFOC_RESULT_OK;
 }
 
-mfoc_result_t mfoc_svpwm(const mfoc_ab_t *ptVoltage,
-                       mfoc_uvw_t *ptDuty, bool *pbSaturated)
-{
-    return _mfoc_modulation_common_mode(ptVoltage, ptDuty, pbSaturated);
-}
-
+/** @brief Generate centered sinusoidal duties from the modulation vector.
+ * @param ptVoltage Input vector. @param ptDuty Clamped duties.
+ * @return NULL or OK. */
 mfoc_result_t mfoc_spwm(const mfoc_ab_t *ptVoltage,
                       mfoc_uvw_t *ptDuty)
 {
@@ -138,18 +101,18 @@ mfoc_result_t mfoc_spwm(const mfoc_ab_t *ptVoltage,
     if (ptVoltage == NULL || ptDuty == NULL) {
         return MFOC_RESULT_NULL;
     }
-    if (!mfoc_scalar_is_finite(ptVoltage->qAlpha) ||
-        !mfoc_scalar_is_finite(ptVoltage->qBeta)) {
-        return MFOC_RESULT_INVALID_ARGUMENT;
-    }
-    if (mfoc_abs(ptVoltage->qAlpha) > MFOC_ONE ||
-        mfoc_abs(ptVoltage->qBeta) > MFOC_ONE) {
-        return MFOC_RESULT_OUT_OF_RANGE;
-    }
-    _mfoc_modulation_phase_voltage(ptVoltage, &tPhase);
+    /* Preserve separate Q15 product rounding before phase subtraction. */
+    mfoc_scalar_t a = mfoc_mul_pu(ptVoltage->qAlpha, MFOC_HALF);
+    mfoc_scalar_t b = mfoc_mul_pu(ptVoltage->qBeta,
+                                 MFOC_SCALAR(0.8660254038f));
+    tPhase.qU = ptVoltage->qAlpha;
+    tPhase.qV = mfoc_sub_sat(b, a);
+    tPhase.qW = mfoc_sub_sat(-b, a);
     ptDuty->qU = mfoc_add_sat(tPhase.qU, MFOC_HALF);
     ptDuty->qV = mfoc_add_sat(tPhase.qV, MFOC_HALF);
     ptDuty->qW = mfoc_add_sat(tPhase.qW, MFOC_HALF);
-    _mfoc_modulation_clamp_duty(ptDuty);
+    ptDuty->qU = mfoc_sat(ptDuty->qU, MFOC_ZERO, MFOC_ONE);
+    ptDuty->qV = mfoc_sat(ptDuty->qV, MFOC_ZERO, MFOC_ONE);
+    ptDuty->qW = mfoc_sat(ptDuty->qW, MFOC_ZERO, MFOC_ONE);
     return MFOC_RESULT_OK;
 }
