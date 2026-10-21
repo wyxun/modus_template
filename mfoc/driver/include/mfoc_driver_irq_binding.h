@@ -17,7 +17,8 @@ extern mfoc_driver_t mfoc_driver_instance;
 
 #define MFOC_DRIVER_IRQ_VECTOR ADC1_2_IRQHandler
 #define MFOC_DRIVER_IRQ_INSTANCE mfoc_driver_instance
-#define MFOC_DRIVER_IRQ_BEGIN mdi_g431_control_irq_begin
-#define MFOC_DRIVER_IRQ_END mdi_g431_control_irq_end
+#define MFOC_DRIVER_IRQ_READY() MDI_Sample_IsReady(phase_current_completed)
+#define MFOC_DRIVER_IRQ_BEGIN() (g_bG431JeosConsumed = false)
+#define MFOC_DRIVER_IRQ_END() mdi_g431_ack_unconsumed_current_frame()
 
 #endif

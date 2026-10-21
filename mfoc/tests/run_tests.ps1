@@ -53,3 +53,4 @@ Write-Output "Host test artifacts: $output"
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_encoder_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_port_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_app_tests.ps1')

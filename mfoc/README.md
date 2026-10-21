@@ -2,7 +2,7 @@
 
 mfoc 是 `dev-focv2` 的新 FOC 库，目录、文件和符号统一使用 `mfoc` 名称。
 
-新库尚未接入当前固件。旧 `foc/` 保留作为参考和对照；
+G431 默认固件已接入停止状态的 mfoc 应用，旧 `foc/` 保留作为参考和对照；
 base/Core 不依赖硬件；Driver 通过端口读取电流，Motor 通过端口提交 PWM。
 算法和控制模块不包含旧库、MODUS、MDI 或厂商寄存器头文件，
 `port/` 通过 MDI 实现硬件迁移。
@@ -72,11 +72,12 @@ Core 保证占空比有限且在范围内，端口直接转换，不重复做 fi
 `phase_current_completed`、`adc_bus_voltage`、`bridge`、`encoder_angle` 和
 `raw_tick`，所有硬件操作均走 MDI。编码器地址由 `encoder_angle` 绑定；
 Port 将 AS5600 原始 12 位机械角度转换成 BAM32。
-MDI 为采样资源提供 `u/v/w` 完成帧和 `MDI_Sample_Maximum()` 计数上限，
-为母线提供已发布 ADC 均值，为 PWM 资源提供 `MDI_PWM_SetDuty()` 和
-`MDI_PWM_AnyOutputEnabled()`。
-后者检查任意相输出门控，部分开启、计数器停止或 Break 生效也不能视为已关闭；
-采样触发专用输出不计入相输出。port 不访问芯片寄存器或写死 ADC 位数。
+采样使用 `MDI_Sample_ReadCompleted()`，母线使用现有 `MDI_ADC_Read()`
+读取稳定的已发布均值；未发布或正在发布时返回失败，不等待、不覆盖输出。
+PWM 提交使用 `MDI_PWM_SetDuty()`。校零前通过现有 `MDI_OP` 调用 G431
+bridge 的 `_pwm_AnyOutputEnabled` 板级能力，不扩展 modus 公共接口。
+该检查覆盖部分相门开启、计数器停止及 Break 生效的情况；
+采样触发专用输出不计入相输出。port 不直接访问芯片寄存器。
 换芯片时保持上述资源名和能力契约，只需修改 MDI 实现及资源绑定；
 电流标度与极性在 `mfoc_port.h` 中配置，零偏由端口初始化采集。
 板级完成 ADC 触发配置后、Motor 停止且三相输出门控关闭时，Driver Init 会调用
@@ -105,7 +106,7 @@ G431 当前关闭 CCR 预装载，由 MDI 写 CCR1-3，不产生 UG 或改变输
 EnterCritical、ExitCritical，负责 Motor 的安全生命周期和临界区。
 这五个安全/临界区操作当前仍只有测试实现，AT32 尚无新库端口实现。
 `mfoc.mk` 已包含此 MDI port 源文件；目标工程需提供相应 MDI 包含路径和
-`MFOC_NUMERIC_FLOAT` 或 `MFOC_NUMERIC_FIXED`。现有固件继续使用旧 FOC。
+`MFOC_NUMERIC_FLOAT` 或 `MFOC_NUMERIC_FIXED`。G431 已接入停止状态的 mfoc 应用。
 一个编译绑定的功率级由一个应用持有的 Motor 实例独占；不支持两个
 活动 Motor 共用这些端口。配置和计算对象可独立实例化。
 
@@ -134,8 +135,8 @@ Motor 不读取相电流，也不选择角度或速度来源。Driver 读取
 `driver/include/mfoc_driver.h`、`driver/src/mfoc_driver.c` 提供 `mfoc_driver`。
 对象按值拥有一个 Motor 和一个速度 PI；Motor 保存运行状态与故障。
 板级先完成 ADC 触发和 perfc 初始化，再调用
-`mfoc_driver_Init(&driver, &cfg)`。Init 阻塞采集十帧并求 U/V/W 偏置，随后读取
-MDI 已发布的母线 ADC 均值、换算并更新 Motor/Core 的母线 PU，不使能 PWM；
+`mfoc_driver_Init(&driver, &cfg)`。Init 阻塞采集十帧并求 U/V/W 偏置，
+初始母线 PU 由 `cfg.motor.core.bus` 提供，不读取母线 ADC、不使能 PWM；
 成功后在前台反复调用 `mfoc_driver_Run(&driver)`，至少成功采集一帧编码器数据后
 再调用 `mfoc_motor_Start(&driver.motor)`。Run 在停机和运行期间均应继续调用，
 编码器内部按配置周期读取；控制 IRQ 只执行 Step，不访问 I2C。
@@ -214,9 +215,11 @@ mfoc_result_t rc = mfoc_driver_Step(&driver);
 `void mfoc_driver_IRQHandler(void)`。`typedef void mfoc_driver_irq_handler_t(void)`
 定义函数签名；GCC/Clang 的 `alias` 把实际向量名映射到同一函数地址，不经过转发函数。
 
-板级 `mfoc_driver_irq_binding.h` 通过 `MFOC_DRIVER_IRQ_VECTOR/INSTANCE/BEGIN/END`
+板级 `mfoc_driver_irq_binding.h` 通过 `MFOC_DRIVER_IRQ_*` 的
+`VECTOR/INSTANCE/READY/BEGIN/END`
 做编译期绑定。G431 绑定位于 `driver/`，向量名为 `ADC1_2_IRQHandler`；
-BEGIN/END 调用 MDI 的控制 IRQ 首尾操作，保留 DWT 测量以及“读电流后清 JEOS”的顺序。
+READY 判断采样完成，BEGIN 准备帧消费状态，END 清理未消费帧；
+保留“读电流后清 JEOS”的顺序，不包含 DWT/TIM1 计时探针或计时 token。
 没有控制运行或采样失败时也执行 END，清理未消费帧；已消费后新到达的帧保持待处理。
 `irq_result` 仅记录最近一次 IRQ 的 Step 返回值用于诊断，故障仍由 Motor 锁存。
 
@@ -225,7 +228,21 @@ BEGIN/END 调用 MDI 的控制 IRQ 首尾操作，保留 DWT 测量以及“读�
 启动文件中的向量直接解析到 Driver。集成方须提供并初始化
 `mfoc_driver_instance`，完成 feedback 算法、Motor 安全/临界区端口及
 故障 IRQ 对同一个 Motor 的绑定，再启用硬件 IRQ。
-默认固件继续使用旧 FOC；当前没有以空实现代替这些尚未迁移的依赖。
+当前默认 G431 固件不启用这个 Driver IRQ 入口。`class/mfoc_app.c`
+通过 MODUS 创建并拥有 Driver，在 `mfoc_app_Init()` 内调用
+`mfoc_driver_Init()`，成功后才注册对象；`Run()` 仅服务前台编码器。
+Driver Init 经端口仅完成电流零偏和换算系数初始化。
+初始母线使用 `motor.core.bus` 配置，需要动态采样时显式调用 `UpdateBus()`。
+端口不运行 `mdi_Service()`、不等待母线、不控制中断。
+`haladc_Init()` 准备 ADC 触发；当前停止状态固件使用轮询采集，
+不启用 JEOS 控制中断，不拆分额外的中断开启或外设启动入口。
+校零每次等待 10 ms 后读取一次完成帧，未就绪或读取失败立即返回错误；
+DMA 和 SysTick 保持开启。
+App 不访问 MDI、NVIC 或芯片头文件，不保留延迟初始化配置和等待状态。
+TIM1 CH4 触发在板级启动，三相门控保持关闭。当前不运行控制 IRQ 或
+Driver Step；Motor 安全端口、故障流程、命令和波形接入均暂缓。
+当前配置磁链为未测量的 1 PU，编码器零位和方向也未校准，仅供停止初始化；
+不能据此启动 Motor。`make auto` 将构建并烧录这一停止状态固件。
 
 ## Motor 标幺参数
 
@@ -249,7 +266,7 @@ Motor 与 Core 共用固定的电压、电流基值。Motor 持有运行用参�
 ## 电流控制 Core
 
 `core/include/mfoc_core.h` 提供 `Init / SetBus / Reset / Step`，由 `mfoc.mk`
-一起编译；不接入现有固件。通用 PI 仍在 `base`。
+一起编译；G431 应用的停止状态接入见上文。通用 PI 仍在 `base`。
 
 - 每拍输入 αβ 电流、电角度和 dq 电流参考。
   三相采样由调用方先调用 `mfoc_clarke`，不重复保存在 Core。

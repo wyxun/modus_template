@@ -152,7 +152,7 @@ void SystemClock_Config(void)
 
 /* --------------------------------------------------------------------------
  *  peripheral_Init — main() 最先调用的底层初始化入口
- *  初始化顺序：GPIO → CORDIC → DAC → OPAMP → ADC → COMP → TIM1
+ *  初始化顺序：GPIO → CORDIC → DAC → OPAMP → COMP → TIM1 → ADC
  * -------------------------------------------------------------------------- */
 void peripheral_Init(void)
 {
@@ -163,14 +163,13 @@ void peripheral_Init(void)
 
     haldac_Init();
     halopamp_Init();
-    haladc_Init();
     halcomp_Init();
     haltim1_Init();
+    haladc_Init();
 
     /* Keep encoder I2C ready before MODUS object initialization. */
     port_i2c1_Init();
     _port_usart2_Init();
-    haladc_EnableISR();
     haltim1_EnableISR();
 }
 

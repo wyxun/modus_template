@@ -18,8 +18,9 @@
 #define HALADC_VBUS_RANGE_48V 0U
 #endif
 
+/** @brief Configure ADCs and arm injected sampling.
+ * @return None. @note Initialize TIM1 before calling this function. */
 void haladc_Init(void);
 void haladc_SetVbusRange48V(uint32_t bEnable);
-void haladc_EnableISR(void);
 
 #endif /* __HALADC_H__ */

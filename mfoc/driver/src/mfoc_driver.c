@@ -61,11 +61,6 @@ mfoc_result_t mfoc_driver_Init(mfoc_driver_t *driver,
     next.irq_result = MFOC_RESULT_INVALID_STATE;
     rc = mfoc_port_init();
     if (rc != MFOC_RESULT_OK) { return rc; }
-    mfoc_scalar_t bus = MFOC_ZERO;
-    rc = mfoc_port_bus(&bus);
-    if (rc != MFOC_RESULT_OK) { return rc; }
-    rc = mfoc_motor_SetBus(&next.motor, bus);
-    if (rc != MFOC_RESULT_OK) { return rc; }
     *driver = next;
     return MFOC_RESULT_OK;
 }

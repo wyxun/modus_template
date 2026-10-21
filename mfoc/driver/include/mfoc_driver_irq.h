@@ -15,11 +15,11 @@ typedef void mfoc_driver_irq_handler_t(void);
 /** @brief Execute the bound Driver from a hardware interrupt, without args.
  * @return None; the bound instance's irq_result records the Step result.
  * @note Build with MFOC_DRIVER_IRQ_ENABLED=1 and a target-supplied
- * mfoc_driver_irq_binding.h. It binds VECTOR, INSTANCE, BEGIN and END
- * using MFOC_DRIVER_IRQ_* names. BEGIN(uint32_t *) checks the interrupt and
- * captures a target token without clearing a pending current frame.
+ * mfoc_driver_irq_binding.h. It binds VECTOR, INSTANCE, READY, BEGIN and END
+ * using MFOC_DRIVER_IRQ_* names. READY() checks the pending frame; BEGIN()
+ * prepares frame ownership without clearing the completion flag.
  * Driver reads current and feedback during Step.
- * END(uint32_t) always cleans up, including idle/fault/failed control calls.
+ * END() always cleans up, including idle/fault/failed control calls.
  * GCC/Clang export VECTOR as a same-address alias, with no forwarding call.
  * The target must remove its competing vector definition when enabled. */
 mfoc_driver_irq_handler_t mfoc_driver_IRQHandler;

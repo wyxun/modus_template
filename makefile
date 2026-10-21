@@ -169,7 +169,8 @@ C_SOURCES =                                                                     
     $(MODUS_SRCS)                                                               \
     $(PERIF_LIB_SOURCES)                                                        \
     $(PERIPHERAL_SOURCES)                                                       \
-    $(FOC_SOURCES)
+    $(FOC_SOURCES)                                                             \
+    $(MFOC_SOURCES)
 
 ifeq ($(MODUS_ENABLE),1)
     C_SOURCES += $(CLASS_SOURCES)
@@ -213,7 +214,8 @@ C_INCLUDES =                                                                    
     -Iperipheral/$(TARGET_CHIP)                                                 \
     -Iperipheral/driver                                                         \
     -Iclass                                                                     \
-    $(FOC_INCLUDES)
+    $(FOC_INCLUDES)                                                            \
+    $(MFOC_INCLUDES)
 
 # ------------------------------------------------------------------------------
 # Flags
@@ -262,6 +264,9 @@ $(BUILD_DIR)/motor.o: CFLAGS += -O2
 # Preserve separate-operation rounding throughout the numeric layer's callers.
 ifneq ($(strip $(FOC_SOURCES)),)
 $(addprefix $(BUILD_DIR)/,$(notdir $(FOC_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
+endif
+ifneq ($(strip $(MFOC_SOURCES)),)
+$(addprefix $(BUILD_DIR)/,$(notdir $(MFOC_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
 endif
 
 # ------------------------------------------------------------------------------

@@ -49,10 +49,10 @@ typedef struct {
 /** @brief Initialize control and collect current zero offsets.
  * @param driver Instance. @param cfg Initialization configuration.
  * @return Configuration status; failure leaves driver unchanged.
- * @note ADC triggering and perfc must be initialized before Init. Call before
- * enabling any ISR reader of the sample resource. Init blocks for ten frames
- * spaced 10 ms apart, then reads the published DC bus, with phase outputs
- * gated throughout. */
+ * @note ADC triggering and perfc must be initialized before Init, with control
+ * IRQ disabled and phase outputs gated. Port Init reads ten offset frames
+ * spaced 10 ms apart with bounded waits. Initial bus comes from motor.core.bus;
+ * dynamic sampling is explicit through UpdateBus, independently of Init. */
 mfoc_result_t mfoc_driver_Init(mfoc_driver_t *driver,
                               const mfoc_driver_cfg_t *cfg);
 

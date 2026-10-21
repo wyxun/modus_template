@@ -10,7 +10,8 @@
 #include "mfoc_driver_irq_binding.h"
 
 #if !defined(MFOC_DRIVER_IRQ_VECTOR) || !defined(MFOC_DRIVER_IRQ_INSTANCE) ||   \
-    !defined(MFOC_DRIVER_IRQ_BEGIN) || !defined(MFOC_DRIVER_IRQ_END)
+    !defined(MFOC_DRIVER_IRQ_READY) || !defined(MFOC_DRIVER_IRQ_BEGIN) ||      \
+    !defined(MFOC_DRIVER_IRQ_END)
 #error "Provide the target Driver IRQ binding"
 #endif
 
@@ -19,11 +20,11 @@
  * @note All bindings are direct calls/objects, without runtime dispatch. */
 void mfoc_driver_IRQHandler(void)
 {
-    uint32_t token = 0U;
-    if (!MFOC_DRIVER_IRQ_BEGIN(&token)) { return; }
+    if (!MFOC_DRIVER_IRQ_READY()) { return; }
+    MFOC_DRIVER_IRQ_BEGIN();
     MFOC_DRIVER_IRQ_INSTANCE.irq_result = mfoc_driver_Step(
         &MFOC_DRIVER_IRQ_INSTANCE);
-    MFOC_DRIVER_IRQ_END(token);
+    MFOC_DRIVER_IRQ_END();
 }
 
 /* A typedef specifies the signature; alias exports the actual vector name.

@@ -24,6 +24,8 @@ static I2C_TypeDef s_i2c;
 #undef I2C1
 #define I2C1 (&s_i2c)
 
+static bool s_feed_current;
+
 #include "../port/src/mfoc_port.c"
 
 volatile bool g_bG431JeosConsumed;
@@ -43,6 +45,14 @@ uint32_t perfc_get_systimer_frequency(void) { return 1000000U; }
 void perfc_delay_ms(uint32_t ms)
 {
     s_tick += (int64_t)ms * INT64_C(1000);
+    if (s_feed_current) {
+        ADC1->JDR1 = 8192U;
+        ADC2->JDR2 = 8200U;
+        ADC2->JDR1 = 8100U;
+        ADC1->ISR = ADC_ISR_JEOS;
+        ADC2->ISR = ADC_ISR_JEOS;
+        g_bG431JeosConsumed = false;
+    }
 }
 
 /** @brief Check the real AS5600 MDI conversion and raw clock access.
@@ -189,6 +199,71 @@ static void _test_Pwm(void)
     assert(TIM1->CR1 == TIM_CR1_CEN && TIM1->BDTR == TIM_BDTR_MOE);
 }
 
+/** @brief Reject unsafe calibration without consuming any current frame.
+ * @return None. */
+static void _test_InitGate(void)
+{
+    TIM1->CR1 = 0U;
+    TIM1->BDTR = 0U;
+    TIM1->CCER = TIM_CCER_CC1NE | TIM_CCER_CC4E;
+    int64_t tick = s_tick;
+    assert(mfoc_port_init() == MFOC_RESULT_INVALID_STATE);
+    assert(s_tick == tick);
+    TIM1->SR = TIM_SR_BIF;
+    assert(mfoc_port_init() == MFOC_RESULT_INVALID_STATE);
+    assert(s_tick == tick);
+    TIM1->CCER = TIM_CCER_CC4E;
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    TIM1->SR = 0U;
+}
+
+/** @brief Verify stable bus reads and unchanged output on unavailable data.
+ * @return None. */
+static void _test_Bus(void)
+{
+    mfoc_scalar_t bus = MFOC_ONE;
+    assert(mfoc_port_bus(NULL) == MFOC_RESULT_NULL);
+    s_port.configured = false;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_INVALID_STATE);
+    s_port.configured = true;
+    g_bG431AdcMeanValid = false;
+    g_wG431AdcSequence = 2U;
+    g_awG431AdcMean[0] = 2457U;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_INVALID_STATE);
+    assert(bus == MFOC_ONE);
+    g_bG431AdcMeanValid = true;
+    g_wG431AdcSequence = 3U;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_INVALID_STATE);
+    assert(bus == MFOC_ONE);
+    g_wG431AdcSequence = 4U;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_OK);
+    _test_Near(bus, 20570.0f / 12000.0f);
+    mfoc_scalar_t previous = bus;
+    g_awG431AdcMean[0] = 0U;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(bus == previous);
+}
+
+/** @brief Verify current-only calibration and bounded missing-frame failure.
+ * @return None. */
+static void _test_Init(void)
+{
+    TIM1->CCER = TIM_CCER_CC4E;
+    g_bG431AdcMeanValid = false;
+    s_feed_current = true;
+    assert(mfoc_port_init() == MFOC_RESULT_OK);
+    assert(!g_bG431AdcMeanValid);
+    assert(s_port.offset_u == 8192U && s_port.offset_v == 8200U);
+    assert(s_port.offset_w == 8100U);
+    s_feed_current = false;
+    ADC1->ISR = 0U;
+    int64_t start = s_tick;
+    assert(mfoc_port_init() == MFOC_RESULT_IO);
+    assert(s_tick - start == 10000);
+    assert(s_port.configured && s_port.offset_u == 8192U);
+    assert(TIM1->CCER == TIM_CCER_CC4E);
+}
+
 /** @brief Run the real G431 MDI adapter against host register storage.
  * @return Zero when initialization, current and PWM checks pass. */
 int main(void)
@@ -197,6 +272,9 @@ int main(void)
     _test_Current();
     _test_Range();
     _test_Pwm();
+    _test_InitGate();
+    _test_Bus();
+    _test_Init();
     puts("G431 current conversion and PWM passed");
     return 0;
 }

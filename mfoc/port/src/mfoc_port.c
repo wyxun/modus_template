@@ -79,11 +79,8 @@ static mfoc_result_t _mfoc_port_MeasureOffsets(mfoc_mdi_port_t *port)
     for (uint32_t i = 0U; i < MFOC_PORT_OFFSET_SAMPLES; ++i) {
         perfc_delay_ms(10U);
         MDI_Sample_Frame(phase_current_completed) frame = {0};
-        mdi_status_t status;
-        do {
-            status = MDI_Sample_ReadCompleted(
-                phase_current_completed, &frame);
-        } while (status == MDI_BUSY);
+        mdi_status_t status = MDI_Sample_ReadCompleted(
+            phase_current_completed, &frame);
         if (status != MDI_OK) { return MFOC_RESULT_IO; }
         sum_u += frame.u;
         sum_v += frame.v;
@@ -100,12 +97,12 @@ static mfoc_result_t _mfoc_port_MeasureOffsets(mfoc_mdi_port_t *port)
 
 /** @brief Measure ADC offsets and precompute the signed PU scale.
  * @return Status; failure preserves the previous port settings.
- * @note Blocks until ten completed frames are read. The board must keep ADC
- * triggering while phase outputs are gated and exclude competing readers.
+ * @note Call before the control IRQ is enabled, with ADC triggering active
+ * and phase outputs gated. No bus acquisition or IRQ management occurs here.
  * Scale is 1..2^30 to retain a nonzero Q30 reciprocal. */
 mfoc_result_t mfoc_port_init(void)
 {
-    if (MDI_PWM_AnyOutputEnabled(bridge)) {
+    if (MDI_OP(bridge, _pwm_AnyOutputEnabled)()) {
         return MFOC_RESULT_INVALID_STATE;
     }
     if (MFOC_PORT_COUNTS_PER_BASE == 0U) {
@@ -137,11 +134,15 @@ mfoc_result_t mfoc_port_init(void)
 mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
 {
     if (bus == NULL) { return MFOC_RESULT_NULL; }
-    if (!s_port.configured || !MDI_ADC_IsPublished(adc_bus_voltage)) {
+    if (!s_port.configured) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    uint32_t raw = MDI_ADC_ReadFast(adc_bus_voltage);
-    uint64_t scaled = (uint64_t)raw * MFOC_PORT_BUS_MV_PER_COUNT_NUM;
+    mdi_adc_value_t sample = {0};
+    mdi_status_t status = MDI_ADC_Read(adc_bus_voltage, &sample);
+    if (status != MDI_OK) {
+        return status == MDI_BUSY ? MFOC_RESULT_INVALID_STATE : MFOC_RESULT_IO;
+    }
+    uint64_t scaled = (uint64_t)sample.wCode * MFOC_PORT_BUS_MV_PER_COUNT_NUM;
     int64_t millivolt = (int64_t)(scaled /
         MFOC_PORT_BUS_MV_PER_COUNT_DEN) +
         (int64_t)MFOC_PORT_BUS_OFFSET_MILLIVOLT;

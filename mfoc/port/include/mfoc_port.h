@@ -25,18 +25,21 @@
  * Sampling and PWM trigger/update timing belong to the target setup. */
 
 /** @brief Measure ADC zero offsets and prepare current conversion.
- * @return OK, OUT_OF_RANGE or INVALID_STATE.
- * @note Blocks while collecting ten completed ADC frames. Call after ADC
- * trigger setup, with Motor stopped, phase outputs gated, and no ISR/port
- * consumer of the same sample resource. Polarity and current scale are
+ * @return OK, INVALID_ARGUMENT, OUT_OF_RANGE, INVALID_STATE or IO.
+ * @note Collects ten completed current frames with bounded waits.
+ * Call after perfc and ADC trigger setup, before enabling the control IRQ,
+ * with Motor stopped and phase outputs gated. Exclude other frame consumers.
+ * No bus read, ADC scheduling or interrupt control occurs here.
+ * Polarity and current scale are
  * compile-time settings above. Init does not enable hardware. */
 mfoc_result_t mfoc_port_init(void);
 
 /** @brief Read the latest published DC-bus voltage in Vdc/Vbase.
  * @param bus Output; valid only on OK.
  * @return OK, NULL, INVALID_STATE if the ADC sample is not ready, or
- * OUT_OF_RANGE.
- * @note Reads the MDI-published mean without waiting for a new conversion. */
+ * OUT_OF_RANGE or IO.
+ * @note Reads a stable MDI-published mean without waiting; an active
+ * publication returns INVALID_STATE and leaves the output unchanged. */
 mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus);
 
 /** @brief Read AS5600 mechanical BAM32 through the encoder_angle MDI resource.

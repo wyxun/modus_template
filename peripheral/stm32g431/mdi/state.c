@@ -21,4 +21,3 @@ volatile bool g_bG431FaultLatched = false;
 g431_stream_state_t g_tG431Stream;
 uint8_t g_achG431StreamTx[G431_STREAM_BUFFER_SIZE];
 uint8_t g_achG431StreamRx[G431_STREAM_BUFFER_SIZE];
-mdi_g431_isr_probe_t g_tG431IsrProbe;

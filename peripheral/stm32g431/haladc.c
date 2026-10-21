@@ -16,6 +16,7 @@
 #include "stm32g4xx_ll_gpio.h"
 #include "stm32g4xx_ll_dma.h"
 #include "stm32g4xx_ll_dmamux.h"
+#include "stm32g4xx_ll_tim.h"
 
 /* Post-calibration delay from ST example formula */
 #define ADC_DELAY_CALIB_ENABLE_CPU_CYCLES  (LL_ADC_DELAY_CALIB_ENABLE_ADC_CYCLES * 32UL)
@@ -295,13 +296,16 @@ void haladc_Init(void)
 
     /* 注入序列完成中断：双 ADC 同沿触发、等长等速序列，
      * 只需 ADC1 的 JEOS 作为高频环时基（同 MCSDK 做法）。 */
-    LL_ADC_EnableIT_JEOS(ADC1);
     HAL_NVIC_SetPriority(ADC1_2_IRQn, 1, 0);
-    /* NVIC 在所有底层硬件（含 TIM1）初始化完成后统一由 haladc_EnableISR 使能 */
 
-}
-
-void haladc_EnableISR(void)
-{
+#if defined(MFOC_APP_ENABLED) && MFOC_APP_ENABLED
+    /* Stopped integration polls current frames; no control ISR consumes them.
+     * TIM1 is configured first, with CH1-3 gated during offset sampling. */
+    LL_ADC_DisableIT_JEOS(ADC1);
+    LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH4);
+    LL_TIM_EnableAllOutputs(TIM1);
+#else
+    LL_ADC_EnableIT_JEOS(ADC1);
     HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
+#endif
 }

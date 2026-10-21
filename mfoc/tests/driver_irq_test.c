@@ -13,20 +13,22 @@ mfoc_driver_t mfoc_driver_instance;
 static bool pending = false;
 static unsigned finishes = 0U;
 
-/** @brief Claim an IRQ without clearing the current frame.
- * @param token Target token. @return Whether this IRQ belongs to control. */
-bool test_irq_begin(uint32_t *token)
+/** @brief Report whether the control frame is ready. @return Ready state. */
+bool test_irq_ready(void)
 {
-    if (!pending) { return false; }
-    *token = 123U;
-    return true;
+    return pending;
+}
+
+/** @brief Begin a ready IRQ without clearing its frame. @return None. */
+void test_irq_begin(void)
+{
+    assert(pending);
 }
 
 /** @brief Model cleanup, including an idle or failed control step.
- * @param token Matching entry token. @return None. */
-void test_irq_end(uint32_t token)
+ * @return None. */
+void test_irq_end(void)
 {
-    assert(token == 123U);
     finishes++;
     pending = false;
 }

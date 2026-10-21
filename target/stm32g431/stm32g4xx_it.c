@@ -3,7 +3,7 @@
  * @brief  Interrupt handlers (STM32G431)
  *
  * SysTick_Handler → perf_counter + MODUS/MDI 1 ms clock.
- * ADC1_2 → foc_app_HighFrequencyISR (FOC 20 kHz control step, TIM1 CH4 trigger).
+ * ADC1_2: MFOC polling build leaves IRQ unused; legacy uses FOC Step.
  * USART / FDCAN / TIM1 break handlers active; other peripherals are stubs.
  */
 
@@ -11,7 +11,9 @@
 #include "perf_counter.h"
 #include "halfdcan.h"
 #include "mdebug_cm.h"
+#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
 #include "foc_app.h"
+#endif
 #include "haltim1.h"
 #include "mdi/instance.h"
 #include "mdi/service.h"
@@ -76,8 +78,9 @@ void TIM1_CC_IRQHandler(void)               {}
 #if !defined(MFOC_DRIVER_IRQ_ENABLED) || !MFOC_DRIVER_IRQ_ENABLED
 void ADC1_2_IRQHandler(void)
 {
-    uint32_t wEntryCyc = 0U;
-    if (mdi_g431_control_irq_begin(&wEntryCyc)) {
+#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
+    if (MDI_Sample_IsReady(phase_current_completed)) {
+        g_bG431JeosConsumed = false;
         /*
          * MDI's completed-frame provider owns the JEOS acknowledgement when
          * the FOC cycle consumes the frame.  Calling FOC before clearing the
@@ -88,8 +91,9 @@ void ADC1_2_IRQHandler(void)
          */
         foc_app_HighFrequencyISR();
 
-        mdi_g431_control_irq_end(wEntryCyc);
+        mdi_g431_ack_unconsumed_current_frame();
     }
+#endif
 }
 #endif
 

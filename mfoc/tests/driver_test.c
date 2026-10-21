@@ -46,7 +46,13 @@ static void initialization(void)
     assert(mfoc_driver_Init(&driver, &cfg) != MFOC_RESULT_OK);
     cfg = config(0U);
     cfg.speed = (mfoc_pi_params_t){0};
+    motor_port_fake.bus_sample = MFOC_RESULT_IO;
+    unsigned reads = motor_port_fake.bus_reads;
     assert(mfoc_driver_Init(&driver, &cfg) == MFOC_RESULT_OK);
+    assert(motor_port_fake.bus_reads == reads);
+    assert(driver.motor.core.bus == cfg.motor.core.bus);
+    assert(mfoc_driver_UpdateBus(&driver) == MFOC_RESULT_IO);
+    motor_port_fake.bus_sample = MFOC_RESULT_OK;
     assert(driver.motor.state == MFOC_MOTOR_IDLE);
     assert(mfoc_driver_Run(NULL) == MFOC_RESULT_NULL);
     assert(mfoc_driver_Run(&driver) == MFOC_RESULT_OK);

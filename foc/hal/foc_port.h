@@ -113,9 +113,6 @@ foc_result_t foc_PwmClearFault(void);
 #ifndef FOC_PORT_PWM_CLEAR_FAULT
 #define FOC_PORT_PWM_CLEAR_FAULT() foc_PwmClearFault()
 #endif
-#ifndef FOC_PORT_ISR_PROBE_POST_OBSERVER
-#define FOC_PORT_ISR_PROBE_POST_OBSERVER() ((void)0)
-#endif
 
 /* A target that owns a fixed encoder may define these before foc_encoder.h is
  * parsed. The fallback keeps a static build explicitly disabled instead of

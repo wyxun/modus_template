@@ -4,9 +4,8 @@
 # =============================================================================
 
 # FOC motor control target (grblHAL is not built on this chip).
-# FOC high-frequency ISR is connected via ADC1 JEOS interrupt →
-# foc_app_HighFrequencyISR() → motor_HighFrequencyStep() (see
-# stm32g4xx_it.c ADC1_2_IRQHandler and haladc.c JEOS/NVIC enable).
+# Stopped MFOC integration: Driver Init and foreground encoder service only.
+# ADC1 current frames are polled; no control IRQ, Step or Motor Start.
 
 # CPU architecture (FPU enabled)
 CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
@@ -15,8 +14,6 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 C_DEFS += -DFOC_TRIG_BACKEND=2
 C_DEFS += -DFOC_HF_ISR_HZ=20000U
-# During the board timing trial, keep only the outer DWT ISR probe.
-C_DEFS += -DFOC_ISR_TIMING_DWT_ONLY=1
 # 20 mOhm shunt, 10k/22k/976 input network, PGA x16: about 34 counts/A.
 # Injected ADC keeps the 4x sum: preserve the existing rounded scale * 4.
 C_DEFS += -DFOC_CURRENT_BASE_MILLIAMP=3500U
@@ -27,7 +24,8 @@ C_DEFS += -DHALADC_VBUS_RANGE_48V=0U
 C_DEFS += -DFOC_DCBUS_MV_PER_COUNT_NUM=20570U
 C_DEFS += -DFOC_DCBUS_MV_PER_COUNT_DEN=2457U
 C_DEFS += -DFOC_DCBUS_OFFSET_MILLIVOLT=0
-C_DEFS += -DFOC_SUPPORT=1
+C_DEFS += -DFOC_SUPPORT=0 -DMFOC_APP_ENABLED=1
+C_DEFS += -DMFOC_NUMERIC_FLOAT=1 -DMFOC_TRIG_BACKEND=1
 C_DEFS += -DFOC_ENCODER_STATIC_BINDING=1
 C_DEFS += -DMDI_MAIN_STREAM_RESOURCE=board_stream
 
@@ -92,7 +90,11 @@ LL_SOURCES = \
 CHIP_SOURCES = $(HAL_SOURCES) $(LL_SOURCES)
 
 # FOC framework — STM32G431 supports FOC with CORDIC trig backend
-include foc/foc.mk
+# Keep legacy numeric headers for the existing board CORDIC implementation.
+# No legacy FOC control source or application is linked.
+FOC_INCLUDES = -Ifoc -Ifoc/math
+include mfoc/mfoc.mk
+CLASS_SOURCES = class/mfoc_app.c
 
 # 启用 MODUS 默认内置的 perf_counter 移植
 MODUS_USE_DEFAULT_PERFC_PORT = 1

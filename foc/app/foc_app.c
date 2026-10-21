@@ -588,7 +588,6 @@ void foc_app_HighFrequencyISR(void)
             if (ePosition == FOC_RESULT_OK && eControl == FOC_RESULT_OK) {
                 motor_position_ObserverStep(&tFocApp.tPosition,
                                              &tSample);
-                FOC_PORT_ISR_PROBE_POST_OBSERVER();
             } else {
                 motor_position_ResetObserver(&tFocApp.tPosition);
             }
