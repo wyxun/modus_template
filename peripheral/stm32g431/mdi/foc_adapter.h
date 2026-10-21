@@ -110,7 +110,7 @@ MDI_INLINE uint32_t mdi_g431_foc_sample_dcbus_raw(
         return FOC_PORT_ADC_SAMPLE_INVALID;
     }
 #if FOC_DCBUS_SOURCE == FOC_DCBUS_SOURCE_ADC
-    if (!g_bG431AdcMeanValid) {
+    if (!MDI_ADC_IsPublished(adc_bus_voltage)) {
         return FOC_PORT_ADC_SAMPLE_INVALID;
     }
     return MDI_ADC_ReadFast(adc_bus_voltage);

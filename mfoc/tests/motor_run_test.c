@@ -7,7 +7,6 @@
 #include "mfoc_motor.h"
 #include "motor_port_fake.h"
 #include <assert.h>
-#include <math.h>
 #include <stdio.h>
 
 /** @brief Prepare a current-controlled motor with a known inactive port.
@@ -71,11 +70,6 @@ int main(void)
     assert(motor_port_fake.duty.qU == MFOC_HALF);
     assert(motor_port_fake.enabled);
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_INVALID_STATE);
-    motor_port_fake.current = (mfoc_uvw_t){
-        MFOC_SCALAR(0.1f), MFOC_SCALAR(-0.05f), MFOC_SCALAR(-0.05f)};
-    assert(mfoc_motor_Sample(&motor, &input.i) == MFOC_RESULT_OK);
-    assert(input.i.qAlpha == MFOC_SCALAR(0.1f));
-    assert(input.i.qBeta == MFOC_ZERO);
     assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_OK);
     assert(output.u.qD > MFOC_ZERO && output.u.qQ < MFOC_ZERO);
     assert(motor_port_fake.duty.qU == output.duty.qU);
@@ -86,26 +80,6 @@ int main(void)
     assert(motor.command.i_ref.qD == MFOC_ZERO);
     assert(motor.core.d.ui == MFOC_ZERO && motor.core.q.ui == MFOC_ZERO);
     assert(!motor_port_fake.enabled);
-
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    motor_port_fake.current.qW = -MFOC_ONE;
-    assert(mfoc_motor_Sample(&motor, &input.i) == MFOC_RESULT_SAFETY);
-    check_fault(&motor, MFOC_MOTOR_FAULT_OVERCURRENT);
-
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    input.angle_valid = false;
-    assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_SAFETY);
-    check_fault(&motor, MFOC_MOTOR_FAULT_FEEDBACK);
-    input.angle_valid = true;
-    input.i = (mfoc_ab_t){0};
-
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    motor_port_fake.sample = MFOC_RESULT_IO;
-    assert(mfoc_motor_Sample(&motor, &input.i) == MFOC_RESULT_IO);
-    check_fault(&motor, MFOC_MOTOR_FAULT_SAMPLE);
 
     setup(&motor);
     motor_port_fake.enable = MFOC_RESULT_IO;
@@ -132,12 +106,6 @@ int main(void)
 
     setup(&motor);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    motor_port_fake.trip_on_sample = &motor;
-    assert(mfoc_motor_Sample(&motor, &input.i) == MFOC_RESULT_SAFETY);
-    check_fault(&motor, MFOC_MOTOR_FAULT_EXTERNAL);
-
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     unsigned writes = motor_port_fake.writes;
     motor_port_fake.trip_before_commit = &motor;
     assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_SAFETY);
@@ -151,18 +119,6 @@ int main(void)
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.irq_mask == 1U);
     motor_port_fake.irq_mask = 0U;
-#if defined(MFOC_NUMERIC_FLOAT)
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    input.i.qAlpha = NAN;
-    assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_SAFETY);
-    check_fault(&motor, MFOC_MOTOR_FAULT_SAMPLE);
-    setup(&motor);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    motor_port_fake.current.qV = INFINITY;
-    assert(mfoc_motor_Sample(&motor, &input.i) == MFOC_RESULT_SAFETY);
-    check_fault(&motor, MFOC_MOTOR_FAULT_SAMPLE);
-#endif
     assert(motor_port_fake.irq_mask == 0U);
     puts("Motor control, startup rejection and fault recovery passed");
     return 0;

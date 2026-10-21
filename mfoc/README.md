@@ -3,8 +3,9 @@
 mfoc 是 `dev-focv2` 的新 FOC 库，目录、文件和符号统一使用 `mfoc` 名称。
 
 新库尚未接入当前固件。旧 `foc/` 保留作为参考和对照；
-base/Core 不依赖硬件，Motor 通过直接绑定的端口访问采样和 PWM，
-库内不包含旧库、MODUS、MDI 或厂商寄存器头文件。
+base/Core 不依赖硬件；Driver 通过端口读取电流，Motor 通过端口提交 PWM。
+算法和控制模块不包含旧库、MODUS、MDI 或厂商寄存器头文件，
+`port/` 通过 MDI 实现硬件迁移。
 
 计算基座统一归入 `base/` 模块，公开头文件位于 `base/include/`，实现位于 `base/src/`。通用 PI 也属于这个基座；电流环、速度环通过各自的 PI 实例和参数使用同一套控制器接口。
 
@@ -21,7 +22,8 @@ base/Core 不依赖硬件，Motor 通过直接绑定的端口访问采样和 PWM
 | `mfoc_pi.*` | 通用并联 PI、积分/输出限幅、条件积分、状态跟踪 | 独立实现，FLOAT/Q15 共用接口 |
 | `mfoc_types.h` | 标量、统一结果码、uvw、alpha-beta、dq 公共类型 | 不依赖数值运算头，三相量统一为 `mfoc_uvw_t` |
 
-电流环计算编排位于独立的 `core/`；SMO、编码器、硬拖、识别、接管、安全状态机和调试统计留到业务流程审核后迁移；它们不进入基础类型和配置头。
+电流环计算编排位于独立的 `core/`，位置算法位于 `position/`，当前已实现编码器。
+SMO、硬拖、识别和接管留到对应流程审核后迁移；它们不进入基础类型和配置头。
 
 ## Motor 基础电流控制
 
@@ -38,43 +40,194 @@ base/Core 不依赖硬件，Motor 通过直接绑定的端口访问采样和 PWM
 | `SetCurrent` | 检查 dq 参考矢量幅值不超过 i_max，整体更新两个分量 |
 | `SetBus` | 更新 Core 母线系数；拒绝时保留原值，不自动停机 |
 | `Sample` | 读取完成帧、检查三相电流、Clarke，输出共享 αβ 电流 |
-| `Step` | 检查电流矢量和角度有效性、执行 Core、提交 PWM |
+| `Step` | 检查电流矢量、执行 Core、提交 PWM；调用方保证反馈有效 |
 | `Trip` | 立即关断并锁存故障；允许高优先级故障 ISR 调用 |
 | `ClearFault` | 确认关断且就绪后复位控制器，恢复到 IDLE，不自动启动 |
 | `GetStatus` | 一次短临界区取得状态及故障位 |
 
 `Start` 保留已接受的电流指令，`Stop/Trip/ClearFault` 清零指令。
-`Sample/Step` 检查实测电流；超限或无效输入锁存故障并请求关断。
-`i_max` 同时约束各相瞬时绝对值及 αβ 矢量幅值。
+Driver 负责调用电流端口和 Clarke；端口保证归一化结果有限且可表示。
+Motor 检查 αβ 电流矢量，超限时锁存故障并请求关断；不重复检查 finite。
+`i_max` 约束 Motor 收到的 αβ 电流矢量。
 写 PWM、使能或关断失败均锁存 PWM 故障；关断失败不宣称硬件已安全。
 硬件过流 Break 仍是独立保护，供电、温度等系统监测由外层调用 Trip。
 无效的动态母线测量也必须由外层按安全策略处理。
 
-`motor/include/mfoc_motor_port.h` 声明七个直接绑定接口：
-CheckReady、SampleCurrent、SetDuty、EnablePwm、DisablePwm、
-EnterCritical、ExitCritical。目标适配文件通过 MDI 实现这些接口，
-没有默认成功实现。当前只提供测试端口，尚无 STM32/AT32 实机绑定。
+`port/include/mfoc_port.h` 声明直接绑定的电流与 PWM 数据接口：
+
+```c
+mfoc_result_t mfoc_port_current(mfoc_uvw_t *current);
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty);
+```
+
+`mfoc_port_current()` 读取新鲜且完整的三相 ADC 完成帧，处理 ADC 数据格式、
+零偏和极性，用预计算系数换算成有限且可表示的 I/Ibase，结果仅在返回 OK 时有效。
+采样不可等待转换完成，不把测量值裁剪到运行限值；顶层控制编排负责
+执行 Clarke，再将 αβ 电流交给 Motor 检查电流矢量并执行电流环。
+`mfoc_port_pwm()` 接收有限的 [0,1] 三相占空比，处理极性并转换成硬件比较值后写入。
+Core 保证占空比有限且在范围内，端口直接转换，不重复做 finite/范围检查。
+目标板决定占空比生效点，MDI 硬件提交失败向上传递；写占空比不得使能已关断的桥。
+
+迁移实现位于 `port/src/mfoc_port.c`，通过目标提供的 `mdi/instance.h` 绑定
+`phase_current_completed`、`adc_bus_voltage`、`bridge`、`encoder_angle` 和
+`raw_tick`，所有硬件操作均走 MDI。编码器地址由 `encoder_angle` 绑定；
+Port 将 AS5600 原始 12 位机械角度转换成 BAM32。
+MDI 为采样资源提供 `u/v/w` 完成帧和 `MDI_Sample_Maximum()` 计数上限，
+为母线提供已发布 ADC 均值，为 PWM 资源提供 `MDI_PWM_SetDuty()` 和
+`MDI_PWM_AnyOutputEnabled()`。
+后者检查任意相输出门控，部分开启、计数器停止或 Break 生效也不能视为已关闭；
+采样触发专用输出不计入相输出。port 不访问芯片寄存器或写死 ADC 位数。
+换芯片时保持上述资源名和能力契约，只需修改 MDI 实现及资源绑定；
+电流标度与极性在 `mfoc_port.h` 中配置，零偏由端口初始化采集。
+板级完成 ADC 触发配置后、Motor 停止且三相输出门控关闭时，Driver Init 会调用
+`mfoc_port_init()`。它阻塞读取十个完成帧，
+每次读取前通过 `perfc_delay_ms(10)` 等待 10 ms，然后分别对 U/V/W 求均值作为零偏；
+这段时间 ADC 触发必须持续工作，且不能有 ISR/其他调用方读取同一采样资源。
+G431 使用注入 ADC 右对齐四倍累加值，`mfoc_port.h` 中的
+`MFOC_PORT_COUNTS_PER_BASE` 定义为 476 个累加计数，对应当前 Motor/Core 的
+3.5 A Ibase。换板或更改 Ibase 时应调整该宏；`MFOC_PORT_CURRENT_INVERTED`
+配置固定电流极性，不通过运行时配置传入。
+母线通道按 `20570/2457` mV/count 换算，并以 12 V 为 Vbase 归一化；
+`mfoc_port.h` 中的参数需与电压采样分压、Vbase 和测量范围一致。
+Init 不会使能桥臂，完成均值计算后
+才发布新的偏置和换算系数。
+`mfoc_port_bus()` 读取 MDI 最近一次完整发布的母线均值；它不等待新 ADC 转换，
+允许多通道均值正在更新时读取前一份已发布值。
+
+未初始化或没有完成帧时，电流端口返回 INVALID_STATE，输出保持不变。
+FIXED 使用私有 Q30 倒数，将 ADC 差值转换成公共 Q15，避免每拍除以板级标度；
+G431 的 14 位采样下，倒数量化与向零截断的合计误差小于两个 Q15 计数。
+测量值不裁剪到 ±1 pu；G431 的 ADC 计数范围及标度保证结果可由标量表示。
+PWM 先转换为 MDI 的 Q16 占空比，再由 MDI 换算成 TIM1 比较值。
+G431 当前关闭 CCR 预装载，由 MDI 写 CCR1-3，不产生 UG 或改变输出门控。
+
+`motor/include/mfoc_motor_port.h` 声明 CheckReady、EnablePwm、DisablePwm、
+EnterCritical、ExitCritical，负责 Motor 的安全生命周期和临界区。
+这五个安全/临界区操作当前仍只有测试实现，AT32 尚无新库端口实现。
+`mfoc.mk` 已包含此 MDI port 源文件；目标工程需提供相应 MDI 包含路径和
+`MFOC_NUMERIC_FLOAT` 或 `MFOC_NUMERIC_FIXED`。现有固件继续使用旧 FOC。
 一个编译绑定的功率级由一个应用持有的 Motor 实例独占；不支持两个
 活动 Motor 共用这些端口。配置和计算对象可独立实例化。
 
 端口返回已校准、调整极性并归一化为 I/Ibase 的三相完成帧；
 ADC 零偏、count-to-PU 系数和帧新鲜度由端口负责。使能前必须保证
-中性占空比已真正生效，SetDuty 不得重新使能已关断的桥。
+中性占空比已真正生效，`mfoc_port_pwm()` 不得重新使能已关断的桥。
 CheckReady 只检查校准、供电和硬件故障条件，不等待外设或自动清故障。
 清除物理故障锁存和确认外部故障原因消失由应用/目标适配负责。
 
-前台调用启停、故障恢复、指令更新和查询；Sample/Step 在同一个控制
-ISR 中串行执行。SetBus 在控制 ISR 内调用，或停机时在前台调用；
+前台调用启停、故障恢复、指令更新和查询；Driver 电流环 Step 在控制 ISR 中执行。
+SetBus 在控制 ISR 内调用，或停机时在前台调用；
 运行期间不得从前台直接更新 Core 的两项系数。运行状态和故障锁存
 允许 Trip 中断 Step，最终 PWM 提交前再次检查状态。Core 数学计算
 不屏蔽中断；端口临界区必须支持嵌套、保存恢复原屏蔽状态及编译器屏障。
-Step 输入必须是同一采样时刻的新电流与电角度，输入/输出不与对象重叠。
-失败时丢弃输出；没有额外样本缓存或重用旧结果的后备路径。
+Motor Step 输入由 Driver 在本次调用中构造，Core 输出也是局部值；失败时
+不提交新的 PWM，没有额外样本缓存或重用旧结果的后备路径。
 
-典型 ISR 编排为 `Sample -> 外部角度获取 -> Step`，每步检查返回值。
-`mfoc_motor_input_t` 只有 αβ 电流、电角度、角度有效标志；
-Step 直接输出已有的 `mfoc_core_output_t`。观测器、速度环、对齐和
-校准业务流程后续单独接入，不在 Motor 中预留算法状态。
+Motor 不读取相电流，也不选择角度或速度来源。Driver 读取
+`mfoc_port_current()` 并执行 Clarke，调用 `mfoc_feedback_Step()` 获取角度/速度；
+速度环（若启用）更新 Motor 的 dq 电流指令，最后调用 Motor 的 Step。
+`mfoc_motor_input_t` 只有 αβ 电流、电角度和角度有效标志，Step 直接输出
+`mfoc_core_output_t`。`angle_valid` 保留在输入类型中，Motor 不再校验该字段。
+
+## Driver 顶层编排
+
+`driver/include/mfoc_driver.h`、`driver/src/mfoc_driver.c` 提供 `mfoc_driver`。
+对象按值拥有一个 Motor 和一个速度 PI；Motor 保存运行状态与故障。
+板级先完成 ADC 触发和 perfc 初始化，再调用
+`mfoc_driver_Init(&driver, &cfg)`。Init 阻塞采集十帧并求 U/V/W 偏置，随后读取
+MDI 已发布的母线 ADC 均值、换算并更新 Motor/Core 的母线 PU，不使能 PWM；
+成功后在前台反复调用 `mfoc_driver_Run(&driver)`，至少成功采集一帧编码器数据后
+再调用 `mfoc_motor_Start(&driver.motor)`。Run 在停机和运行期间均应继续调用，
+编码器内部按配置周期读取；控制 IRQ 只执行 Step，不访问 I2C。
+Core 持有当前母线 PU 和调制系数。运行中可按需在控制 ISR 调用
+`mfoc_driver_UpdateBus(&driver)` 读取 MDI 已发布值并更新 Core，不等待新转换。
+
+`speed_divider = 0` 为 dq 电流模式，通过 `mfoc_driver_SetCurrent` 下发指令；
+此时忽略速度 PI 参数和反馈速度。`speed_divider = N > 0` 为速度模式，
+通过 `mfoc_driver_SetSpeed` 下发速度指令，PI 输出 `iq_ref`，`id_ref = 0`。
+速度 PI 输出上下界必须包含零并落在 Motor 的 ±`i_max` 内。
+速度参考和反馈均为 `omega_e/omega_base`，等价于
+`omega_m/(omega_base/pole_pairs)`；不把 rad/s 或 RPM 直接传入。
+
+控制 ISR 每个电流完成帧调用一次 `mfoc_driver_Step(&driver)`。Driver 内部
+调用 `mfoc_feedback_Step()` 取得电角度和电角速度；Driver 保存上一拍成功的
+Core 输出供反馈策略使用，输出带有该拍计算使用的母线 PU 快照：
+
+```text
+mfoc_port_current -> Clarke -> mfoc_feedback_Step -> 速度 PI（分频）
+                           -> mfoc_motor_Step -> Core -> mfoc_port_pwm
+```
+
+速度 PI 在启动后的第 1、N+1、2N+1…拍执行，其余拍保持电流参考；
+`ki_ts` 必须按速度周期 `N * 电流环周期` 配置。
+`mfoc_feedback.c/h` 提供 Init、Run 和 Step。算法启用与控制输出来源分开：
+`MFOC_FEEDBACK_ENABLE_ENCODER=1`（默认）编入并运行编码器；
+`MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_ENCODER`（默认）选择编码器输出。
+BACKEND 只选择最终角度和速度，不控制各算法是否运行。
+`MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
+目前只实现编码器，SMO 等算法按需要另加独立配置、状态和启用宏。
+
+`position/include/mfoc_encoder.h` 与 `position/src/mfoc_encoder.c` 实现编码器算法。
+Driver 的 `cfg.feedback.encoder` 配置读取周期、超时、滤波、电角度零偏、方向和
+电速度基值 Hz；极对数直接使用 `cfg.motor.params.pole_pairs`。
+示例配置如下，基值与零偏必须替换成系统实际配置：
+
+```c
+.feedback = {.encoder = {
+    .electrical_speed_base_hz = MFOC_SCALAR(100.0f),
+    .speed_filter_alpha = MFOC_SCALAR(0.2f),
+    .electrical_zero = {0U},
+    .sample_period_us = 1000U,
+    .timeout_ms = 10U,
+    .inverted = false,
+}},
+```
+
+Run 通过 `mfoc_port_encoder()` 和 MDI `encoder_angle` 读取 AS5600 的机械 BAM32，
+按实际读取完成 tick 间隔估算机械速度，完成滤波与电速度 PU 换算后，
+通过双缓冲发布完整快照。Step 检查快照年龄并按机械速度外推电角度，
+直接复制缓存的电速度 PU；它忽略电流和
+上一拍 Core 输入。快照只有一个前台写入者和一个更高优先级 ISR 读取者。
+首帧速度为零；读取失败保留旧快照，过期后 ISR 返回错误并锁存 FEEDBACK 故障。
+电角度零偏由外部校准后配置；这里不自动对齐。相邻采样须小于半机械圈，
+读取完成时间戳不包含传感器内部延迟补偿。
+
+Feedback 输入仍保留本拍 `i_ab_k` 与可选的前一控制区间 Core 输出。
+Driver 按实例保存上一拍成功的 Core 输出；首拍传入 NULL，Stop 或故障后清除有效标志。
+未来模型算法可通过 duty 和同拍 bus 快照重建电压，不改变 Driver 的采样主流程。
+
+Motor 启动使用 `mfoc_motor_Start(&driver.motor)`；停止使用 `mfoc_driver_Stop(&driver)`，
+它同时清零速度指令、PI 积分和分频。故障恢复时先调用 Driver Stop 清理速度环，
+再 ClearFault，最后直接 Motor Start。命令更新在控制 ISR 或 IDLE 时执行，
+需与其它写操作串行。
+Motor 的 Trip、ClearFault、GetStatus 直接以 `&driver.motor` 为实例调用，
+不另外维护一套 Driver 故障状态。采样失败由 Driver 调用 Trip 锁存 SAMPLE 故障，
+失败时不提交新 PWM，关断错误优先返回；IDLE/FAULT 时不消耗采样帧。
+
+基本 ISR 调用示例：
+
+```c
+mfoc_result_t rc = mfoc_driver_Step(&driver);
+```
+
+中断函数本体位于 `driver/src/mfoc_driver_irq.c`，入口为无参数的
+`void mfoc_driver_IRQHandler(void)`。`typedef void mfoc_driver_irq_handler_t(void)`
+定义函数签名；GCC/Clang 的 `alias` 把实际向量名映射到同一函数地址，不经过转发函数。
+
+板级 `mfoc_driver_irq_binding.h` 通过 `MFOC_DRIVER_IRQ_VECTOR/INSTANCE/BEGIN/END`
+做编译期绑定。G431 绑定位于 `driver/`，向量名为 `ADC1_2_IRQHandler`；
+BEGIN/END 调用 MDI 的控制 IRQ 首尾操作，保留 DWT 测量以及“读电流后清 JEOS”的顺序。
+没有控制运行或采样失败时也执行 END，清理未消费帧；已消费后新到达的帧保持待处理。
+`irq_result` 仅记录最近一次 IRQ 的 Step 返回值用于诊断，故障仍由 Motor 锁存。
+
+启用时为整个目标定义 `MFOC_DRIVER_IRQ_ENABLED=1`，编译 `mfoc_driver_irq.c`，
+并加入 `driver/`。G431 的 `it.c` 据此排除原来的 ADC 控制 IRQ 定义，
+启动文件中的向量直接解析到 Driver。集成方须提供并初始化
+`mfoc_driver_instance`，完成 feedback 算法、Motor 安全/临界区端口及
+故障 IRQ 对同一个 Motor 的绑定，再启用硬件 IRQ。
+默认固件继续使用旧 FOC；当前没有以空实现代替这些尚未迁移的依赖。
+
+## Motor 标幺参数
 
 极对数 `pole_pairs` 为正整数。`rs/ld/lq/flux` 是正的标幺值，
 `inertia` 是非负标幺惯量，零表示尚未提供。物理参数在调用 Init 前换算：
@@ -151,7 +304,7 @@ Core 直接调用基座，无运行时分派。加上 Core 入口，默认 LUT
 - `mfoc_angle_from_turns`、`mfoc_from_float` 是边界转换函数；FIXED 的 float 转换将 NaN 转零、正负无穷饱和，FLOAT 标量转换原样返回；角度转换将非有限输入转零。需要拒绝输入的调用者必须在调用前检查有效性，零值不是有效性标记。
 - 坐标变换保留原有逐乘积缩放/舍入次序；Clarke 假定三相平衡，alpha=U、beta=(V-W)/sqrt(3)。不自动去除零序。
 - 调制输入为相对当前母线的电压调制度，输出占空比 [0,1]；电压模型乘 `bus/baseVoltage`，返回相对电压基值的量，不能把两者混称为同一电压。
-- 电机操作层在采样、命令和参数入口统一校验有限性及范围。调制、重建和 `atan2` 按头文件的输入前提计算，不逐层重复验证；返回 OK 不代表数据已通过校验。算法限幅、零向量处理、转换保护和 `mfoc_div_checked` 的检查保留。
+- 电流端口保证归一化结果有限且可表示，Motor 校验电流命令和参数；Driver/Core 信任约定内的采样及反馈，不逐层重复验证。调制、重建和 `atan2` 按头文件的输入前提计算，算法限幅、零向量处理、转换保护和 `mfoc_div_checked` 的检查保留。
 
 ## 通用 PI
 
@@ -191,7 +344,17 @@ powershell -ExecutionPolicy Bypass -File mfoc/tests/run_tests.ps1
 
 测试独立编译新库，覆盖 FLOAT/FIXED、LUT、FLOAT LIBM、直接绑定的外部三角后端、随机及边界数值。迁移对照另行链接旧数学实现，不影响新库依赖边界。ARM 编译及 FIXED 查表无软浮点检查运行 `mfoc/tests/check_arm.ps1`，可通过 `-Toolchain` 指定 LLVM 工具链目录。
 
-全量主机测试包含通用 PI；单独运行 PI 测试可使用 `mfoc/tests/run_pi_tests.ps1`。ARM 检查同时编译 PI，并检查 FIXED PI 不引用软浮点辅助函数。
+全量主机测试包含通用 PI 和 Driver；Driver 测试覆盖采样/Clarke/电流环串联、
+速度 PI 分频、停机重启和采样失败关断。IRQ 测试验证无参数入口、向量与 Driver
+同地址、先读后清以及停机/故障时的中断清理。单独运行 PI 测试可使用
+`mfoc/tests/run_pi_tests.ps1`。ARM 检查同时编译 Driver 和 PI，
+并检查 FIXED PI 不引用软浮点辅助函数，同时编译 G431 的实际 IRQ 绑定并验证向量别名。
+
+全量主机测试还包含 `mfoc/tests/run_port_tests.ps1`：使用 G431 的真实 MDI 绑定和
+模拟寄存器，覆盖未完成帧、全部 14 位 ADC 码、两种极性和多组换算标度，
+以及 PWM 比较值换算、非法定时器状态和门控保持。该测试直接初始化端口内部状态，
+不覆盖依赖定时 ADC 帧及 perfc 的阻塞式 Init。ARM 检查编译 FLOAT/FIXED G431 端口，
+并确认 FIXED 端口没有软浮点辅助依赖；这些检查不替代实机采样/PWM 时序验证。
 
 `mfoc.mk` 是可选的源文件清单，当前没有加入任何 target。调用方指定 `MFOC_NUMERIC_*` 和 `base/include` 包含路径后可使用 `mfoc.h`。旧 FOC 与新库使用不同文件名、类型和符号，可在审核阶段并存。
 

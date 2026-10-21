@@ -364,6 +364,27 @@ static inline void mdi_g431_isr_probe_end(uint32_t wEntryCyc)
 #endif
 }
 
+/** @brief Enter the control IRQ without acknowledging the completed frame.
+ * @param pwEntryCyc Probe token for control_irq_end.
+ * @return True only for a pending ADC1 injected completion. */
+static inline bool mdi_g431_control_irq_begin(uint32_t *pwEntryCyc)
+{
+    if (G431_PHASE_CURRENT_READY == 0U) { return false; }
+    g_bG431JeosConsumed = false;
+    *pwEntryCyc = mdi_g431_isr_probe_begin();
+    return true;
+}
+
+/** @brief Finish probing and acknowledge only an unconsumed current frame.
+ * @param wEntryCyc Token from control_irq_begin. @return None.
+ * @note Preserve a newer JEOS if ReadCompleted consumed the previous frame.
+ * This must run even when control was idle, uninitialized or failed. */
+static inline void mdi_g431_control_irq_end(uint32_t wEntryCyc)
+{
+    mdi_g431_ack_unconsumed_current_frame();
+    mdi_g431_isr_probe_end(wEntryCyc);
+}
+
 /** @brief Calibrate probe self-overhead before enabling ADC interrupts. */
 static inline void mdi_g431_isr_probe_init(void)
 {

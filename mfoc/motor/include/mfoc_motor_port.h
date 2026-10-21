@@ -1,6 +1,6 @@
 /**
  * @file mfoc_motor_port.h
- * @brief Direct, target-bound current sensing and PWM operations.
+ * @brief Target-bound Motor safety and interrupt serialization.
  * @author Codex
  * @date 2026-10-20
  */
@@ -19,20 +19,9 @@
  * @note No conversion wait, bus polling or automatic fault acknowledgement. */
 mfoc_result_t mfoc_motor_port_CheckReady(void);
 
-/** @brief Read the completed coherent three-phase current frame.
- * @param current Offset-corrected, polarity-corrected current in I/Ibase.
- * @return OK or error (missing/stale frame or invalid calibration).
- * @note Adapter owns ADC offsets and precomputed count-to-PU gains. */
-mfoc_result_t mfoc_motor_port_SampleCurrent(mfoc_uvw_t *current);
-
-/** @brief Submit duties to the PWM preload registers.
- * @param duty Valid finite values in [0,1], with target polarity mapping.
- * @return OK or hardware error. Must never enable a disabled bridge. */
-mfoc_result_t mfoc_motor_port_SetDuty(const mfoc_uvw_t *duty);
-
 /** @brief Enable PWM after neutral duty has been submitted.
  * @return OK only after enable succeeds; recheck the physical fault latch.
- * @note Ensure the neutral preload is effective before enabling outputs. */
+ * @note Ensure neutral duty is effective before enabling outputs. */
 mfoc_result_t mfoc_motor_port_EnablePwm(void);
 
 /** @brief Force all power-stage outputs inactive; safe to repeat.

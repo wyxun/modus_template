@@ -56,10 +56,10 @@ typedef enum {
 } mfoc_motor_fault_t;
 
 /** @brief Synchronous inputs; current uses Ib and angle is electrical.
- * Supply a fresh Sample result and angle for that sampling instant.
+ * Supply a fresh alpha-beta current sample and angle from the same instant.
  * angle_valid is determined by the external angle source. */
 typedef struct {
-    mfoc_ab_t i;
+    mfoc_ab_t i_ab; /**< Alpha-beta phase current, I/Ibase. */
     mfoc_angle_t angle;
     bool angle_valid;
 } mfoc_motor_input_t;
@@ -82,7 +82,7 @@ typedef struct {
  * No ADC/PWM handles, sample cache or observer state is stored here.
  * Do not change members directly while dependent algorithms are active.
  * One application-owned instance controls the statically bound power stage.
- * Sample/Step run in one control ISR; they must not overlap each other.
+ * Step runs in one control ISR and must not overlap another Step call.
  * Foreground calls may be preempted by that ISR. Only Trip may preempt
  * Step from a higher-priority ISR. Step's final commit checks the latch. */
 typedef struct {
@@ -129,12 +129,6 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
  * @note Call in the control ISR, or in foreground only while IDLE.
  * Caller must handle invalid measured voltage through its safety policy. */
 mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus);
-
-/** @brief Check phase currents and return Clarke-transformed current.
- * @param motor RUNNING instance. @param current Output valid only on OK.
- * @return Status; bad sampling/overcurrent shuts down and latches a fault.
- * @note Control ISR only. The port performs ADC calibration/normalization. */
-mfoc_result_t mfoc_motor_Sample(mfoc_motor_t *motor, mfoc_ab_t *current);
 
 /** @brief Execute current control and submit PWM for the next interval.
  * @param motor RUNNING instance. @param input Fresh current/angle.

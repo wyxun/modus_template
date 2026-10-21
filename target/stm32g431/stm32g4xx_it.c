@@ -73,11 +73,11 @@ void TIM1_TRG_COM_TIM17_IRQHandler(void)    {}
 void TIM1_CC_IRQHandler(void)               {}
 
 /* ---- ADC1_2 (current sensing end-of-conversion) ---- */
+#if !defined(MFOC_DRIVER_IRQ_ENABLED) || !MFOC_DRIVER_IRQ_ENABLED
 void ADC1_2_IRQHandler(void)
 {
-    if ((ADC1->ISR & ADC_ISR_JEOS) != 0U) {
-        g_bG431JeosConsumed = false;
-        uint32_t wEntryCyc = mdi_g431_isr_probe_begin();
+    uint32_t wEntryCyc = 0U;
+    if (mdi_g431_control_irq_begin(&wEntryCyc)) {
         /*
          * MDI's completed-frame provider owns the JEOS acknowledgement when
          * the FOC cycle consumes the frame.  Calling FOC before clearing the
@@ -88,10 +88,10 @@ void ADC1_2_IRQHandler(void)
          */
         foc_app_HighFrequencyISR();
 
-        mdi_g431_ack_unconsumed_current_frame();
-        mdi_g431_isr_probe_end(wEntryCyc);
+        mdi_g431_control_irq_end(wEntryCyc);
     }
 }
+#endif
 
 /* ---- Stubs ---- */
 void WWDG_IRQHandler(void)                  {}

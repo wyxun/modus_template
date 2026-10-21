@@ -27,9 +27,15 @@ static ADC_TypeDef s_tAdc2;
 static void test_InjectedFrameAcknowledgement(void)
 {
     MDI_Sample_Frame(phase_current_completed) tFrame = {0};
+    uint32_t wEntry = 0U;
 
-    g_bG431JeosConsumed = false;
+    ADC1->ISR = 0U;
+    assert(!mdi_g431_control_irq_begin(&wEntry));
+
+    g_bG431JeosConsumed = true;
     ADC1->ISR = ADC_ISR_JEOS;
+    assert(mdi_g431_control_irq_begin(&wEntry));
+    assert(!g_bG431JeosConsumed && ADC1->ISR == ADC_ISR_JEOS);
     ADC1->JDR1 = 101U;
     ADC2->JDR1 = 202U;
     ADC2->JDR2 = 303U;
@@ -38,16 +44,17 @@ static void test_InjectedFrameAcknowledgement(void)
     assert(g_bG431JeosConsumed);
     assert(tFrame.u == 101U && tFrame.v == 303U && tFrame.w == 202U);
     assert(ADC2->ISR == ADC_ISR_JEOS);
-    mdi_g431_ack_unconsumed_current_frame();
+    mdi_g431_control_irq_end(wEntry);
     assert(ADC1->ISR == ADC_ISR_OVR);
     assert(ADC2->ISR == ADC_ISR_OVR);
 
-    g_bG431JeosConsumed = false;
+    ADC1->ISR = ADC_ISR_JEOS;
+    assert(mdi_g431_control_irq_begin(&wEntry));
     ADC1->ISR = 0U;
     assert(MDI_Sample_ReadCompleted(phase_current_completed, &tFrame) ==
            MDI_BUSY);
     assert(!g_bG431JeosConsumed);
-    mdi_g431_ack_unconsumed_current_frame();
+    mdi_g431_control_irq_end(wEntry);
     assert(ADC1->ISR == (ADC_ISR_JEOS | ADC_ISR_OVR));
     assert(ADC2->ISR == (ADC_ISR_JEOS | ADC_ISR_OVR));
 }

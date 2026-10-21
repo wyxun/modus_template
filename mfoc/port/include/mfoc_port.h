@@ -1,0 +1,75 @@
+/**
+ * @file mfoc_port.h
+ * @brief MFOC phase-current, bus-voltage and PWM port contract.
+ * @author Codex
+ * @date 2026-10-21
+ */
+#ifndef MFOC_PORT_H
+#define MFOC_PORT_H
+
+#include "mfoc_angle.h"
+
+/** @brief Board bus-voltage conversion settings used by mfoc_port_bus(). */
+#define MFOC_PORT_BUS_MV_PER_COUNT_NUM UINT32_C(20570)
+#define MFOC_PORT_BUS_MV_PER_COUNT_DEN UINT32_C(2457)
+#define MFOC_PORT_BUS_BASE_MILLIVOLT UINT32_C(12000)
+#define MFOC_PORT_BUS_OFFSET_MILLIVOLT INT32_C(0)
+#define MFOC_PORT_BUS_MAX_MILLIVOLT UINT32_C(60000)
+#define MFOC_PORT_COUNTS_PER_BASE UINT32_C(476)
+#define MFOC_PORT_CURRENT_INVERTED 0U
+
+/* One statically bound power stage. port/src/mfoc_port.c adapts MFOC to MDI;
+ * the target supplies mdi/instance.h with phase_current_completed,
+ * adc_bus_voltage and bridge. Runtime operations are bounded and callable
+ * from the control ISR.
+ * Sampling and PWM trigger/update timing belong to the target setup. */
+
+/** @brief Measure ADC zero offsets and prepare current conversion.
+ * @return OK, OUT_OF_RANGE or INVALID_STATE.
+ * @note Blocks while collecting ten completed ADC frames. Call after ADC
+ * trigger setup, with Motor stopped, phase outputs gated, and no ISR/port
+ * consumer of the same sample resource. Polarity and current scale are
+ * compile-time settings above. Init does not enable hardware. */
+mfoc_result_t mfoc_port_init(void);
+
+/** @brief Read the latest published DC-bus voltage in Vdc/Vbase.
+ * @param bus Output; valid only on OK.
+ * @return OK, NULL, INVALID_STATE if the ADC sample is not ready, or
+ * OUT_OF_RANGE.
+ * @note Reads the MDI-published mean without waiting for a new conversion. */
+mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus);
+
+/** @brief Read AS5600 mechanical BAM32 through the encoder_angle MDI resource.
+ * @param angle Output, unchanged on error. @return OK, NULL, or IO.
+ * @note Foreground only; bounded synchronous I2C access. Board initializes
+ * the bus and binds the sensor address before calling this function. */
+mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle);
+
+/** @brief Read the low 32 bits of raw_tick. @return Wrapping raw ticks.
+ * @note Same raw clock as mfoc_port_tick_frequency; callable from ISR. */
+uint32_t mfoc_port_tick(void);
+
+/** @brief Read initialized perfc tick frequency. @return Ticks/second. */
+uint32_t mfoc_port_tick_frequency(void);
+
+/** @brief Read and normalize one fresh, coherent completed ADC frame.
+ * @param current U/V/W phase currents in I/Ibase; valid only on OK.
+ * @return OK, NULL, INVALID_STATE if unconfigured/not ready, or IO.
+ * @note MDI decodes the ADC format; the port applies offsets, polarity and
+ * precomputed count-to-PU gains using the same Ibase as Motor/Core. The ADC
+ * count range guarantees finite, representable results; values are not
+ * clamped to Motor operating limits.
+ * No conversion wait, Clarke transform or PWM gate change is performed. */
+mfoc_result_t mfoc_port_current(mfoc_uvw_t *current);
+
+/** @brief Convert normalized duties to target counts and submit PWM.
+ * @param duty U/V/W phase duties; each must be finite and within [0,1].
+ * @return OK, NULL, OUT_OF_RANGE for rejected hardware state/frame, or IO.
+ * @note Duty values are trusted Core results; no duplicate finite/range
+ * validation is performed here. The target maps phase polarity and defines
+ * the update point through its timer setup.
+ * Submission must never enable a disabled bridge. The separate enable
+ * operation must ensure previously submitted neutral duties are effective. */
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty);
+
+#endif

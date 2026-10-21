@@ -136,8 +136,21 @@ static void test_enable_and_duty(void)
     assert((TIM1->CR1 & TIM_CR1_CEN) != 0U);
     assert((TIM1->BDTR & TIM_BDTR_MOE) != 0U);
     assert(MDI_PWM_IsEnabled(bridge));
+    assert(MDI_PWM_AnyOutputEnabled(bridge));
     TIM1->CCER &= ~TIM_CCER_CC3NE;
     assert(!MDI_PWM_IsEnabled(bridge));
+    assert(MDI_PWM_AnyOutputEnabled(bridge));
+}
+
+/** @brief Gate state remains open with a stopped counter or active Break. */
+static void test_any_output_enabled(void)
+{
+    TIM1->CR1 = 0U;
+    TIM1->BDTR = 0U;
+    TIM1->CCER = TIM_CCER_CC1E;
+    assert(MDI_PWM_AnyOutputEnabled(bridge));
+    TIM1->CCER = TIM_CCER_CC4E;
+    assert(!MDI_PWM_AnyOutputEnabled(bridge));
 }
 
 /** @brief Acknowledge only BIF and never reopen the phase outputs. */
@@ -202,6 +215,7 @@ int main(void)
     test_enable_and_duty();
     test_clear_fault();
     test_fault_races();
+    test_any_output_enabled();
     puts("PASS G431 PWM duty, phase gates and rc_w0 command contracts");
     return 0;
 }

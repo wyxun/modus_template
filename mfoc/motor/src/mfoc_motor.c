@@ -1,12 +1,12 @@
 /**
  * @file mfoc_motor.c
- * @brief Motor lifecycle, current sensing and current-control orchestration.
+ * @brief Motor lifecycle and current-loop control.
  * @author Codex
  * @date 2026-10-20
  */
 #include "mfoc_motor.h"
 #include "mfoc_motor_port.h"
-#include "mfoc_transform.h"
+#include "mfoc_port.h"
 #include <stddef.h>
 
 /** @brief Check finite PI parameters and a zero-output reset domain.
@@ -107,7 +107,7 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
             if (rc == MFOC_RESULT_OK) {
                 const mfoc_uvw_t neutral = {
                     MFOC_HALF, MFOC_HALF, MFOC_HALF};
-                rc = mfoc_motor_port_SetDuty(&neutral);
+                rc = mfoc_port_pwm(&neutral);
             }
             if (rc == MFOC_RESULT_OK) {
                 rc = mfoc_motor_port_EnablePwm();
@@ -227,52 +227,7 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
  * @param motor Instance. @param bus Vdc/Vbase. @return Update status. */
 mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus)
 {
-    if (motor == NULL) { return MFOC_RESULT_NULL; }
-    if (motor->state != MFOC_MOTOR_IDLE &&
-        motor->state != MFOC_MOTOR_RUNNING) {
-        return MFOC_RESULT_INVALID_STATE;
-    }
     return mfoc_core_SetBus(&motor->core, bus);
-}
-
-/** @brief Read normalized phases, enforce limits and perform Clarke once.
- * @param motor Instance. @param current Shared alpha-beta result.
- * @return Sampling/control status; output is only valid on success. */
-mfoc_result_t mfoc_motor_Sample(mfoc_motor_t *motor, mfoc_ab_t *current)
-{
-    if (motor == NULL) { return MFOC_RESULT_NULL; }
-    if (current == NULL) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE,
-                                MFOC_RESULT_NULL);
-    }
-    *current = (mfoc_ab_t){0};
-    if (motor->state != MFOC_MOTOR_RUNNING) {
-        return MFOC_RESULT_INVALID_STATE;
-    }
-    mfoc_uvw_t phase = {0};
-    mfoc_result_t rc = mfoc_motor_port_SampleCurrent(&phase);
-    if (rc != MFOC_RESULT_OK) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE, rc);
-    }
-    if (!mfoc_scalar_is_finite(phase.qU) ||
-        !mfoc_scalar_is_finite(phase.qV) ||
-        !mfoc_scalar_is_finite(phase.qW)) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE,
-                                MFOC_RESULT_SAFETY);
-    }
-    mfoc_scalar_t limit = motor->limits.i_max;
-    if (phase.qU < -limit || phase.qU > limit ||
-        phase.qV < -limit || phase.qV > limit ||
-        phase.qW < -limit || phase.qW > limit) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_OVERCURRENT,
-                                MFOC_RESULT_SAFETY);
-    }
-    rc = mfoc_clarke(phase.qU, phase.qV, phase.qW, current);
-    if (rc != MFOC_RESULT_OK) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_MATH, rc);
-    }
-    return motor->state == MFOC_MOTOR_RUNNING ?
-        MFOC_RESULT_OK : MFOC_RESULT_SAFETY;
 }
 
 /** @brief Execute Core, then commit only if no fault interrupted the step.
@@ -290,34 +245,22 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor,
     if (motor->state != MFOC_MOTOR_RUNNING) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    if (!input->angle_valid) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK,
-                                MFOC_RESULT_SAFETY);
-    }
-    if (!mfoc_scalar_is_finite(input->i.qAlpha) ||
-        !mfoc_scalar_is_finite(input->i.qBeta)) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE,
-                                MFOC_RESULT_SAFETY);
-    }
-    if (!_mfoc_motor_InCircle(input->i.qAlpha, input->i.qBeta,
+    if (!_mfoc_motor_InCircle(input->i_ab.qAlpha, input->i_ab.qBeta,
                               motor->limits.i_max)) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_OVERCURRENT,
                                 MFOC_RESULT_SAFETY);
     }
     mfoc_core_input_t core_input = {
-        .i = input->i, .ref = motor->command.i_ref, .angle = input->angle};
+        .i = input->i_ab, .ref = motor->command.i_ref, .angle = input->angle};
     mfoc_result_t rc = mfoc_core_Step(&motor->core, &core_input, output);
-    if (rc != MFOC_RESULT_OK ||
-        !mfoc_scalar_is_finite(output->duty.qU) ||
-        !mfoc_scalar_is_finite(output->duty.qV) ||
-        !mfoc_scalar_is_finite(output->duty.qW)) {
+    if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_MATH,
                                 MFOC_RESULT_SAFETY);
     }
     /* No mask around Core math. A preempting Trip prevents this commit. */
     uint32_t mask = mfoc_motor_port_EnterCritical();
     if (motor->state == MFOC_MOTOR_RUNNING && motor->faults == 0U) {
-        rc = mfoc_motor_port_SetDuty(&output->duty);
+        rc = mfoc_port_pwm(&output->duty);
         if (rc != MFOC_RESULT_OK) {
             rc = _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
         }

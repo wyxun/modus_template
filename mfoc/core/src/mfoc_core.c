@@ -97,6 +97,7 @@ mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
         return MFOC_RESULT_OUT_OF_RANGE;
     }
     c->u_max = u_max;
+    c->bus = bus;
     c->bus_inv = bus_inv;
     return MFOC_RESULT_OK;
 }
@@ -146,5 +147,8 @@ mfoc_result_t mfoc_core_Step(mfoc_core_t *c,
     m.qQ = mfoc_mul_wide(out->u.qQ, c->bus_inv);
     rc = mfoc_ipark_cached(&m, sin_theta, cos_theta, &out->m);
     if (rc != MFOC_RESULT_OK) { return rc; }
-    return mfoc_svpwm(&out->m, &out->duty, &out->clipped);
+    rc = mfoc_svpwm(&out->m, &out->duty, &out->clipped);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    out->bus = c->bus;
+    return MFOC_RESULT_OK;
 }

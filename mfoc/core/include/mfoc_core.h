@@ -28,6 +28,7 @@ typedef struct {
     mfoc_pi_t q;
     mfoc_scalar_t m_max;
     mfoc_scalar_t u_max;   /* Voltage radius, V/Vbase. */
+    mfoc_scalar_t bus;     /* Vdc/Vbase used for the current coefficients. */
     mfoc_scalar_t bus_inv; /* Vbase/Vdc. */
 } mfoc_core_t;
 
@@ -45,6 +46,7 @@ typedef struct {
 
 /** @brief Computed command for the next PWM interval, not measured voltage.
  * i is dq current; u is limited dq V/Vbase; m is alpha-beta V/Vdc.
+ * bus is the Vdc/Vbase snapshot used for this output.
  * limited reports circular limiting; clipped reports PWM rail contact.
  * PI axis limits are configured separately and remain active. */
 typedef struct {
@@ -52,6 +54,7 @@ typedef struct {
     mfoc_dq_t u;
     mfoc_ab_t m;
     mfoc_uvw_t duty;
+    mfoc_scalar_t bus;
     bool limited;
     bool clipped;
 } mfoc_core_output_t;

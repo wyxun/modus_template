@@ -117,6 +117,10 @@ MDI_INLINE void mdi_g431_fault_notify_break(void)
                ((TIM1->CCER & MDI_G431_PWM_PHASE_MASK) ==                       \
                 MDI_G431_PWM_PHASE_MASK);                                       \
     }                                                                           \
+    MDI_INLINE bool MDI_OP(NAME, _pwm_AnyOutputEnabled)(void)                   \
+    {                                                                           \
+        return (TIM1->CCER & MDI_G431_PWM_PHASE_MASK) != 0U;                    \
+    }                                                                           \
     MDI_INLINE bool MDI_OP(NAME, _pwm_FaultActive)(void)                        \
     {                                                                           \
         return mdi_g431_fault_active();                                         \
