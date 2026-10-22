@@ -41,6 +41,22 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
 #endif
 }
 
+/** @brief Commit the selected encoder zero while the rotor is held.
+ * @param feedback Instance. @param angle Held electrical angle.
+ * @return Sampling/configuration status. No ISR work is added. */
+mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
+    mfoc_angle_t angle)
+{
+    if (feedback == NULL) { return MFOC_RESULT_NULL; }
+    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+    return mfoc_encoder_CalibrateZero(&feedback->encoder, angle);
+#else
+    (void)angle;
+    return MFOC_RESULT_OK;
+#endif
+}
+
 /** @brief Execute enabled algorithms before selecting the control feedback.
  * @param feedback Instance. @param input Samples for model-based algorithms.
  * @param output Electrical feedback. @return Snapshot/state status. */

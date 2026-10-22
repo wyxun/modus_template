@@ -33,10 +33,17 @@ typedef struct {
     mfoc_scalar_t inertia; /* Rotor inertia, J/Jb; zero if unspecified. */
 } mfoc_motor_params_t;
 
-/** @brief Motor operating limits; current uses the same Ib as Core. */
+/** @brief Motor operating limits in the selected per-unit bases. */
 typedef struct {
     mfoc_scalar_t i_max; /* Positive phase-current amplitude limit, I/Ib. */
+    mfoc_scalar_t speed_max; /* Electrical speed limit, omega_e/omega_base. */
 } mfoc_motor_limits_t;
+
+/** @brief Selected reference type; changes are accepted while stopped. */
+typedef enum {
+    MFOC_MOTOR_MODE_CURRENT = 0,
+    MFOC_MOTOR_MODE_SPEED,
+} mfoc_motor_mode_t;
 
 /** @brief Persistent current command; angle comes from feedback/alignment. */
 typedef struct {
@@ -69,8 +76,9 @@ typedef struct {
 
 /** @brief Initialization input; not retained as a second runtime copy.
  * Motor and Core must share the same fixed Ib/Vb bases.
- * speed_divider=0 selects current mode; N>0 enables the speed PI, with
- * ki_ts=Ki*N*current_period and output bounds inside +/-i_max. */
+ * speed_divider=0 disables speed mode; N>0 enables it, with
+ * ki_ts=Ki*N*current_period and output bounds inside +/-i_max.
+ * speed_max is required only when speed_divider is nonzero. */
 typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;
@@ -85,6 +93,7 @@ typedef struct {
  * No ADC/PWM handles are stored here.
  * Do not change members directly while dependent algorithms are active.
  * One application-owned instance controls the statically bound power stage.
+ * Mode and live commands are serialized against the ISR by the application.
  * Step runs in one highest-priority, nonreentrant control ISR. There is no
  * library interrupt masking. Live command updates run in that ISR; other
  * foreground mutations are serialized by the application. Stop publishes a
@@ -95,6 +104,7 @@ typedef struct {
     mfoc_core_t core;
     mfoc_feedback_t feedback;
     mfoc_motor_command_t command;
+    volatile mfoc_motor_mode_t mode;
     volatile mfoc_motor_state_t state;
     volatile uint32_t faults; /* ISR fault latch. */
     volatile mfoc_result_t irq_result; /* Last IRQ Step result; diagnostics. */
@@ -134,11 +144,11 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
  * @note Foreground operation; ISR faults use Trip. Idempotent in IDLE. */
 mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor);
 
-/** @brief Accept a dq command with magnitude <= i_max.
+/** @brief Select current mode and accept a dq command within i_max.
  * @param motor IDLE/RUNNING instance. @param ref Finite current in I/Ibase.
  * @return Status; rejection leaves the previous command intact.
- * @note While RUNNING, call from the control ISR to update d/q together.
- * Foreground updates require IDLE; this function does not mask interrupts. */
+ * @note Selects current mode while IDLE. While RUNNING, only update a
+ * current-mode Motor from its control ISR; this function masks no IRQ. */
 mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
                                    const mfoc_dq_t *ref);
 
@@ -156,15 +166,17 @@ mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus);
 mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor);
 
 /** @brief Start fixed electrical angle/current from IDLE.
- * @param motor Valid instance. @param id_pu D-axis current PU; iq=0.
+ * @param motor Valid instance. @param id_pu Positive d-axis PU; iq=0.
  * @param angle_pu Electrical turns in [0,1). @return Startup status.
- * @note Run stops after MFOC_MOTOR_ALIGN_TIME_MS; no encoder is required.
- * Does not capture an encoder zero. */
+ * @note At timeout Run reads the selected encoder while holding the field,
+ * calibrates electrical zero, then stops. Direction must be configured.
+ * Read failure stops and latches a feedback fault; cancellation skips capture. */
 mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     mfoc_scalar_t id_pu, mfoc_scalar_t angle_pu);
 
-/** @brief Set a speed reference without resetting PI history.
- * @param motor Valid instance in speed mode. @param ref Electrical speed PU.
+/** @brief Select speed mode and set a bounded electrical-speed reference.
+ * @param motor Instance with the speed PI configured.
+ * @param ref Electrical speed PU.
  * @return Command status; rejection retains the previous reference. */
 mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
 

@@ -62,6 +62,15 @@ mfoc_result_t mfoc_encoder_Init(mfoc_encoder_t *encoder,
  * it after timeout. First Run reads immediately and publishes zero speed. */
 mfoc_result_t mfoc_encoder_Run(mfoc_encoder_t *encoder);
 
+/** @brief Capture electrical zero from a rotor held at a known angle.
+ * @param encoder Initialized instance. @param angle Held electrical angle.
+ * @return Sensor/state status; failed reads preserve the calibration.
+ * @note Foreground only, while Step is excluded or uses a fixed angle.
+ * One fresh read; direction must already match the phase sequence.
+ * Clears velocity history to avoid extrapolating the held position. */
+mfoc_result_t mfoc_encoder_CalibrateZero(mfoc_encoder_t *encoder,
+    mfoc_angle_t angle);
+
 /** @brief Copy fresh feedback, extrapolating angle to the current tick.
  * @param encoder Instance. @param angle Electrical BAM32 output.
  * @param speed Electrical speed PU output. @return OK or sample/state error.

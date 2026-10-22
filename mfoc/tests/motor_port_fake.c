@@ -91,6 +91,17 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
     return motor_port_fake.feedback_run;
 }
 
+/** @brief Require calibration to occur while the fixed field is energized.
+ * @param feedback Instance. @param angle Held angle. @return Injected status. */
+mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
+    mfoc_angle_t angle)
+{
+    assert(feedback->initialized && motor_port_fake.enabled);
+    ++motor_port_fake.calibrations;
+    motor_port_fake.held_angle = angle;
+    return motor_port_fake.calibration;
+}
+
 /** @brief Inject feedback to isolate Motor scheduling from its algorithm.
  * @param feedback Instance. @param input Samples. @param output Feedback.
  * @return OK. */

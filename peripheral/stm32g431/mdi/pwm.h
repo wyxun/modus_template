@@ -34,6 +34,20 @@ MDI_INLINE bool mdi_g431_fault_active(void)
     (TIM_CCER_CC1E | TIM_CCER_CC1NE | TIM_CCER_CC2E | TIM_CCER_CC2NE |          \
      TIM_CCER_CC3E | TIM_CCER_CC3NE)
 
+/* G431 bridge owns CH4 sampling: polling during calibration, IRQ control
+ * while powered. These are board-local register operations, not new APIs. */
+#if defined(MFOC_APP_ENABLED) && MFOC_APP_ENABLED
+#define MDI_G431_CONTROL_IRQ_ENABLE() do {                                     \
+    ADC1->ISR = ADC_ISR_JEOS;                                                  \
+    ADC2->ISR = ADC_ISR_JEOS;                                                  \
+    ADC1->IER |= ADC_IER_JEOSIE;                                               \
+} while (0)
+#define MDI_G431_CONTROL_IRQ_DISABLE() (ADC1->IER &= ~ADC_IER_JEOSIE)
+#else
+#define MDI_G431_CONTROL_IRQ_ENABLE() ((void)0)
+#define MDI_G431_CONTROL_IRQ_DISABLE() ((void)0)
+#endif
+
 /** @brief Acknowledge a break only with closed phases and no physical fault.
  * @return BUSY for unsafe reset; IO_ERROR if the source or break reasserts.
  * @note IRQ masking serializes the software latch with the break ISR. The
@@ -78,6 +92,7 @@ MDI_INLINE void mdi_g431_fault_notify_break(void)
     MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_SafeStop)(void)                   \
     {                                                                           \
         TIM1->CCER &= ~MDI_G431_PWM_PHASE_MASK;                                 \
+        MDI_G431_CONTROL_IRQ_DISABLE();                                        \
         return MDI_OK;                                                          \
     }                                                                           \
     MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_Enable)(bool bEnable)             \
@@ -85,15 +100,18 @@ MDI_INLINE void mdi_g431_fault_notify_break(void)
         if (!bEnable) { return MDI_OP(NAME, _pwm_SafeStop)(); }                 \
         if (mdi_g431_fault_active() || mdi_g431_fault_source_active()) {        \
             TIM1->CCER &= ~MDI_G431_PWM_PHASE_MASK;                             \
+            MDI_G431_CONTROL_IRQ_DISABLE();                                    \
             return MDI_BUSY;                                                    \
         }                                                                       \
         if ((TIM1->CR1 & TIM_CR1_CEN) != 0U &&                                  \
             (TIM1->BDTR & TIM_BDTR_MOE) != 0U &&                                \
             (TIM1->CCER & MDI_G431_PWM_PHASE_MASK) ==                           \
                 MDI_G431_PWM_PHASE_MASK) {                                      \
+            MDI_G431_CONTROL_IRQ_ENABLE();                                     \
             return MDI_OK;                                                      \
         }                                                                       \
         TIM1->CCER &= ~MDI_G431_PWM_PHASE_MASK;                                 \
+        MDI_G431_CONTROL_IRQ_DISABLE();                                        \
         TIM1->CR1 |= TIM_CR1_CEN;                                               \
         TIM1->CCER |= TIM_CCER_CC4E;                                            \
         TIM1->BDTR |= TIM_BDTR_MOE;                                             \
@@ -108,6 +126,7 @@ MDI_INLINE void mdi_g431_fault_notify_break(void)
             g_bG431FaultLatched = true;                                         \
             return MDI_BUSY;                                                    \
         }                                                                       \
+        MDI_G431_CONTROL_IRQ_ENABLE();                                         \
         return MDI_OK;                                                          \
     }                                                                           \
     MDI_INLINE bool MDI_OP(NAME, _pwm_IsEnabled)(void)                          \

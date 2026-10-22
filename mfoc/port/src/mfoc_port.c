@@ -10,6 +10,9 @@
 #include "perf_counter.h"
 #include <stddef.h>
 #include <limits.h>
+#if !defined(__NO_USE_LOG__)
+#include "mdebug/util_debug.h"
+#endif
 
 #define MFOC_PORT_GAIN_SCALE UINT32_C(1073741824)
 #define MFOC_PORT_OFFSET_SAMPLES UINT32_C(10)
@@ -126,6 +129,11 @@ mfoc_result_t mfoc_port_init(void)
     if (MFOC_PORT_CURRENT_INVERTED != 0U) { next.gain = -next.gain; }
 #endif
     s_port = next;
+#if !defined(__NO_USE_LOG__)
+    MLOGF(I, "current ADC offsets U=%lu V=%lu W=%lu\r\n",
+        (unsigned long)s_port.offset_u, (unsigned long)s_port.offset_v,
+        (unsigned long)s_port.offset_w);
+#endif
     return MFOC_RESULT_OK;
 }
 

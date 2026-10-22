@@ -21,6 +21,17 @@ static char s_log[512];
 static unsigned s_align_count;
 static unsigned s_stop_count;
 static mfoc_result_t s_align_result;
+static unsigned s_encoder_reads;
+static uint32_t s_encoder_raw;
+static mfoc_result_t s_encoder_result;
+static unsigned s_current_count;
+static unsigned s_speed_count;
+static unsigned s_start_count;
+static mfoc_dq_t s_current_ref;
+static mfoc_scalar_t s_speed_ref;
+static mfoc_result_t s_current_result;
+static mfoc_result_t s_speed_result;
+static mfoc_result_t s_start_result;
 uint8_t g_chGLogMask = MLOG_MASK_ALL;
 
 /** @brief Capture command responses without a hardware stream.
@@ -59,22 +70,56 @@ static void shell_commands(void)
 {
     tMfocApp.state = MFOC_APP_IDLE;
     assert(strcmp(shell_cmd_motor.pchName, "motor") == 0);
-    command("current 0.01 -0.02", "current 0.01 -0.02: parsed only");
-    command("speed -0.1", "speed -0.1: parsed only");
-#if defined(MFOC_MOTOR_IRQ_ENABLED) && MFOC_MOTOR_IRQ_ENABLED
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    command("current 0.01 -0.02", "motor current result=0");
+    assert(s_current_count == 1U && s_start_count == 1U);
+    assert(s_current_ref.qD == mfoc_from_float(0.01f));
+    assert(s_current_ref.qQ == mfoc_from_float(-0.02f));
+    command("current 0 0.02", "motor current result=0");
+    assert(s_start_count == 1U && s_current_count == 2U);
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    command("speed 0.02", "motor speed result=0");
+    assert(s_speed_count == 1U && s_start_count == 2U);
+    assert(s_speed_ref == mfoc_from_float(0.02f));
+    command("speed -0.03", "motor speed result=0");
+    assert(s_speed_count == 2U && s_start_count == 2U);
+    assert(fabsf(mfoc_to_float(s_speed_ref) + 0.03f) < 0.0001f);
+    command("speed 0.8", "motor speed result=3");
+    assert(s_speed_count == 3U && s_start_count == 2U);
+    s_current_result = MFOC_RESULT_OUT_OF_RANGE;
+    command("current 1 1", "motor current result=3");
+    assert(s_start_count == 2U);
+    s_current_result = MFOC_RESULT_OK;
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    s_start_result = MFOC_RESULT_IO;
+    command("current 0 0.02", "motor current result=6");
+    assert(s_start_count == 3U);
+    s_start_result = MFOC_RESULT_OK;
+    tMfocApp.motor.state = MFOC_MOTOR_FAULT;
+    command("current 0 0.02", "motor current result=5");
+    assert(s_start_count == 3U);
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    command("speed -0.1", "motor speed result=0");
     command("align", "motor align result=0");
     command("stop", "motor stop result=0");
     assert(s_align_count == 1U && s_stop_count == 1U);
     s_align_result = MFOC_RESULT_IO;
     command("align", "motor align result=6");
     assert(s_align_count == 2U && tMfocApp.result == MFOC_RESULT_IO);
-#else
-    command("align", "align unavailable: control IRQ not enabled");
-    command("stop", "stop unavailable: control IRQ not enabled");
-    assert(s_align_count == 0U && s_stop_count == 0U);
-#endif
     unsigned align_count = s_align_count;
     unsigned stop_count = s_stop_count;
+    unsigned current_count = s_current_count;
+    command("encoder", "encoder raw=0 angle=0.00 deg");
+    s_encoder_raw = 2048U;
+    command("encoder", "encoder raw=2048 angle=180.00 deg");
+    s_encoder_raw = 4095U;
+    command("encoder", "encoder raw=4095 angle=359.91 deg");
+    s_encoder_result = MFOC_RESULT_IO;
+    command("encoder", "encoder read failed result=6");
+    s_encoder_result = MFOC_RESULT_OK;
+    unsigned reads = s_encoder_reads;
+    command("encoder trailing", "invalid motor arguments");
+    assert(s_encoder_reads == reads);
     command("clear", "clear: parsed only");
     command("status", "mfoc app state=");
     command("", "usage: motor");
@@ -82,13 +127,71 @@ static void shell_commands(void)
     command("current 0.01", "invalid motor arguments");
     command("current nan 0", "invalid motor arguments");
     command("speed inf", "invalid motor arguments");
-    command("speed 1.1", "invalid motor arguments");
+    command("speed 1.1", "motor speed result=3");
     command("speed 0.1 trailing", "invalid motor arguments");
     command("align trailing", "invalid motor arguments");
     command("stop trailing", "invalid motor arguments");
     command("clear trailing", "invalid motor arguments");
     command("status trailing", "invalid motor arguments");
     assert(s_align_count == align_count && s_stop_count == stop_count);
+    assert(s_current_count == current_count);
+}
+
+/** @brief Capture current submission and reject invalid lifecycle states.
+ * @param motor App Motor. @param ref dq command. @return Test result. */
+mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor, const mfoc_dq_t *ref)
+{
+    ++s_current_count;
+    if (motor->state != MFOC_MOTOR_IDLE && motor->state != MFOC_MOTOR_RUNNING) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    s_current_ref = *ref;
+    return s_current_result;
+}
+
+/** @brief Capture a bounded speed request for Shell routing tests.
+ * @param motor App Motor. @param ref Electrical speed PU.
+ * @return Injected status. */
+mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref)
+{
+    ++s_speed_count;
+    if (motor->state != MFOC_MOTOR_IDLE &&
+        motor->state != MFOC_MOTOR_RUNNING) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (mfoc_abs(ref) > mfoc_from_float(0.7583333f)) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    s_speed_ref = ref;
+    return s_speed_result;
+}
+
+/** @brief Capture startup without hardware. @param motor Motor.
+ * @return Injected result. */
+mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
+{
+    ++s_start_count;
+    if (s_start_result == MFOC_RESULT_OK) { motor->state = MFOC_MOTOR_RUNNING; }
+    return s_start_result;
+}
+
+/** @brief Supply lifecycle snapshot. @param motor Motor.
+ * @param status Snapshot output. @return None. */
+void mfoc_motor_GetStatus(const mfoc_motor_t *motor, mfoc_motor_status_t *status)
+{
+    status->state = motor->state;
+    status->faults = motor->faults;
+}
+
+/** @brief Supply one raw AS5600 sample without hardware.
+ * @param angle Mechanical BAM32. @return Injected status. */
+mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+{
+    ++s_encoder_reads;
+    if (s_encoder_result == MFOC_RESULT_OK) {
+        angle->wBam32 = s_encoder_raw << 20U;
+    }
+    return s_encoder_result;
 }
 
 /** @brief Record the alignment request and verify its app defaults.

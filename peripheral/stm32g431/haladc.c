@@ -299,9 +299,10 @@ void haladc_Init(void)
     HAL_NVIC_SetPriority(ADC1_2_IRQn, 1, 0);
 
 #if defined(MFOC_APP_ENABLED) && MFOC_APP_ENABLED
-    /* Stopped integration polls current frames; no control ISR consumes them.
-     * TIM1 is configured first, with CH1-3 gated during offset sampling. */
+    /* Calibration polls frames. The bridge lifecycle enables JEOS control
+     * only on explicit startup, after the Motor has initialized. */
     LL_ADC_DisableIT_JEOS(ADC1);
+    HAL_NVIC_EnableIRQ(ADC1_2_IRQn);
     LL_TIM_CC_EnableChannel(TIM1, LL_TIM_CHANNEL_CH4);
     LL_TIM_EnableAllOutputs(TIM1);
 #else

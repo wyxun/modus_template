@@ -140,13 +140,18 @@ FOC_INCLUDES ?=
 FOC_NUMERIC ?= float
 ifeq ($(FOC_NUMERIC),float)
     C_DEFS += -DFOC_NUMERIC_FLOAT=1
-ifneq ($(strip $(FOC_SOURCES)),)
-    C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=foc_debug_CaptureWaveform
-endif
 else ifeq ($(FOC_NUMERIC),fixed)
     C_DEFS += -DFOC_NUMERIC_FIXED=1
 else
     $(error FOC_NUMERIC must be float or fixed)
+endif
+
+ifneq ($(strip $(FOC_SOURCES)),)
+ifeq ($(FOC_NUMERIC),float)
+    C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=foc_debug_CaptureWaveform
+endif
+else ifneq ($(findstring MFOC_NUMERIC_FLOAT,$(C_DEFS)),)
+    C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=mfoc_debug_CaptureWaveform
 endif
 
 # Motor-energizing experiments are opt-in for product builds.

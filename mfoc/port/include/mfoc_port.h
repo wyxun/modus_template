@@ -16,7 +16,8 @@
 #define MFOC_PORT_BUS_OFFSET_MILLIVOLT INT32_C(0)
 #define MFOC_PORT_BUS_MAX_MILLIVOLT UINT32_C(60000)
 #define MFOC_PORT_COUNTS_PER_BASE UINT32_C(476)
-#define MFOC_PORT_CURRENT_INVERTED 0U
+/* Preserve G431 legacy current feedback: (calibrated offset - ADC raw). */
+#define MFOC_PORT_CURRENT_INVERTED 1U
 
 /* One statically bound power stage. port/src/mfoc_port.c adapts MFOC to MDI;
  * the target supplies mdi/instance.h with phase_current_completed,

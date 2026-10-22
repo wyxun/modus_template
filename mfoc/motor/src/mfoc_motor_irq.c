@@ -5,8 +5,13 @@
  * @date 2026-10-21
  */
 #include "mfoc_motor_irq.h"
+#if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
+#include "mfoc_debug.h"
+#endif
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#include "perf_counter.h"
+#endif
 
-#if defined(MFOC_MOTOR_IRQ_ENABLED) && MFOC_MOTOR_IRQ_ENABLED
 #include "mfoc_motor_irq_binding.h"
 
 #if !defined(MFOC_MOTOR_IRQ_VECTOR) || !defined(MFOC_MOTOR_IRQ_INSTANCE) ||     \
@@ -20,15 +25,29 @@
  * @note All bindings are direct calls/objects, without runtime dispatch. */
 void mfoc_motor_IRQHandler(void)
 {
-    if (!MFOC_MOTOR_IRQ_READY()) { return; }
-    MFOC_MOTOR_IRQ_BEGIN();
-    MFOC_MOTOR_IRQ_INSTANCE.irq_result = mfoc_motor_Step(
-        &MFOC_MOTOR_IRQ_INSTANCE);
-    MFOC_MOTOR_IRQ_END();
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+    uint32_t start = (uint32_t)get_system_ticks();
+#endif
+    if (MFOC_MOTOR_IRQ_READY()) {
+        MFOC_MOTOR_IRQ_BEGIN();
+        MFOC_MOTOR_IRQ_INSTANCE.irq_result = mfoc_motor_Step(
+            &MFOC_MOTOR_IRQ_INSTANCE);
+        MFOC_MOTOR_IRQ_END();
+    }
+#if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
+    mfoc_debug_WaveformStep();
+#endif
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+    uint32_t elapsed = (uint32_t)get_system_ticks() - start;
+    tMfocApp.tIsrTiming.qwTotalTicks += elapsed;
+    tMfocApp.tIsrTiming.wSamples += 1U;
+    if (elapsed > tMfocApp.tIsrTiming.wMaximumTicks) {
+        tMfocApp.tIsrTiming.wMaximumTicks = elapsed;
+    }
+#endif
 }
 
 /* A typedef specifies the signature; alias exports the actual vector name.
  * The alias target must be defined in this translation unit. */
 extern mfoc_motor_irq_handler_t MFOC_MOTOR_IRQ_VECTOR
     __attribute__((alias("mfoc_motor_IRQHandler")));
-#endif

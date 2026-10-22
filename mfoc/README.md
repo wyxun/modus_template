@@ -2,7 +2,7 @@
 
 mfoc 是 `dev-focv2` 的新 FOC 库，目录、文件和符号统一使用 `mfoc` 名称。
 
-G431 默认固件已接入停止状态的 mfoc 应用，旧 `foc/` 保留作为参考和对照；
+G431 默认固件上电停止，可由 `motor align` 启动固定磁场保持；旧 `foc/` 保留作为参考和对照；
 base/Core 不依赖硬件；Motor 通过端口读取电流和提交 PWM。
 算法和控制模块不包含旧库、MODUS、MDI 或厂商寄存器头文件，
 `port/` 通过 MDI 实现硬件迁移。
@@ -89,6 +89,8 @@ G431 使用注入 ADC 右对齐四倍累加值，`mfoc_port.h` 中的
 `MFOC_PORT_COUNTS_PER_BASE` 定义为 476 个累加计数，对应当前 Motor/Core 的
 3.5 A Ibase。换板或更改 Ibase 时应调整该宏；`MFOC_PORT_CURRENT_INVERTED`
 配置固定电流极性，不通过运行时配置传入。
+G431 使用 `MFOC_PORT_CURRENT_INVERTED=1`，保持旧 FOC 的
+`(offset - raw) / 476` 反馈方向；不要改成相反的 `raw - offset`。
 母线通道按 `20570/2457` mV/count 换算，并以 12 V 为 Vbase 归一化；
 `mfoc_port.h` 中的参数需与电压采样分压、Vbase 和测量范围一致。
 Init 不会使能桥臂，完成均值计算后
@@ -148,14 +150,16 @@ Motor 持有反馈、速度 PI、Core、对齐及故障状态，直接执行采�
 前台 Run 仍持续更新反馈；反馈读取失败不会阻止对齐计时或定时停止。
 Run 用 perfc 实例计时槽等待 `MFOC_MOTOR_ALIGN_TIME_MS`（默认 1500 ms，可宏覆盖），
 到时调用 Stop；必须持续调度 Run，停机延迟包含一个 Run 调度周期。
-显式 Stop 或 Motor 故障均结束对齐；该操作不捕获编码器零位。
+显式 Stop 或 Motor 故障均结束对齐且跳过校准。正常到期时，保持磁场读取编码器，
+按已配置方向及极对数计算零偏，然后 Stop；采集失败停止并锁存反馈故障。
 
 Core 持有当前母线 PU 和调制系数。按需在控制 ISR 调用
 `mfoc_motor_UpdateBus(&motor)` 读取 MDI 已发布值并更新 Core，不等待新转换。
-`speed_divider = 0` 为 dq 电流模式，通过 `mfoc_motor_SetCurrent` 下发指令；
-此时忽略速度 PI 参数和反馈速度。`speed_divider = N > 0` 为速度模式，
-通过 `mfoc_motor_SetSpeed` 下发速度指令，PI 输出 `iq_ref`，`id_ref = 0`。
-速度 PI 输出上下界必须包含零并落在 Motor 的 ±`i_max` 内。
+`speed_divider = 0` 禁用速度 PI；`N > 0` 时初始化速度 PI，并每 N 次
+控制步更新一次。默认仍选择 dq 电流模式。IDLE 时
+`mfoc_motor_SetCurrent` 选择电流模式，`mfoc_motor_SetSpeed` 选择速度模式；
+RUNNING 时只接受当前模式的给定更新，切换模式前必须 Stop。速度 PI 输出
+`iq_ref`，`id_ref = 0`。速度 PI 输出上下界必须包含零并落在 Motor 的 ±`i_max` 内。
 速度参考和反馈均为 `omega_e/omega_base`，等价于
 `omega_m/(omega_base/pole_pairs)`；不把 rad/s 或 RPM 直接传入。
 
@@ -166,7 +170,7 @@ mfoc_port_current -> Clarke -> mfoc_feedback_Step
                   -> 速度 PI（分频）-> mfoc_core_Step -> mfoc_port_pwm
 ```
 
-速度 PI 在启动后的第 1、N+1、2N+1…拍执行，其余拍保持电流参考；
+速度 PI 在速度模式启动后的第 1、N+1、2N+1…拍执行，其余拍保持电流参考；
 `ki_ts` 必须按速度周期 `N * 电流环周期` 配置。
 `motor/src/mfoc_feedback.c` 与 `motor/include/mfoc_feedback.h`
 提供 Init、Run 和 Step。算法启用与控制输出来源分开：
@@ -219,25 +223,45 @@ READY 判断采样完成，BEGIN 准备帧消费状态，END 清理未消费帧�
 后清 JEOS 的顺序。未运行或采样失败时也执行 END；已消费后新到达的帧保持待处理。
 Motor 的 `irq_result` 仅记录最近一次 IRQ 的 Step 返回值用于诊断。
 
-启用时为整个目标定义 `MFOC_MOTOR_IRQ_ENABLED=1`；G431 的 `it.c` 据此排除
-原来的 ADC 控制 IRQ 定义。应用 Motor 初始化成功、配置反馈并将故障 IRQ
-绑定到同一 Motor 后，再启用硬件控制 IRQ。
+控制中断是 mfoc App 的固定依赖，无需独立的 IRQ 启用宏。
+G431 的 `it.c` 根据 `MFOC_APP_ENABLED` 排除旧库向量定义，
+由 `mfoc_motor_irq.c` 提供唯一的 ADC 控制中断入口。
 
-当前默认 G431 固件保留停止状态，不启用 Motor 控制 IRQ。
+当前默认 G431 固件启用 mfoc App，上电保持停止。
 `class/mfoc_app.c` 通过 MODUS 创建应用并直接拥有 Motor；Init 调用 Motor Init，
 成功后才注册对象。Run 直接服务 Motor 的前台反馈和对齐定时停止。
 `haladc_Init()` 准备 ADC 触发；校零使用轮询，每次等待 10 ms 后读取一次完成帧，
 未就绪或读取失败立即返回错误。DMA 和 SysTick 保持开启。
+JEOS 中断源在初始化时关闭，NVIC 已准备好。现有 G431 bridge Enable 成功后
+清除旧完成标志并开启 JEOS，SafeStop 关闭 JEOS，同时保留 CH4 采样触发；
+校零无 ISR 争用，无需额外的初始化中断包装或外设启动 API。
 App 不访问 MDI、NVIC 或芯片头文件；TIM1 CH4 触发在板级启动，三相门控保持关闭。
-实际控制/故障 IRQ 的硬件开启及波形接入仍待板级集成。
+TIM1 Break 仍由硬件关断和板级锁存处理；软件故障关联及波形扩展未在本轮修改。
 
 App 已注册 `motor current <id> <iq>`、`motor speed <pu>`、`motor align`、
-`motor stop`、`motor clear`、`motor status` 和 `motor help`。
-`motor align` 在启用 Motor IRQ 的集成中直接调用 Motor AlignStart，默认
+`motor encoder`、`motor stop`、`motor clear`、`motor status` 和 `motor help`。
+`motor encoder` 复用现有端口读取一次 AS5600，打印 0～4095 原始计数和机械角度；
+失败时打印错误码，不改变 Motor 状态，不新增缓存或周期打印。
+`motor align` 直接调用 Motor AlignStart，默认
 Id=0.04 PU、电角度=0；`motor stop` 直接调用 Motor Stop。
-默认停止配置明确报告控制 IRQ 未启用。current/speed/clear 仍只解析参数，
-对应执行位置保留 TODO；status 仅显示 App 状态和最近一次前台结果。
-当前配置磁链为未测量的 1 PU，编码器零位和方向未校准，仅供停止初始化。
+Align 使用固定角度电流环，前台 Run 在 1500 ms 到期时采集编码器校准零位，再 Stop。
+校准保存在运行时，复位后需要重新 align；此操作不自动辨识编码器方向。
+端口校零初始化成功后，直接打印一次 U/V/W ADC 零偏计数；
+不在对齐完成时打印，不暴露零偏查询接口。
+`motor current <id> <iq>` 设置 PU 电流给定；`motor speed <pu>` 设置电速度 PU 给定。
+两者在 IDLE 时选择相应模式并启动，在同模式 RUNNING 时只更新给定；模式切换
+须先 Stop。speed 受 `limits.speed_max` 限制，配置为 0.7583 PU（约 303.3 Hz，
+以 400 Hz 为速度基值）。按 7 极对计算，`motor speed 0.02` 约为 68.6 rpm。
+速度命令使用编码器反馈；先执行 `motor align` 建立电角度零位并确认旋转方向。
+`motor clear` 尚只解析参数；status 仅显示 App 状态和最近一次前台结果。
+当前磁链为未测量的 1 PU，初始编码器零位和方向未校准；Align 保持时使用固定角度，
+不能将固定磁场保持通过视为编码器闭环运行已验证。
+
+浮点且启用 `MWAVEFORM_ENABLE` 时，MFOC 注册四路波形：`Enc_mT` 为编码器电角度，
+`Ctrl_mT` 为实际选择的控制角度，`Err_mT` 为两者最短角差，单位均为电角周；
+`Iq_mpu` 为最近一次控制步的实测 q 轴电流标幺值。角度和电流按 1000 倍显示，
+无有效样本时显示 -1。控制频率为 20 kHz 时，波形以 10 kHz 采样；角度来自
+编码器已发布样本并作速度外推，不在 ISR 读取 I2C。
 
 ## Motor 标幺参数
 

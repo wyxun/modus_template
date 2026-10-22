@@ -6,6 +6,7 @@ $sources = @(Get-ChildItem (Join-Path $base 'src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'core/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'motor/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'position/src') -Filter '*.c')
+$sources = @($sources | Where-Object { $_.Name -ne 'mfoc_motor_irq.c' })
 $repo = Split-Path -Parent $library
 $clang = Join-Path $Toolchain 'clang.exe'
 $nm = Join-Path $Toolchain 'llvm-nm.exe'
@@ -51,7 +52,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     $object = Join-Path $output "$numeric-mfoc_mdi_port.o"
     & $clang --target=arm-none-eabi -mcpu=cortex-m4 -mthumb `
         -mfloat-abi=hard -mfpu=fpv4-sp-d16 -std=gnu11 -O2 -ffp-contract=off `
-        -Wall -Wextra -Werror "-DMFOC_NUMERIC_$numeric=1" @portIncludes `
+        -Wall -Wextra -Werror "-DMFOC_NUMERIC_$numeric=1" `
+        -DMFOC_APP_ENABLED=1 -D__NO_USE_LOG__ @portIncludes `
         -c (Join-Path $library 'port/src/mfoc_port.c') -o $object
     if ($LASTEXITCODE -ne 0) { throw "MDI port ARM build failed: $numeric" }
     Write-Output "$numeric MDI port / G431 object compilation passed"
@@ -59,7 +61,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     & $clang --target=arm-none-eabi -mcpu=cortex-m4 -mthumb `
         -mfloat-abi=hard -mfpu=fpv4-sp-d16 -std=gnu11 -O2 -ffp-contract=off `
         -Wall -Wextra -Werror "-DMFOC_NUMERIC_$numeric=1" `
-        -DMFOC_MOTOR_IRQ_ENABLED=1 -D__COMPILER_HAS_GNU_EXTENSIONS__=1 `
+        -D__COMPILER_HAS_GNU_EXTENSIONS__=1 `
         @portIncludes @irqIncludes `
         -c (Join-Path $library 'motor/src/mfoc_motor_irq.c') -o $irqObject
     if ($LASTEXITCODE -ne 0) { throw "Motor IRQ ARM build failed: $numeric" }

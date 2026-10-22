@@ -112,6 +112,24 @@ int main(void)
     assert(mfoc_feedback_Step(&feedback, NULL, &output) == MFOC_RESULT_OK);
     near(output.speed, -0.125f);
     assert(output.angle.wBam32 == 0xC0000000U);
+    /* A fresh held-rotor read calibrates zero and clears old velocity. */
+    for (unsigned inverted = 0U; inverted < 2U; ++inverted) {
+        cfg.encoder.inverted = inverted != 0U;
+        assert(mfoc_feedback_Init(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
+        mechanical.wBam32 = 3234U << 20U;
+        mfoc_angle_t held = {0x20000000U};
+        unsigned before = reads;
+        assert(mfoc_feedback_CalibrateZero(&feedback, held) == MFOC_RESULT_OK);
+        assert(reads == before + 1U);
+        assert(mfoc_feedback_Step(&feedback, NULL, &output) == MFOC_RESULT_OK);
+        assert(output.angle.wBam32 == held.wBam32);
+        assert(output.speed == MFOC_ZERO);
+        mfoc_angle_t zero = feedback.encoder.electrical_zero;
+        read_result = MFOC_RESULT_IO;
+        assert(mfoc_feedback_CalibrateZero(&feedback, held) == MFOC_RESULT_IO);
+        assert(feedback.encoder.electrical_zero.wBam32 == zero.wBam32);
+        read_result = MFOC_RESULT_OK;
+    }
     frequency = 0U;
     assert(mfoc_feedback_Init(&feedback, &cfg, 4U) != MFOC_RESULT_OK);
     puts("Encoder wrap, cadence, filter, extrapolation and timeout passed");

@@ -20,7 +20,8 @@ static mfoc_motor_cfg_t config(uint16_t divider)
     mfoc_motor_cfg_t cfg = {
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.2f), MFOC_SCALAR(0.4f), MFOC_ZERO},
-        .limits = {MFOC_SCALAR(0.8f)},
+        .limits = {.i_max = MFOC_SCALAR(0.8f),
+            .speed_max = MFOC_SCALAR(0.75f)},
         .core = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE},
         .speed = {MFOC_HALF, MFOC_SCALAR(0.1f),
             -MFOC_HALF, MFOC_HALF, -MFOC_HALF, MFOC_HALF},
@@ -37,6 +38,9 @@ static void initialization(void)
     mfoc_motor_cfg_t cfg = config(3U);
     assert(mfoc_motor_Init(NULL, &cfg) == MFOC_RESULT_NULL);
     assert(mfoc_motor_Init(&motor, NULL) == MFOC_RESULT_NULL);
+    cfg.limits.speed_max = MFOC_ZERO;
+    assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OUT_OF_RANGE);
+    cfg = config(3U);
     cfg.speed.out_max = MFOC_ONE;
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OUT_OF_RANGE);
     assert(motor.state == MFOC_MOTOR_UNINITIALIZED);
@@ -143,11 +147,11 @@ static void speed_control(void)
 {
     mfoc_motor_t motor = {0};
     mfoc_motor_cfg_t cfg = config(3U);
-    mfoc_dq_t ref = {0};
     motor_port_fake = (motor_port_fake_t){0};
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
-    assert(mfoc_motor_SetCurrent(&motor, &ref) ==
-           MFOC_RESULT_INVALID_STATE);
+    assert(mfoc_motor_SetSpeed(NULL, MFOC_ZERO) == MFOC_RESULT_NULL);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.76f)) ==
+           MFOC_RESULT_OUT_OF_RANGE);
     assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.4f)) ==
            MFOC_RESULT_OK);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
@@ -166,8 +170,12 @@ static void speed_control(void)
     assert(motor.speed.ui == integral);
     assert(mfoc_motor_Trip(&motor, MFOC_MOTOR_FAULT_EXTERNAL) ==
            MFOC_RESULT_OK);
-    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.2f)) ==
+           MFOC_RESULT_INVALID_STATE);
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed.ui == MFOC_ZERO &&
+           motor.mode == MFOC_MOTOR_MODE_CURRENT);
+    assert(motor.speed_ref == MFOC_ZERO && motor.speed_count == 0U);
     assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.4f)) ==
            MFOC_RESULT_OK);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
@@ -189,6 +197,37 @@ static void speed_control(void)
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
 }
 
+/** @brief Keep current control available when a speed PI is configured.
+ * @return None. */
+static void speed_mode_selection(void)
+{
+    mfoc_motor_t motor = {0};
+    mfoc_motor_cfg_t cfg = config(3U);
+    mfoc_dq_t ref = {MFOC_ZERO, MFOC_SCALAR(0.2f)};
+    motor_port_fake = (motor_port_fake_t){0};
+    assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetCurrent(&motor, &ref) == MFOC_RESULT_OK);
+    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    for (unsigned step = 0U; step < 4U; ++step) {
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        assert(motor.command.i_ref.qQ == ref.qQ);
+    }
+    assert(motor.speed.ui == MFOC_ZERO);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.3f)) ==
+           MFOC_RESULT_INVALID_STATE);
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.3f)) ==
+           MFOC_RESULT_OK);
+    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetCurrent(&motor, &ref) ==
+           MFOC_RESULT_INVALID_STATE);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.command.i_ref.qQ != ref.qQ);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_SCALAR(0.4f)) ==
+           MFOC_RESULT_OK);
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+}
+
 /** @brief Check fixed-angle current without feedback or speed-loop updates.
  * @return None. */
 static void alignment(void)
@@ -207,6 +246,10 @@ static void alignment(void)
     assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, INFINITY) ==
            MFOC_RESULT_OUT_OF_RANGE);
 #endif
+    assert(mfoc_motor_AlignStart(&motor, MFOC_ZERO, MFOC_ZERO) ==
+           MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_motor_AlignStart(&motor, -MFOC_HALF, MFOC_ZERO) ==
+           MFOC_RESULT_OUT_OF_RANGE);
     assert(!motor_port_fake.enabled);
     motor_port_fake.feedback_run = MFOC_RESULT_IO;
     motor_port_fake.time_ms = 100;
@@ -232,6 +275,8 @@ static void alignment(void)
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
     assert(!motor_port_fake.enabled && !motor.align_active);
     assert(motor_port_fake.feedback_runs == 2U);
+    assert(motor_port_fake.calibrations == 1U);
+    assert(motor_port_fake.held_angle.wBam32 == motor.align_angle.wBam32);
     assert(motor.command.i_ref.qD == MFOC_ZERO);
     assert(!motor.previous_core_output_valid);
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_IO);
@@ -271,6 +316,15 @@ static void alignment_stop(void)
     assert(!motor_port_fake.enabled);
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_SAFETY);
     assert(!motor.align_active && motor.state == MFOC_MOTOR_FAULT);
+    assert(motor_port_fake.calibrations == 0U);
+    assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, MFOC_ZERO) ==
+           MFOC_RESULT_OK);
+    motor_port_fake.calibration = MFOC_RESULT_IO;
+    motor_port_fake.time_ms += MFOC_MOTOR_ALIGN_TIME_MS;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_IO);
+    assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_FAULT);
+    assert((motor.faults & MFOC_MOTOR_FAULT_FEEDBACK) != 0U);
 }
 
 /** @brief Run both numeric-backend integration scenarios.
@@ -281,6 +335,7 @@ int main(void)
     current_control();
     submission_failure();
     speed_control();
+    speed_mode_selection();
     alignment();
     alignment_stop();
     puts("Motor control cadence and fault shutdown passed");

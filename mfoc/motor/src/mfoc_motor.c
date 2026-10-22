@@ -90,7 +90,9 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     rc = mfoc_feedback_Init(&next.feedback, &cfg->feedback, p->pole_pairs);
     if (rc != MFOC_RESULT_OK) { return rc; }
     if (cfg->speed_divider != 0U) {
-        if (!_mfoc_motor_PiValid(&cfg->speed) ||
+        if (!mfoc_scalar_is_finite(cfg->limits.speed_max) ||
+            cfg->limits.speed_max <= MFOC_ZERO ||
+            !_mfoc_motor_PiValid(&cfg->speed) ||
             cfg->speed.out_min < -cfg->limits.i_max ||
             cfg->speed.out_max > cfg->limits.i_max) {
             return MFOC_RESULT_OUT_OF_RANGE;
@@ -101,6 +103,7 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     next.speed_divider = cfg->speed_divider;
     next.params = cfg->params;
     next.limits = cfg->limits;
+    next.mode = MFOC_MOTOR_MODE_CURRENT;
     next.state = MFOC_MOTOR_IDLE;
     next.irq_result = MFOC_RESULT_INVALID_STATE;
     rc = mfoc_port_init();
@@ -180,6 +183,7 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     }
     motor->speed_ref = MFOC_ZERO;
     motor->speed_count = 0U;
+    motor->mode = MFOC_MOTOR_MODE_CURRENT;
     return rc;
 }
 
@@ -195,8 +199,14 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
             motor->faults |= MFOC_MOTOR_FAULT_PWM;
         }
         if (rc == MFOC_RESULT_OK) { rc = mfoc_core_Reset(&motor->core); }
+        if (rc == MFOC_RESULT_OK && motor->speed_divider != 0U) {
+            rc = mfoc_pi_Reset(&motor->speed);
+        }
         if (rc == MFOC_RESULT_OK) {
             motor->command.i_ref = (mfoc_dq_t){0};
+            motor->speed_ref = MFOC_ZERO;
+            motor->speed_count = 0U;
+            motor->mode = MFOC_MOTOR_MODE_CURRENT;
             motor->faults = 0U;
             motor->state = MFOC_MOTOR_IDLE;
         }
@@ -212,25 +222,22 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
 {
     if (motor == NULL || ref == NULL) { return MFOC_RESULT_NULL; }
 
-    // 不需要这个限制，运动过程种也可以设置电流
-    // if (motor->state != MFOC_MOTOR_IDLE &&
-    //     motor->state != MFOC_MOTOR_RUNNING) {
-    //     return MFOC_RESULT_INVALID_STATE;
-    // }
-    if (motor->align_active || motor->speed_divider != 0U) {
+    if (motor->align_active ||
+        (motor->state != MFOC_MOTOR_IDLE &&
+         motor->state != MFOC_MOTOR_RUNNING) ||
+        (motor->state == MFOC_MOTOR_RUNNING &&
+         motor->mode != MFOC_MOTOR_MODE_CURRENT)) {
         return MFOC_RESULT_INVALID_STATE;
     }
     mfoc_dq_t next = *ref;
     if (!_mfoc_motor_InCircle(next.qD, next.qQ, motor->limits.i_max)) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
-    if (motor->state == MFOC_MOTOR_IDLE ||
-        motor->state == MFOC_MOTOR_RUNNING) {
-        motor->command.i_ref = next;
-        rc = MFOC_RESULT_OK;
+    motor->command.i_ref = next;
+    if (motor->state == MFOC_MOTOR_IDLE) {
+        motor->mode = MFOC_MOTOR_MODE_CURRENT;
     }
-    return rc;
+    return MFOC_RESULT_OK;
 }
 
 /** @brief Forward a serialized bus update to the instance-owned Core.
@@ -270,8 +277,16 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
                                   &motor->align_deadline, false)) {
             return MFOC_RESULT_OK;
         }
+        /* Read before releasing the fixed field, never after Stop. */
+        mfoc_result_t calibration = state == MFOC_MOTOR_RUNNING ?
+            mfoc_feedback_CalibrateZero(&motor->feedback, motor->align_angle) :
+            MFOC_RESULT_OK;
         mfoc_result_t rc = mfoc_motor_Stop(motor);
         if (rc != MFOC_RESULT_OK) { return rc; }
+        if (calibration != MFOC_RESULT_OK) {
+            return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK,
+                                    calibration);
+        }
         return state == MFOC_MOTOR_FAULT ?
             MFOC_RESULT_SAFETY : MFOC_RESULT_OK;
     }
@@ -291,7 +306,8 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
         return MFOC_RESULT_OUT_OF_RANGE;
     }
     const mfoc_dq_t ref = {.qD = id_pu, .qQ = MFOC_ZERO};
-    if (!_mfoc_motor_InCircle(ref.qD, ref.qQ, motor->limits.i_max)) {
+    if (id_pu <= MFOC_ZERO ||
+        !_mfoc_motor_InCircle(ref.qD, ref.qQ, motor->limits.i_max)) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
     motor->command.i_ref = ref;
@@ -309,19 +325,32 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Update the speed command without resetting its PI.
+/** @brief Select speed mode while idle or update its running reference.
  * @param motor Instance. @param ref Electrical speed PU.
  * @return Command status. */
 mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
                                   mfoc_scalar_t ref)
 {
+    if (motor == NULL) { return MFOC_RESULT_NULL; }
     if (motor->align_active) { return MFOC_RESULT_INVALID_STATE; }
     if (motor->speed_divider == 0U) { return MFOC_RESULT_INVALID_STATE; }
     if (motor->state != MFOC_MOTOR_IDLE &&
         motor->state != MFOC_MOTOR_RUNNING) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    if (!mfoc_scalar_is_finite(ref)) { return MFOC_RESULT_OUT_OF_RANGE; }
+    if (motor->state == MFOC_MOTOR_RUNNING &&
+        motor->mode != MFOC_MOTOR_MODE_SPEED) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (ref < -motor->limits.speed_max || ref > motor->limits.speed_max) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    if (motor->state == MFOC_MOTOR_IDLE) {
+        mfoc_result_t rc = mfoc_pi_Reset(&motor->speed);
+        if (rc != MFOC_RESULT_OK) { return rc; }
+        motor->speed_count = 0U;
+        motor->mode = MFOC_MOTOR_MODE_SPEED;
+    }
     motor->speed_ref = ref;
     return MFOC_RESULT_OK;
 }
@@ -355,7 +384,8 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         }
         angle = feedback.angle;
         // 速度环，按照speed_divider分频
-        if (motor->speed_divider != 0U && motor->speed_count == 0U) {
+        if (motor->mode == MFOC_MOTOR_MODE_SPEED &&
+            motor->speed_count == 0U) {
             mfoc_dq_t ref = {0};
             mfoc_pi_Step(&motor->speed, motor->speed_ref,
                           feedback.speed, &ref.qQ);

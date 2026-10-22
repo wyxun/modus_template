@@ -136,6 +136,28 @@ mfoc_result_t mfoc_encoder_Run(mfoc_encoder_t *encoder)
     return MFOC_RESULT_OK;
 }
 
+/** @brief Read the held rotor and establish its electrical reference.
+ * @param encoder Instance. @param angle Known electrical BAM32 angle.
+ * @return Status; no mutation on read failure. Foreground, fixed-angle hold. */
+mfoc_result_t mfoc_encoder_CalibrateZero(mfoc_encoder_t *encoder,
+    mfoc_angle_t angle)
+{
+    if (encoder == NULL) { return MFOC_RESULT_NULL; }
+    if (encoder->tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
+    mfoc_encoder_sample_t sample = {0};
+    mfoc_result_t rc = mfoc_port_encoder(&sample.angle);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    sample.tick = mfoc_port_tick();
+    if (encoder->inverted) { sample.angle.wBam32 = 0U - sample.angle.wBam32; }
+    encoder->electrical_zero.wBam32 =
+        sample.angle.wBam32 * (uint32_t)encoder->pole_pairs - angle.wBam32;
+    uint8_t next = encoder->published == 0U ? 1U : 0U;
+    encoder->samples[next] = sample;
+    encoder->last_poll_tick = sample.tick;
+    encoder->published = next;
+    return MFOC_RESULT_OK;
+}
+
 /** @brief Age-check, extrapolate, and convert a coherent encoder snapshot.
  * @param encoder Instance. @param angle Electrical phase output.
  * @param speed Electrical PU speed output. @return Snapshot status. */

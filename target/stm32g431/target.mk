@@ -4,8 +4,8 @@
 # =============================================================================
 
 # FOC motor control target (grblHAL is not built on this chip).
-# Stopped MFOC integration: Driver Init and foreground encoder service only.
-# ADC1 current frames are polled; no control IRQ, Step or Motor Start.
+# MFOC initializes stopped; an explicit align command starts current control.
+# Calibration polls ADC frames before bridge enable starts the control IRQ.
 
 # CPU architecture (FPU enabled)
 CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
@@ -94,7 +94,7 @@ CHIP_SOURCES = $(HAL_SOURCES) $(LL_SOURCES)
 # No legacy FOC control source or application is linked.
 FOC_INCLUDES = -Ifoc -Ifoc/math
 include mfoc/mfoc.mk
-CLASS_SOURCES = class/mfoc_app.c
+CLASS_SOURCES = class/mfoc_app.c class/mfoc_debug.c
 
 # 启用 MODUS 默认内置的 perf_counter 移植
 MODUS_USE_DEFAULT_PERFC_PORT = 1

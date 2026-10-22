@@ -75,10 +75,9 @@ void TIM1_TRG_COM_TIM17_IRQHandler(void)    {}
 void TIM1_CC_IRQHandler(void)               {}
 
 /* ---- ADC1_2 (current sensing end-of-conversion) ---- */
-#if !defined(MFOC_MOTOR_IRQ_ENABLED) || !MFOC_MOTOR_IRQ_ENABLED
+#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
 void ADC1_2_IRQHandler(void)
 {
-#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
     if (MDI_Sample_IsReady(phase_current_completed)) {
         g_bG431JeosConsumed = false;
         /*
@@ -93,7 +92,6 @@ void ADC1_2_IRQHandler(void)
 
         mdi_g431_ack_unconsumed_current_frame();
     }
-#endif
 }
 #endif
 

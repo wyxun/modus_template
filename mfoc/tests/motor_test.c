@@ -19,7 +19,7 @@ int main(void)
     mfoc_motor_cfg_t cfg = {
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.3f), MFOC_SCALAR(0.4f), MFOC_ZERO},
-        .limits = {MFOC_SCALAR(0.8f)},
+        .limits = {.i_max = MFOC_SCALAR(0.8f)},
         .core = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE},
     };
     mfoc_motor_t motor = {0};

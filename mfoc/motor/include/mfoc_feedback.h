@@ -68,6 +68,13 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
  * @note Call repeatedly while idle or running; do not call from ISR. */
 mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback);
 
+/** @brief Calibrate the selected encoder against a held electrical angle.
+ * @param feedback Initialized instance. @param angle Held electrical angle.
+ * @return Calibration status; NONE has no position reference to calibrate.
+ * @note Foreground only while Motor uses fixed-angle alignment. */
+mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
+    mfoc_angle_t angle);
+
 /** @brief Run enabled ISR algorithms, then select the configured output.
  * @param feedback Instance. @param input Current/prior Core samples; encoder
  * ignores this argument, which may be NULL for that backend.

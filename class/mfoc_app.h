@@ -20,12 +20,27 @@ typedef struct {
     mfoc_motor_cfg_t motor;
 } mfoc_app_cfg_t;
 
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+/** @brief Interrupt-owned elapsed-time counters; foreground resets snapshots. */
+typedef struct {
+    volatile uint64_t qwTotalTicks;
+    volatile uint32_t wSamples;
+    volatile uint32_t wMaximumTicks;
+    int64_t lReportTimestamp;
+    int64_t lReportPeriodTicks;
+    int64_t lBudgetTicks;
+} mfoc_app_isr_timing_t;
+#endif
+
 /** @brief Application-owned Motor and initialization progress. */
 typedef struct {
     modus_base_t *ptBase;
     mfoc_motor_t motor;
     mfoc_app_state_t state;
     mfoc_result_t result;
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+    mfoc_app_isr_timing_t tIsrTiming;
+#endif
 } mfoc_app_t;
 
 /** @brief Initialize the owned Motor, then register the stopped application.
@@ -39,6 +54,6 @@ int mfoc_app_Clock(uintptr_t object);
 
 /** @brief Service foreground encoder sampling after successful Init.
  * @param object Application address. @return Progress or failure.
- * @note Does not start Motor, run the current loop or publish waveforms. */
+ * @note Does not start Motor or run the current loop. */
 int mfoc_app_Run(uintptr_t object);
 #endif

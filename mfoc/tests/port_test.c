@@ -264,6 +264,13 @@ static void _test_Init(void)
     assert(!g_bG431AdcMeanValid);
     assert(s_port.offset_u == 8192U && s_port.offset_v == 8200U);
     assert(s_port.offset_w == 8100U);
+    /* G431 legacy convention: positive U current lowers its ADC code. */
+    _test_Frame(8173U, 8209U, 8110U);
+    mfoc_uvw_t current = {0};
+    assert(mfoc_port_current(&current) == MFOC_RESULT_OK);
+    _test_Near(current.qU, 19.0f / 476.0f);
+    _test_Near(current.qV, -9.0f / 476.0f);
+    _test_Near(current.qW, -10.0f / 476.0f);
     s_feed_current = false;
     ADC1->ISR = 0U;
     int64_t start = s_tick;
@@ -271,6 +278,34 @@ static void _test_Init(void)
     assert(s_tick - start == 10000);
     assert(s_port.configured && s_port.offset_u == 8192U);
     assert(TIM1->CCER == TIM_CCER_CC4E);
+}
+
+/** @brief Check polling-to-control handoff through existing bridge startup.
+ * @return None. */
+static void _test_ControlStartStop(void)
+{
+    const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
+    TIM1->ARR = 4250U;
+    TIM1->SR = 0U;
+    COMP1->CSR = 0U;
+    COMP2->CSR = 0U;
+    COMP4->CSR = 0U;
+    g_bG431FaultLatched = false;
+    ADC1->IER = ADC_IER_OVRIE;
+    assert(mfoc_port_pwm(&neutral, false) == MFOC_RESULT_OK);
+    assert(ADC1->IER == ADC_IER_OVRIE);
+    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OK);
+    assert((ADC1->IER & ADC_IER_JEOSIE) != 0U);
+    assert(MDI_PWM_IsEnabled(bridge));
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+    assert(ADC1->IER == ADC_IER_OVRIE);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    assert((TIM1->CCER & TIM_CCER_CC4E) != 0U);
+    COMP1->CSR = COMP_CSR_VALUE;
+    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_SAFETY);
+    assert(ADC1->IER == ADC_IER_OVRIE);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    COMP1->CSR = 0U;
 }
 
 /** @brief Exercise real lifecycle adapters against the MDI register provider.
@@ -311,6 +346,7 @@ int main(void)
     _test_InitGate();
     _test_Bus();
     _test_Init();
+    _test_ControlStartStop();
     _test_Lifecycle();
     puts("G431 current conversion and PWM passed");
     return 0;
