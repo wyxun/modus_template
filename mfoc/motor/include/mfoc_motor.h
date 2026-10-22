@@ -8,6 +8,12 @@
 #define MFOC_MOTOR_H
 
 #include "mfoc_core.h"
+#include "mfoc_feedback.h"
+
+/** @brief Fixed-field hold duration, serviced by Motor Run. */
+#ifndef MFOC_MOTOR_ALIGN_TIME_MS
+#define MFOC_MOTOR_ALIGN_TIME_MS 1500U
+#endif
 
 /** @brief Motor constants on one fixed set of bases.
  * Use amplitude-invariant Clarke and peak phase-current base Ib.
@@ -32,7 +38,7 @@ typedef struct {
     mfoc_scalar_t i_max; /* Positive phase-current amplitude limit, I/Ib. */
 } mfoc_motor_limits_t;
 
-/** @brief Persistent current command; angle is supplied per control step. */
+/** @brief Persistent current command; angle comes from feedback/alignment. */
 typedef struct {
     mfoc_dq_t i_ref; /* dq current reference, I/Ib. */
 } mfoc_motor_command_t;
@@ -55,60 +61,72 @@ typedef enum {
     MFOC_MOTOR_FAULT_EXTERNAL = 1U << 5,
 } mfoc_motor_fault_t;
 
-/** @brief Synchronous inputs; current uses Ib and angle is electrical.
- * Supply a fresh alpha-beta current sample and angle from the same instant.
- * angle_valid is determined by the external angle source. */
-typedef struct {
-    mfoc_ab_t i_ab; /**< Alpha-beta phase current, I/Ibase. */
-    mfoc_angle_t angle;
-    bool angle_valid;
-} mfoc_motor_input_t;
-
-/** @brief Coherent lifecycle snapshot, not a duplicate persistent cache. */
+/** @brief Lifecycle values; a foreground read may straddle an ISR update. */
 typedef struct {
     mfoc_motor_state_t state;
     uint32_t faults;
 } mfoc_motor_status_t;
 
 /** @brief Initialization input; not retained as a second runtime copy.
- * Motor and Core must share the same fixed Ib/Vb bases. */
+ * Motor and Core must share the same fixed Ib/Vb bases.
+ * speed_divider=0 selects current mode; N>0 enables the speed PI, with
+ * ki_ts=Ki*N*current_period and output bounds inside +/-i_max. */
 typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;
     mfoc_core_params_t core;
+    mfoc_feedback_cfg_t feedback;
+    mfoc_pi_params_t speed;
+    uint16_t speed_divider; /* 0: current mode; N: speed PI every N Steps. */
 } mfoc_motor_cfg_t;
 
 /** @brief Motor-owned runtime data; initialize before use.
- * No ADC/PWM handles, sample cache or observer state is stored here.
+ * Owns Feedback, speed PI, current control, and prior Core output.
+ * No ADC/PWM handles are stored here.
  * Do not change members directly while dependent algorithms are active.
  * One application-owned instance controls the statically bound power stage.
- * Step runs in one control ISR and must not overlap another Step call.
- * Foreground calls may be preempted by that ISR. Only Trip may preempt
- * Step from a higher-priority ISR. Step's final commit checks the latch. */
+ * Step runs in one highest-priority, nonreentrant control ISR. There is no
+ * library interrupt masking. Live command updates run in that ISR; other
+ * foreground mutations are serialized by the application. Stop publishes a
+ * nonrunning state before resetting Core; Start publishes RUNNING last. */
 typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
+    mfoc_feedback_t feedback;
     mfoc_motor_command_t command;
     volatile mfoc_motor_state_t state;
-    volatile uint32_t faults; /* ISR latch; read together via GetStatus. */
+    volatile uint32_t faults; /* ISR fault latch. */
+    volatile mfoc_result_t irq_result; /* Last IRQ Step result; diagnostics. */
+    mfoc_core_output_t previous_core_output;
+    bool previous_core_output_valid;
+    mfoc_pi_t speed;
+    mfoc_scalar_t speed_ref;
+    uint16_t speed_divider;
+    uint16_t speed_count;
+    mfoc_angle_t align_angle;
+    int64_t align_deadline; /* perfc slot, owned by foreground Run. */
+    volatile bool align_active;
 } mfoc_motor_t;
 
 /** @brief Validate/copy motor data and initialize current control in IDLE.
  * @param motor Instance; initialization requires inactive hardware.
  * @param cfg Motor PU data and finite Core configuration.
  * @return OK, NULL, INVALID_ARGUMENT or OUT_OF_RANGE.
- * @note Failure leaves motor unchanged. No hardware operation is performed.
- * Init must not be used to clear a live fault or reconfigure a running motor.
+ * @note Failure leaves motor unchanged. After validating control settings,
+ * Port Init collects ten ADC offset frames spaced 10 ms apart. ADC trigger
+ * and perfc must be ready, with control IRQ disabled and phase outputs off.
+ * Initial bus comes from cfg.core.bus; Init does not sample bus or start PWM.
+ * Init must not clear a live fault or reconfigure a running motor.
  * PI limits must include zero; gains and limits must be finite. */
 mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
                              const mfoc_motor_cfg_t *cfg);
 
-/** @brief Check prerequisites, reset PI and enable neutral PWM from IDLE.
+/** @brief Reset PI and start neutral PWM from IDLE.
  * @param motor Initialized instance. @return Operation status.
  * @note Retains a previously accepted current command. Failure to write
- * or enable PWM trips the motor. Readiness rejection leaves it IDLE.
- * Call in foreground; no alignment or angle acquisition is performed. */
+ * or enable PWM trips the motor. Port Init must already have succeeded.
+ * Call in foreground; no bus read or angle acquisition occurs here. */
 mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
 
 /** @brief Disable PWM, clear command/integrals and retain any fault latch.
@@ -119,7 +137,8 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor);
 /** @brief Accept a dq command with magnitude <= i_max.
  * @param motor IDLE/RUNNING instance. @param ref Finite current in I/Ibase.
  * @return Status; rejection leaves the previous command intact.
- * @note Foreground or control ISR only; d/q are published together. */
+ * @note While RUNNING, call from the control ISR to update d/q together.
+ * Foreground updates require IDLE; this function does not mask interrupts. */
 mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
                                    const mfoc_dq_t *ref);
 
@@ -130,32 +149,56 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
  * Caller must handle invalid measured voltage through its safety policy. */
 mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus);
 
-/** @brief Execute current control and submit PWM for the next interval.
- * @param motor RUNNING instance. @param input Fresh current/angle.
- * @param output Core results, valid only on OK; never aliases motor/input.
- * @return Status; invalid input, math or PWM errors trip the motor.
- * @note Control ISR only. No observer, speed loop or implicit angle source. */
-mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor,
-                             const mfoc_motor_input_t *input,
-                             mfoc_core_output_t *output);
+/** @brief Poll feedback and service an active alignment hold.
+ * @param motor Valid initialized instance. @return Service/stop status.
+ * @note Foreground only; keep calling while idle, running, or aligning.
+ * Feedback errors do not block alignment timeout and Stop. */
+mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor);
+
+/** @brief Start fixed electrical angle/current from IDLE.
+ * @param motor Valid instance. @param id_pu D-axis current PU; iq=0.
+ * @param angle_pu Electrical turns in [0,1). @return Startup status.
+ * @note Run stops after MFOC_MOTOR_ALIGN_TIME_MS; no encoder is required.
+ * Does not capture an encoder zero. */
+mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
+    mfoc_scalar_t id_pu, mfoc_scalar_t angle_pu);
+
+/** @brief Set a speed reference without resetting PI history.
+ * @param motor Valid instance in speed mode. @param ref Electrical speed PU.
+ * @return Command status; rejection retains the previous reference. */
+mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
+
+/** @brief Run one complete current-sampling and control cycle.
+ * @param motor Initialized instance. @return Sampling/control/PWM status.
+ * @note Control ISR only, one call per completed current frame. A single
+ * RUNNING check precedes current read, Clarke, feedback, optional speed PI,
+ * Core, and PWM submission. Idle/fault calls consume no frame. Runtime
+ * failures Trip Motor; successful PWM submission publishes the prior output. */
+mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor);
+
+/** @brief Read the published bus sample and update Core coefficients.
+ * @param motor IDLE/RUNNING instance. @return Sampling/update status.
+ * @note Does not wait for an ADC conversion. Call at the desired cadence,
+ * in the control ISR while RUNNING, or in foreground while IDLE. */
+mfoc_result_t mfoc_motor_UpdateBus(mfoc_motor_t *motor);
 
 /** @brief Disable PWM immediately and latch a nonzero set of fault bits.
  * @param motor Initialized instance. @param faults Cause bits.
  * @return Shutdown status; failure also latches PWM fault.
- * @note ISR-safe, including preemption of Step. Does not reset an in-flight
- * Core; ClearFault resets it before another start is permitted. */
+ * @note Call from the control ISR, or while stopped. Does not reset Core;
+ * ClearFault resets it before another start is permitted. */
 mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults);
 
-/** @brief Confirm shutdown/readiness, reset PI and recover FAULT to IDLE.
+/** @brief Shut down, reset PI and recover software FAULT to IDLE.
  * @param motor Faulted instance. @return Status; failure retains fault.
  * @note Foreground only. Caller confirms external fault causes are gone.
  * Never automatically restarts; clear the physical latch in the adapter. */
 mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor);
 
-/** @brief Read state and fault bits under one short critical section.
- * @param motor Instance. @param status Snapshot destination.
- * @return OK or NULL. */
-mfoc_result_t mfoc_motor_GetStatus(const mfoc_motor_t *motor,
-                                  mfoc_motor_status_t *status);
+/** @brief Read state and fault bits without interrupt masking.
+ * @param motor Valid instance. @param status Valid snapshot destination.
+ * @return None. @note Fields are not an atomic pair across ISR updates. */
+void mfoc_motor_GetStatus(const mfoc_motor_t *motor,
+                          mfoc_motor_status_t *status);
 
 #endif

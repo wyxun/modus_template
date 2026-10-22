@@ -7,7 +7,7 @@
 #ifndef MFOC_APP_H
 #define MFOC_APP_H
 #include "modus.h"
-#include "mfoc_driver.h"
+#include "mfoc_motor.h"
 
 typedef enum {
     MFOC_APP_UNINITIALIZED = 0,
@@ -17,18 +17,18 @@ typedef enum {
 
 /** @brief Fixed motor, Core and encoder configuration. */
 typedef struct {
-    mfoc_driver_cfg_t driver;
+    mfoc_motor_cfg_t motor;
 } mfoc_app_cfg_t;
 
-/** @brief Application-owned Driver and initialization progress. */
+/** @brief Application-owned Motor and initialization progress. */
 typedef struct {
     modus_base_t *ptBase;
-    mfoc_driver_t driver;
+    mfoc_motor_t motor;
     mfoc_app_state_t state;
     mfoc_result_t result;
 } mfoc_app_t;
 
-/** @brief Initialize the owned Driver, then register the stopped application.
+/** @brief Initialize the owned Motor, then register the stopped application.
  * @param object Application address. @param cfg Configuration address.
  * @return MODUS initialization status. */
 int mfoc_app_Init(uintptr_t object, uintptr_t cfg);

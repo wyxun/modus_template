@@ -11,10 +11,11 @@
 /** @brief SVPWM through min/max common-mode injection.
  * @param voltage Finite voltage/bus modulation, each component in [-1,1].
  * @param duty Output [0,1]. @param saturated Optional endpoint/clipping flag.
- * @return NULL or OK. Linear vector limit is 1/sqrt(3).
- * @note Caller validates input ranges. Common-mode shift needs no trig. */
-mfoc_result_t mfoc_svpwm(const mfoc_ab_t *voltage,
-                        mfoc_uvw_t *duty, bool *saturated);
+ * @return None. Linear vector limit is 1/sqrt(3).
+ * @note Voltage/duty pointers and input ranges must be valid.
+ * Common-mode shift needs no trig. */
+void mfoc_svpwm(const mfoc_ab_t *voltage,
+                mfoc_uvw_t *duty, bool *saturated);
 /** @brief Centered SPWM. @param voltage Finite voltage/bus modulation [-1,1].
  * @param duty Output [0,1]. @return NULL or OK.
  * @note Caller validates inputs. Linear vector limit is 0.5; may clip. */

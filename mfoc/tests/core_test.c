@@ -28,7 +28,7 @@ int main(void)
             assert(mfoc_core_Reset(&c) == MFOC_RESULT_OK);
             in.ref.qD = mfoc_from_float((float)j / 20.0f);
             in.ref.qQ = MFOC_SCALAR(0.3f);
-            assert(mfoc_core_Step(&c, &in, &out) == MFOC_RESULT_OK);
+            mfoc_core_Step(&c, &in, &out);
             float d = mfoc_to_float(out.u.qD);
             float q = mfoc_to_float(out.u.qQ);
             float radius = mfoc_to_float(c.u_max);

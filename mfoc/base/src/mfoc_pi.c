@@ -9,11 +9,10 @@
 
 /** @brief Feed external saturation back into the integral output.
  * @param p PI instance. @param out Requested output.
- * @param applied Limited output. @return OK or NULL. */
-mfoc_result_t mfoc_pi_ApplyLimit(mfoc_pi_t *p, mfoc_scalar_t out,
-                                mfoc_scalar_t applied)
+ * @param applied Limited output. @return None. Requires a valid PI. */
+void mfoc_pi_ApplyLimit(mfoc_pi_t *p, mfoc_scalar_t out,
+                        mfoc_scalar_t applied)
 {
-    if (p == NULL) { return MFOC_RESULT_NULL; }
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t ui = p->ui + (applied - out);
 #else
@@ -23,7 +22,6 @@ mfoc_result_t mfoc_pi_ApplyLimit(mfoc_pi_t *p, mfoc_scalar_t out,
     if (ui > p->cfg.i_max) { ui = p->cfg.i_max; }
     if (ui < p->cfg.i_min) { ui = p->cfg.i_min; }
     p->ui = (mfoc_scalar_t)ui;
-    return MFOC_RESULT_OK;
 }
 
 /** @brief Copy gains/limits and reset integral output.
@@ -75,11 +73,10 @@ mfoc_result_t mfoc_pi_Track(mfoc_pi_t *p, mfoc_scalar_t out,
 
 /** @brief Run u = kp*err + ui, with conditional integration.
  * @param p Initialized PI. @param ref Reference. @param fbk Feedback.
- * @param out Bounded output. @return OK or NULL. */
-mfoc_result_t mfoc_pi_Step(mfoc_pi_t *p, mfoc_scalar_t ref,
-                          mfoc_scalar_t fbk, mfoc_scalar_t *out)
+ * @param out Bounded output. @return None. Requires valid pointers. */
+void mfoc_pi_Step(mfoc_pi_t *p, mfoc_scalar_t ref,
+                  mfoc_scalar_t fbk, mfoc_scalar_t *out)
 {
-    if (p == NULL || out == NULL) { return MFOC_RESULT_NULL; }
     const mfoc_pi_params_t *c = &p->cfg;
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t err = ref - fbk;
@@ -105,5 +102,4 @@ mfoc_result_t mfoc_pi_Step(mfoc_pi_t *p, mfoc_scalar_t ref,
     u = mfoc_add_sat(up, p->ui);
 #endif
     *out = mfoc_sat(u, c->out_min, c->out_max);
-    return MFOC_RESULT_OK;
 }

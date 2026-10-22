@@ -75,7 +75,7 @@ void TIM1_TRG_COM_TIM17_IRQHandler(void)    {}
 void TIM1_CC_IRQHandler(void)               {}
 
 /* ---- ADC1_2 (current sensing end-of-conversion) ---- */
-#if !defined(MFOC_DRIVER_IRQ_ENABLED) || !MFOC_DRIVER_IRQ_ENABLED
+#if !defined(MFOC_MOTOR_IRQ_ENABLED) || !MFOC_MOTOR_IRQ_ENABLED
 void ADC1_2_IRQHandler(void)
 {
 #if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED

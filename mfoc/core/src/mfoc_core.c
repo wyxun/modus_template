@@ -114,41 +114,29 @@ mfoc_result_t mfoc_core_Reset(mfoc_core_t *c)
 
 /** @brief Calculate the next PWM command from the current sample.
  * @param c Instance. @param in Inputs. @param out Outputs.
- * @return OK or NULL; valid numeric inputs are a caller precondition. */
-mfoc_result_t mfoc_core_Step(mfoc_core_t *c,
-                            const mfoc_core_input_t *in,
-                            mfoc_core_output_t *out)
+ * @return None; valid pointers and numeric inputs are caller preconditions. */
+void mfoc_core_Step(mfoc_core_t *c,
+                    const mfoc_core_input_t *in,
+                    mfoc_core_output_t *out)
 {
-    if (c == NULL || in == NULL || out == NULL) {
-        return MFOC_RESULT_NULL;
-    }
     mfoc_scalar_t sin_theta;
     mfoc_scalar_t cos_theta;
     mfoc_dq_t u; /* PI voltage request before vector limiting. */
     mfoc_dq_t m; /* dq modulation after bus-voltage normalization. */
     mfoc_angle_sincos(in->angle, &sin_theta, &cos_theta);
-    mfoc_result_t rc = mfoc_park_cached(&in->i, sin_theta, cos_theta,
-                                        &out->i);
-    if (rc != MFOC_RESULT_OK) { return rc; }
-    rc = mfoc_pi_Step(&c->d, in->ref.qD, out->i.qD, &u.qD);
-    if (rc != MFOC_RESULT_OK) { return rc; }
-    rc = mfoc_pi_Step(&c->q, in->ref.qQ, out->i.qQ, &u.qQ);
-    if (rc != MFOC_RESULT_OK) { return rc; }
+    mfoc_park_cached(&in->i, sin_theta, cos_theta, &out->i);
+    mfoc_pi_Step(&c->d, in->ref.qD, out->i.qD, &u.qD);
+    mfoc_pi_Step(&c->q, in->ref.qQ, out->i.qQ, &u.qQ);
     out->u = u;
     out->limited = _mfoc_core_limit(&out->u, c->u_max);
     if (out->limited) {
-        rc = mfoc_pi_ApplyLimit(&c->d, u.qD, out->u.qD);
-        if (rc != MFOC_RESULT_OK) { return rc; }
-        rc = mfoc_pi_ApplyLimit(&c->q, u.qQ, out->u.qQ);
-        if (rc != MFOC_RESULT_OK) { return rc; }
+        mfoc_pi_ApplyLimit(&c->d, u.qD, out->u.qD);
+        mfoc_pi_ApplyLimit(&c->q, u.qQ, out->u.qQ);
     }
     /* V/Vbase -> V/Vdc, using the initialized or updated reciprocal. */
     m.qD = mfoc_mul_wide(out->u.qD, c->bus_inv);
     m.qQ = mfoc_mul_wide(out->u.qQ, c->bus_inv);
-    rc = mfoc_ipark_cached(&m, sin_theta, cos_theta, &out->m);
-    if (rc != MFOC_RESULT_OK) { return rc; }
-    rc = mfoc_svpwm(&out->m, &out->duty, &out->clipped);
-    if (rc != MFOC_RESULT_OK) { return rc; }
+    mfoc_ipark_cached(&m, sin_theta, cos_theta, &out->m);
+    mfoc_svpwm(&out->m, &out->duty, &out->clipped);
     out->bus = c->bus;
-    return MFOC_RESULT_OK;
 }

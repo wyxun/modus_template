@@ -65,7 +65,8 @@ mfoc_result_t mfoc_encoder_Run(mfoc_encoder_t *encoder);
 /** @brief Copy fresh feedback, extrapolating angle to the current tick.
  * @param encoder Instance. @param angle Electrical BAM32 output.
  * @param speed Electrical speed PU output. @return OK or sample/state error.
- * @note ISR only; speed is copied from Run's snapshot without conversion.
+ * @note Valid pointers and initialized encoder are required. ISR only;
+ * speed is copied from Run's snapshot without conversion.
  * No hardware bus access. Failure preserves both outputs. */
 mfoc_result_t mfoc_encoder_Step(const mfoc_encoder_t *encoder,
     mfoc_angle_t *angle, mfoc_scalar_t *speed);

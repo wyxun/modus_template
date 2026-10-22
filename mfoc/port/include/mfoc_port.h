@@ -57,22 +57,29 @@ uint32_t mfoc_port_tick_frequency(void);
 
 /** @brief Read and normalize one fresh, coherent completed ADC frame.
  * @param current U/V/W phase currents in I/Ibase; valid only on OK.
- * @return OK, NULL, INVALID_STATE if unconfigured/not ready, or IO.
- * @note MDI decodes the ADC format; the port applies offsets, polarity and
- * precomputed count-to-PU gains using the same Ibase as Motor/Core. The ADC
+ * @return OK, INVALID_STATE if unconfigured/not ready, or IO.
+ * @note current must be valid. MDI decodes the ADC format; the port applies
+ * offsets, polarity and precomputed count-to-PU gains with Motor/Core Ibase.
+ * The ADC
  * count range guarantees finite, representable results; values are not
  * clamped to Motor operating limits.
  * No conversion wait, Clarke transform or PWM gate change is performed. */
 mfoc_result_t mfoc_port_current(mfoc_uvw_t *current);
 
-/** @brief Convert normalized duties to target counts and submit PWM.
+/** @brief Submit trusted duties and optionally start the phase outputs.
  * @param duty U/V/W phase duties; each must be finite and within [0,1].
- * @return OK, NULL, OUT_OF_RANGE for rejected hardware state/frame, or IO.
- * @note Duty values are trusted Core results; no duplicate finite/range
- * validation is performed here. The target maps phase polarity and defines
- * the update point through its timer setup.
- * Submission must never enable a disabled bridge. The separate enable
- * operation must ensure previously submitted neutral duties are effective. */
-mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty);
+ * @param start True for startup; false only updates compare values.
+ * @return OK, OUT_OF_RANGE for rejected hardware state/frame, or IO.
+ * A physical fault during startup returns SAFETY.
+ * @note duty must be valid; no duplicate finite/range checks. Startup writes
+ * duty before enabling outputs. The target must make that duty effective
+ * before its MDI Enable opens the phase gates. ISR updates use start=false;
+ * they never change output gates or clear a hardware fault. */
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty, bool start);
+
+/** @brief Close phase outputs while preserving the ADC trigger.
+ * @return MDI shutdown status mapped to OK or IO.
+ * @note Safe to repeat; does not clear the physical fault latch. */
+mfoc_result_t mfoc_port_pwm_stop(void);
 
 #endif

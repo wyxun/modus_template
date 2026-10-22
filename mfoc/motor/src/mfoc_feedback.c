@@ -47,13 +47,13 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
 mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     const mfoc_feedback_input_t *input, mfoc_feedback_output_t *output)
 {
-    if (feedback == NULL || output == NULL) { return MFOC_RESULT_NULL; }
-    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
     (void)input;
 #if MFOC_FEEDBACK_ENABLE_ENCODER
     mfoc_feedback_output_t encoder_output = {0};
     feedback->encoder_status = mfoc_encoder_Step(&feedback->encoder,
         &encoder_output.angle, &encoder_output.speed);
+#else
+    (void)feedback;
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
     if (feedback->encoder_status != MFOC_RESULT_OK) {
@@ -62,6 +62,7 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     *output = encoder_output;
     return MFOC_RESULT_OK;
 #else
+    (void)output;
     return MFOC_RESULT_INVALID_STATE;
 #endif
 }

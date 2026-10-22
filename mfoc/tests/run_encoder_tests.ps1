@@ -14,10 +14,10 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_NUMERIC_$numeric=1" "-DMFOC_FEEDBACK_BACKEND=$backend" `
         "-DMFOC_FEEDBACK_ENABLE_ENCODER=$enabled" `
         "-I$library/base/include" "-I$library/core/include" `
-        "-I$library/port/include" "-I$library/driver/include" `
+        "-I$library/port/include" "-I$library/motor/include" `
         "-I$library/position/include" "$PSScriptRoot/encoder_test.c" `
         @encoderSources `
-        "$library/driver/src/mfoc_feedback.c" `
+        "$library/motor/src/mfoc_feedback.c" `
         "$library/base/src/mfoc_numeric.c" `
         "$library/base/src/mfoc_trig.c" `
         "$library/base/src/mfoc_angle.c" -lm -o $exe

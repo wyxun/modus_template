@@ -45,18 +45,17 @@ int main(void)
         foc_ab_t old_ab = {(foc_scalar_t)ab.qAlpha, (foc_scalar_t)ab.qBeta};
         mfoc_dq_t dq = {0};
         foc_dq_t old_dq = {0};
-        assert(mfoc_park_cached(&ab, sine, cosine, &dq) == MFOC_RESULT_OK);
+        mfoc_park_cached(&ab, sine, cosine, &dq);
         assert(foc_park_cached(&old_ab, (foc_scalar_t)sine,
             (foc_scalar_t)cosine, &old_dq) == FOC_RESULT_OK);
         same(dq.qD, old_dq.qD);
         same(dq.qQ, old_dq.qQ);
-        assert(mfoc_ipark_cached(&dq, sine, cosine, &ab) == MFOC_RESULT_OK);
+        mfoc_ipark_cached(&dq, sine, cosine, &ab);
         assert(foc_ipark_cached(&old_dq, (foc_scalar_t)sine,
             (foc_scalar_t)cosine, &old_ab) == FOC_RESULT_OK);
         same(ab.qAlpha, old_ab.qAlpha);
         same(ab.qBeta, old_ab.qBeta);
-        assert(mfoc_clarke(ab.qAlpha, ab.qBeta, -ab.qAlpha, &ab) ==
-               MFOC_RESULT_OK);
+        mfoc_clarke(ab.qAlpha, ab.qBeta, -ab.qAlpha, &ab);
         assert(foc_clarke(old_ab.qAlpha, old_ab.qBeta, -old_ab.qAlpha,
                            &old_ab) == FOC_RESULT_OK);
         same(ab.qAlpha, old_ab.qAlpha);
@@ -65,7 +64,7 @@ int main(void)
         foc_duty_abc_t old_duty = {0};
         bool clipped = false;
         bool old_clipped = false;
-        assert(mfoc_svpwm(&ab, &duty, &clipped) == MFOC_RESULT_OK);
+        mfoc_svpwm(&ab, &duty, &clipped);
         assert(foc_svpwm(&old_ab, &old_duty, &old_clipped) == FOC_RESULT_OK);
         same(duty.qU, old_duty.qU);
         same(duty.qV, old_duty.qV);

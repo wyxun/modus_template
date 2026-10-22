@@ -5,8 +5,9 @@
  * @date 2026-10-20
  */
 #include "mfoc_motor.h"
-#include "mfoc_motor_port.h"
 #include "mfoc_port.h"
+#include "mfoc_transform.h"
+#include "perf_counter.h"
 #include <stddef.h>
 
 /** @brief Check finite PI parameters and a zero-output reset domain.
@@ -86,41 +87,46 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     mfoc_motor_t next = {0};
     mfoc_result_t rc = mfoc_core_Init(&next.core, &cfg->core);
     if (rc != MFOC_RESULT_OK) { return rc; }
+    rc = mfoc_feedback_Init(&next.feedback, &cfg->feedback, p->pole_pairs);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    if (cfg->speed_divider != 0U) {
+        if (!_mfoc_motor_PiValid(&cfg->speed) ||
+            cfg->speed.out_min < -cfg->limits.i_max ||
+            cfg->speed.out_max > cfg->limits.i_max) {
+            return MFOC_RESULT_OUT_OF_RANGE;
+        }
+        rc = mfoc_pi_Init(&next.speed, &cfg->speed);
+        if (rc != MFOC_RESULT_OK) { return rc; }
+    }
+    next.speed_divider = cfg->speed_divider;
     next.params = cfg->params;
     next.limits = cfg->limits;
     next.state = MFOC_MOTOR_IDLE;
+    next.irq_result = MFOC_RESULT_INVALID_STATE;
+    rc = mfoc_port_init();
+    if (rc != MFOC_RESULT_OK) { return rc; }
     *motor = next;
     return MFOC_RESULT_OK;
 }
 
-/** @brief Perform a serialized safe start of the statically bound bridge.
- * @param motor Instance. @return Readiness, control or hardware status. */
+/** @brief Reset control and start neutral PWM before publishing RUNNING.
+ * @param motor Instance. @return Control or hardware status. */
 mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
-    mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
-    if (motor->state == MFOC_MOTOR_IDLE && motor->faults == 0U) {
-        rc = mfoc_motor_port_CheckReady();
-        if (rc == MFOC_RESULT_OK) {
-            rc = mfoc_core_Reset(&motor->core);
-            if (rc == MFOC_RESULT_OK) {
-                const mfoc_uvw_t neutral = {
-                    MFOC_HALF, MFOC_HALF, MFOC_HALF};
-                rc = mfoc_port_pwm(&neutral);
-            }
-            if (rc == MFOC_RESULT_OK) {
-                rc = mfoc_motor_port_EnablePwm();
-            }
-            if (rc == MFOC_RESULT_OK) {
-                motor->state = MFOC_MOTOR_RUNNING;
-            } else {
-                rc = _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
-            }
-        }
+    if (motor->state != MFOC_MOTOR_IDLE || motor->faults != 0U) {
+        return MFOC_RESULT_INVALID_STATE;
     }
-    mfoc_motor_port_ExitCritical(mask);
-    return rc;
+    mfoc_result_t rc = mfoc_core_Reset(&motor->core);
+    if (rc == MFOC_RESULT_OK) {
+        const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
+        rc = mfoc_port_pwm(&neutral, true);
+    }
+    if (rc != MFOC_RESULT_OK) {
+        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
+    }
+    motor->state = MFOC_MOTOR_RUNNING;
+    return MFOC_RESULT_OK;
 }
 
 /** @brief Immediately latch fault and request shutdown, including repeats.
@@ -130,19 +136,17 @@ mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
     if (faults == 0U) { return MFOC_RESULT_INVALID_ARGUMENT; }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
     if (motor->state == MFOC_MOTOR_UNINITIALIZED) {
-        mfoc_motor_port_ExitCritical(mask);
         return MFOC_RESULT_INVALID_STATE;
     }
+    motor->previous_core_output_valid = false;
     motor->faults |= faults;
     motor->state = MFOC_MOTOR_FAULT;
     motor->command.i_ref = (mfoc_dq_t){0};
-    mfoc_result_t rc = mfoc_motor_port_DisablePwm();
+    mfoc_result_t rc = mfoc_port_pwm_stop();
     if (rc != MFOC_RESULT_OK) {
         motor->faults |= MFOC_MOTOR_FAULT_PWM;
     }
-    mfoc_motor_port_ExitCritical(mask);
     return rc;
 }
 
@@ -151,12 +155,13 @@ mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults)
 mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
     if (motor->state == MFOC_MOTOR_UNINITIALIZED) {
-        mfoc_motor_port_ExitCritical(mask);
         return MFOC_RESULT_INVALID_STATE;
     }
-    mfoc_result_t rc = mfoc_motor_port_DisablePwm();
+    /* Prevent a preempting control ISR from entering Core during reset. */
+    motor->state = motor->faults != 0U ?
+        MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
+    mfoc_result_t rc = mfoc_port_pwm_stop();
     motor->command.i_ref = (mfoc_dq_t){0};
     mfoc_result_t reset = mfoc_core_Reset(&motor->core);
     if (rc != MFOC_RESULT_OK) { motor->faults |= MFOC_MOTOR_FAULT_PWM; }
@@ -166,23 +171,28 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     }
     motor->state = motor->faults != 0U ?
         MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
-    mfoc_motor_port_ExitCritical(mask);
+    motor->align_active = false;
+    motor->align_deadline = 0;
+    motor->previous_core_output_valid = false;
+    if (motor->speed_divider != 0U) {
+        mfoc_result_t speed_reset = mfoc_pi_Reset(&motor->speed);
+        if (rc == MFOC_RESULT_OK) { rc = speed_reset; }
+    }
+    motor->speed_ref = MFOC_ZERO;
+    motor->speed_count = 0U;
     return rc;
 }
 
-/** @brief Recover only after physical shutdown and prerequisite checks.
+/** @brief Recover software state after physical shutdown.
  * @param motor Instance. @return Recovery status. */
 mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
     mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
     if (motor->state == MFOC_MOTOR_FAULT) {
-        rc = mfoc_motor_port_DisablePwm();
+        rc = mfoc_port_pwm_stop();
         if (rc != MFOC_RESULT_OK) {
             motor->faults |= MFOC_MOTOR_FAULT_PWM;
-        } else {
-            rc = mfoc_motor_port_CheckReady();
         }
         if (rc == MFOC_RESULT_OK) { rc = mfoc_core_Reset(&motor->core); }
         if (rc == MFOC_RESULT_OK) {
@@ -191,7 +201,6 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
             motor->state = MFOC_MOTOR_IDLE;
         }
     }
-    mfoc_motor_port_ExitCritical(mask);
     return rc;
 }
 
@@ -202,24 +211,25 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
                                    const mfoc_dq_t *ref)
 {
     if (motor == NULL || ref == NULL) { return MFOC_RESULT_NULL; }
-    if (motor->state != MFOC_MOTOR_IDLE &&
-        motor->state != MFOC_MOTOR_RUNNING) {
+
+    // 不需要这个限制，运动过程种也可以设置电流
+    // if (motor->state != MFOC_MOTOR_IDLE &&
+    //     motor->state != MFOC_MOTOR_RUNNING) {
+    //     return MFOC_RESULT_INVALID_STATE;
+    // }
+    if (motor->align_active || motor->speed_divider != 0U) {
         return MFOC_RESULT_INVALID_STATE;
     }
     mfoc_dq_t next = *ref;
-    if (!mfoc_scalar_is_finite(next.qD) ||
-        !mfoc_scalar_is_finite(next.qQ) ||
-        !_mfoc_motor_InCircle(next.qD, next.qQ, motor->limits.i_max)) {
+    if (!_mfoc_motor_InCircle(next.qD, next.qQ, motor->limits.i_max)) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
     mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
     if (motor->state == MFOC_MOTOR_IDLE ||
         motor->state == MFOC_MOTOR_RUNNING) {
         motor->command.i_ref = next;
         rc = MFOC_RESULT_OK;
     }
-    mfoc_motor_port_ExitCritical(mask);
     return rc;
 }
 
@@ -230,56 +240,157 @@ mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus)
     return mfoc_core_SetBus(&motor->core, bus);
 }
 
-/** @brief Execute Core, then commit only if no fault interrupted the step.
- * @param motor Instance. @param input Current/angle. @param output Results.
- * @return Control status; any failed step must be discarded by the caller. */
-mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor,
-                             const mfoc_motor_input_t *input,
-                             mfoc_core_output_t *output)
+/** @brief Refresh Core bus coefficients from the published MDI sample.
+ * @param motor Instance. @return Sampling/update status; bus retained on error.
+ * @note Control ISR while RUNNING, or foreground while IDLE. */
+mfoc_result_t mfoc_motor_UpdateBus(mfoc_motor_t *motor)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
-    if (input == NULL || output == NULL) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK,
-                                MFOC_RESULT_NULL);
+    if (motor->state != MFOC_MOTOR_IDLE &&
+        motor->state != MFOC_MOTOR_RUNNING) {
+        return MFOC_RESULT_INVALID_STATE;
     }
+    mfoc_scalar_t bus = MFOC_ZERO;
+    mfoc_result_t rc = mfoc_port_bus(&bus);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    return mfoc_core_SetBus(&motor->core, bus);
+}
+
+/** @brief Poll feedback and service the existing fixed-field hold.
+ * @param motor Valid initialized instance. @return Service/stop status. */
+mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
+{
+    mfoc_result_t feedback_rc = mfoc_feedback_Run(&motor->feedback);
+
+    // 执行对齐
+    if (motor->align_active) {
+        mfoc_motor_state_t state = motor->state;
+        if (state == MFOC_MOTOR_RUNNING &&
+            !perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
+                                  &motor->align_deadline, false)) {
+            return MFOC_RESULT_OK;
+        }
+        mfoc_result_t rc = mfoc_motor_Stop(motor);
+        if (rc != MFOC_RESULT_OK) { return rc; }
+        return state == MFOC_MOTOR_FAULT ?
+            MFOC_RESULT_SAFETY : MFOC_RESULT_OK;
+    }
+    return feedback_rc;
+}
+
+/** @brief Start fixed-angle d-axis current alignment from IDLE.
+ * @param motor Instance. @param id_pu Current. @param angle_pu Turns.
+ * @return Current-command or startup status. */
+mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
+    mfoc_scalar_t id_pu, mfoc_scalar_t angle_pu)
+{
+    if (motor->state != MFOC_MOTOR_IDLE || motor->align_active) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (angle_pu < MFOC_ZERO || angle_pu >= MFOC_ONE) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    const mfoc_dq_t ref = {.qD = id_pu, .qQ = MFOC_ZERO};
+    if (!_mfoc_motor_InCircle(ref.qD, ref.qQ, motor->limits.i_max)) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    motor->command.i_ref = ref;
+    motor->previous_core_output_valid = false;
+    motor->align_angle = mfoc_angle_from_scalar(angle_pu);
+    motor->align_active = true;
+    mfoc_result_t rc = mfoc_motor_Start(motor);
+    if (rc != MFOC_RESULT_OK) {
+        motor->align_active = false;
+        return rc;
+    }
+    motor->align_deadline = 0;
+    (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
+                              &motor->align_deadline, false);
+    return MFOC_RESULT_OK;
+}
+
+/** @brief Update the speed command without resetting its PI.
+ * @param motor Instance. @param ref Electrical speed PU.
+ * @return Command status. */
+mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
+                                  mfoc_scalar_t ref)
+{
+    if (motor->align_active) { return MFOC_RESULT_INVALID_STATE; }
+    if (motor->speed_divider == 0U) { return MFOC_RESULT_INVALID_STATE; }
+    if (motor->state != MFOC_MOTOR_IDLE &&
+        motor->state != MFOC_MOTOR_RUNNING) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (!mfoc_scalar_is_finite(ref)) { return MFOC_RESULT_OUT_OF_RANGE; }
+    motor->speed_ref = ref;
+    return MFOC_RESULT_OK;
+}
+
+/** @brief Sample current, execute control, and submit the resulting PWM.
+ * @param motor Initialized instance. @return Sampling/control/PWM status.
+ * @note Single control-ISR entry; one RUNNING gate precedes all processing. */
+mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
+{
+    if (motor == NULL) { return MFOC_RESULT_NULL; }
     if (motor->state != MFOC_MOTOR_RUNNING) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    if (!_mfoc_motor_InCircle(input->i_ab.qAlpha, input->i_ab.qBeta,
-                              motor->limits.i_max)) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_OVERCURRENT,
-                                MFOC_RESULT_SAFETY);
-    }
-    mfoc_core_input_t core_input = {
-        .i = input->i_ab, .ref = motor->command.i_ref, .angle = input->angle};
-    mfoc_result_t rc = mfoc_core_Step(&motor->core, &core_input, output);
+    mfoc_uvw_t phase = {0};
+    mfoc_result_t rc = mfoc_port_current(&phase);
     if (rc != MFOC_RESULT_OK) {
-        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_MATH,
-                                MFOC_RESULT_SAFETY);
+        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE, rc);
     }
-    /* No mask around Core math. A preempting Trip prevents this commit. */
-    uint32_t mask = mfoc_motor_port_EnterCritical();
-    if (motor->state == MFOC_MOTOR_RUNNING && motor->faults == 0U) {
-        rc = mfoc_port_pwm(&output->duty);
+    mfoc_ab_t i_ab = {0};
+    mfoc_clarke(phase.qU, phase.qV, phase.qW, &i_ab);
+    mfoc_angle_t angle = motor->align_angle;
+    if (!motor->align_active) {
+        mfoc_feedback_input_t feedback_input = {
+            .i_ab_k = &i_ab,
+            .previous_core_output = motor->previous_core_output_valid ?
+                &motor->previous_core_output : NULL};
+        mfoc_feedback_output_t feedback = {0};
+        rc = mfoc_feedback_Step(&motor->feedback, &feedback_input, &feedback);
         if (rc != MFOC_RESULT_OK) {
-            rc = _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
+            return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK, rc);
         }
-    } else {
-        rc = MFOC_RESULT_SAFETY;
+        angle = feedback.angle;
+        // 速度环，按照speed_divider分频
+        if (motor->speed_divider != 0U && motor->speed_count == 0U) {
+            mfoc_dq_t ref = {0};
+            mfoc_pi_Step(&motor->speed, motor->speed_ref,
+                          feedback.speed, &ref.qQ);
+            motor->command.i_ref = ref;
+            motor->speed_count = motor->speed_divider;
+        }
     }
-    mfoc_motor_port_ExitCritical(mask);
-    return rc;
+    // 关闭超出电流圆就触发故障功能
+    // if (!_mfoc_motor_InCircle(i_ab.qAlpha, i_ab.qBeta,
+    //                           motor->limits.i_max)) {
+    //     return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_OVERCURRENT,
+    //                             MFOC_RESULT_SAFETY);
+    // }
+    mfoc_core_input_t core_input = {
+        .i = i_ab, .ref = motor->command.i_ref, .angle = angle};
+    mfoc_core_output_t output = {0};
+    mfoc_core_Step(&motor->core, &core_input, &output);
+    rc = mfoc_port_pwm(&output.duty, false);
+    if (rc != MFOC_RESULT_OK) {
+        return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
+    }
+    motor->previous_core_output = output;
+    motor->previous_core_output_valid = true;
+    if (!motor->align_active && motor->speed_count != 0U) {
+        motor->speed_count--;
+    }
+    return MFOC_RESULT_OK;
 }
 
-/** @brief Snapshot lifecycle fields without torn foreground reads.
- * @param motor Instance. @param status Destination. @return OK or NULL. */
-mfoc_result_t mfoc_motor_GetStatus(const mfoc_motor_t *motor,
-                                  mfoc_motor_status_t *status)
+/** @brief Read lifecycle fields without interrupt masking.
+ * @param motor Valid instance. @param status Valid destination.
+ * @return None. */
+void mfoc_motor_GetStatus(const mfoc_motor_t *motor,
+                          mfoc_motor_status_t *status)
 {
-    if (motor == NULL || status == NULL) { return MFOC_RESULT_NULL; }
-    uint32_t mask = mfoc_motor_port_EnterCritical();
     status->state = motor->state;
     status->faults = motor->faults;
-    mfoc_motor_port_ExitCritical(mask);
-    return MFOC_RESULT_OK;
 }

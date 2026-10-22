@@ -31,7 +31,7 @@ static void setup(mfoc_motor_t *motor)
 static void check_fault(mfoc_motor_t *motor, uint32_t fault)
 {
     mfoc_motor_status_t status = {0};
-    assert(mfoc_motor_GetStatus(motor, &status) == MFOC_RESULT_OK);
+    mfoc_motor_GetStatus(motor, &status);
     assert(status.state == MFOC_MOTOR_FAULT);
     assert((status.faults & fault) != 0U);
     assert(!motor_port_fake.enabled);
@@ -48,13 +48,9 @@ static void check_fault(mfoc_motor_t *motor, uint32_t fault)
 int main(void)
 {
     mfoc_motor_t motor = {0};
-    mfoc_motor_input_t input = {.angle_valid = true};
-    mfoc_core_output_t output = {0};
     mfoc_dq_t ref = {MFOC_SCALAR(0.2f), MFOC_SCALAR(-0.1f)};
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_INVALID_STATE);
     setup(&motor);
-    assert(mfoc_motor_Step(&motor, &input, &output) ==
-           MFOC_RESULT_INVALID_STATE);
     assert(motor_port_fake.writes == 0U);
     assert(mfoc_motor_SetCurrent(&motor, &ref) == MFOC_RESULT_OK);
     mfoc_dq_t excessive = {MFOC_SCALAR(0.7f), MFOC_SCALAR(0.7f)};
@@ -62,17 +58,16 @@ int main(void)
            MFOC_RESULT_OUT_OF_RANGE);
     assert(motor.command.i_ref.qD == ref.qD);
     assert(motor.command.i_ref.qQ == ref.qQ);
-    motor_port_fake.ready = MFOC_RESULT_SAFETY;
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_SAFETY);
-    assert(motor_port_fake.enables == 0U);
-    motor_port_fake.ready = MFOC_RESULT_OK;
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.duty.qU == MFOC_HALF);
     assert(motor_port_fake.enabled);
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_INVALID_STATE);
-    assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_OK);
-    assert(output.u.qD > MFOC_ZERO && output.u.qQ < MFOC_ZERO);
-    assert(motor_port_fake.duty.qU == output.duty.qU);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.previous_core_output.u.qD > MFOC_ZERO &&
+           motor.previous_core_output.u.qQ < MFOC_ZERO);
+    assert(motor_port_fake.writes == 2U); /* Start plus one Step. */
+    assert(motor.previous_core_output_valid);
+    assert(motor.previous_core_output.duty.qU == motor_port_fake.duty.qU);
     assert(mfoc_motor_SetBus(&motor, MFOC_SCALAR(0.9f)) == MFOC_RESULT_OK);
     assert(mfoc_motor_SetBus(&motor, MFOC_ZERO) != MFOC_RESULT_OK);
     assert(motor.state == MFOC_MOTOR_RUNNING);
@@ -82,15 +77,26 @@ int main(void)
     assert(!motor_port_fake.enabled);
 
     setup(&motor);
+    motor_port_fake.write = MFOC_RESULT_OUT_OF_RANGE;
+    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(motor_port_fake.enables == 0U);
+    motor_port_fake.write = MFOC_RESULT_OK;
+    check_fault(&motor, MFOC_MOTOR_FAULT_PWM);
+
+    setup(&motor);
     motor_port_fake.enable = MFOC_RESULT_IO;
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_IO);
     check_fault(&motor, MFOC_MOTOR_FAULT_PWM);
 
     setup(&motor);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    motor_port_fake.write = MFOC_RESULT_IO;
-    assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_IO);
-    check_fault(&motor, MFOC_MOTOR_FAULT_PWM);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.previous_core_output_valid);
+    motor_port_fake.feedback_step = MFOC_RESULT_IO;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_IO);
+    assert(!motor.previous_core_output_valid);
+    assert(motor_port_fake.writes == 2U);
+    check_fault(&motor, MFOC_MOTOR_FAULT_FEEDBACK);
 
     setup(&motor);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
@@ -99,27 +105,20 @@ int main(void)
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_IO);
     assert(motor.state == MFOC_MOTOR_FAULT);
     motor_port_fake.disable = MFOC_RESULT_OK;
-    motor_port_fake.ready = MFOC_RESULT_SAFETY;
-    assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_SAFETY);
-    motor_port_fake.ready = MFOC_RESULT_OK;
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     check_fault(&motor, MFOC_MOTOR_FAULT_PWM);
 
     setup(&motor);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     unsigned writes = motor_port_fake.writes;
-    motor_port_fake.trip_before_commit = &motor;
-    assert(mfoc_motor_Step(&motor, &input, &output) == MFOC_RESULT_SAFETY);
+    assert(mfoc_motor_Trip(&motor, MFOC_MOTOR_FAULT_EXTERNAL) ==
+           MFOC_RESULT_OK);
     assert(motor_port_fake.writes == writes);
     check_fault(&motor, MFOC_MOTOR_FAULT_EXTERNAL);
 
     setup(&motor);
-    motor_port_fake.irq_mask = 1U;
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
-    assert(motor_port_fake.irq_mask == 1U);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
-    assert(motor_port_fake.irq_mask == 1U);
-    motor_port_fake.irq_mask = 0U;
-    assert(motor_port_fake.irq_mask == 0U);
     puts("Motor control, startup rejection and fault recovery passed");
     return 0;
 }

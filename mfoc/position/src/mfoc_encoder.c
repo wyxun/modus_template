@@ -142,10 +142,6 @@ mfoc_result_t mfoc_encoder_Run(mfoc_encoder_t *encoder)
 mfoc_result_t mfoc_encoder_Step(const mfoc_encoder_t *encoder,
     mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    if (encoder == NULL || angle == NULL || speed == NULL) {
-        return MFOC_RESULT_NULL;
-    }
-    if (encoder->tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
     uint8_t published = encoder->published;
     if (published >= 2U) { return MFOC_RESULT_INVALID_STATE; }
     mfoc_encoder_sample_t sample = encoder->samples[published];

@@ -4,15 +4,36 @@
  * @author Codex
  * @date 2026-10-20
  */
-#include "mfoc_motor_port.h"
+#include "mfoc_port.h"
 #include "motor_port_fake.h"
 #include <assert.h>
 #include <stddef.h>
 
 motor_port_fake_t motor_port_fake;
 
+/** @brief Use milliseconds as test timer ticks. @param ms Milliseconds.
+ * @return Test ticks. */
+int64_t perfc_convert_ms_to_ticks(uint32_t ms)
+{
+    return (int64_t)ms;
+}
+
+/** @brief Model the perfc deadline using the injected foreground clock.
+ * @param period Duration. @param deadline Instance timer slot.
+ * @param reload Restart on expiry. @return True when elapsed. */
+bool __perfc_is_time_out(int64_t period, int64_t *deadline, bool reload)
+{
+    if (*deadline == 0) {
+        *deadline = motor_port_fake.time_ms + period;
+        return false;
+    }
+    if (motor_port_fake.time_ms < *deadline) { return false; }
+    if (reload) { *deadline = motor_port_fake.time_ms + period; }
+    return true;
+}
+
 #if !defined(MFOC_TEST_REAL_PORT)
-/** @brief Record direct Driver current-port initialization.
+/** @brief Record direct Motor current-port initialization.
  * @return Injected result. */
 mfoc_result_t mfoc_port_init(void)
 {
@@ -25,7 +46,7 @@ mfoc_result_t mfoc_port_init(void)
     return motor_port_fake.port_init;
 }
 
-/** @brief Read an injected normalized bus voltage for Driver tests.
+/** @brief Read an injected normalized bus voltage for Motor tests.
  * @param bus Output valid on OK. @return Injected sampling status. */
 mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
 {
@@ -36,7 +57,7 @@ mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
     return motor_port_fake.bus_sample;
 }
 
-/** @brief Read one injected normalized frame for Driver integration.
+/** @brief Read one injected normalized frame for Motor integration.
  * @param current Output valid on OK. @return Injected sampling status. */
 mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 {
@@ -70,7 +91,7 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
     return motor_port_fake.feedback_run;
 }
 
-/** @brief Inject feedback to isolate Driver scheduling from its algorithm.
+/** @brief Inject feedback to isolate Motor scheduling from its algorithm.
  * @param feedback Instance. @param input Samples. @param output Feedback.
  * @return OK. */
 mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
@@ -78,64 +99,46 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 {
     assert(feedback->initialized && input->i_ab_k != NULL);
     ++motor_port_fake.feedback_reads;
+    if (motor_port_fake.feedback_step != MFOC_RESULT_OK) {
+        return motor_port_fake.feedback_step;
+    }
     *output = motor_port_fake.feedback;
     return MFOC_RESULT_OK;
 }
 
-/** @brief Return injected readiness. @return Configured status. */
-mfoc_result_t mfoc_motor_port_CheckReady(void)
-{
-    return motor_port_fake.ready;
-}
-
-/** @brief Record PWM submissions. @param duty Command.
- * @return Injected write status. */
 #if !defined(MFOC_TEST_REAL_PORT)
-mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
+/** @brief Record duty before an optional startup, with injected failures.
+ * @param duty Command. @param start Whether to enable. @return Test status. */
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty, bool start)
 {
-    assert(motor_port_fake.irq_mask != 0U);
     ++motor_port_fake.writes;
     motor_port_fake.duty = *duty;
-    return motor_port_fake.write;
-}
-#endif
-
-/** @brief Enable the fake bridge. @return Injected status. */
-mfoc_result_t mfoc_motor_port_EnablePwm(void)
-{
-    ++motor_port_fake.enables;
-    motor_port_fake.enabled = true; /* Failure may leave hardware enabled. */
-    return motor_port_fake.enable;
+    if (motor_port_fake.write != MFOC_RESULT_OK) {
+        return motor_port_fake.write;
+    }
+    if (start) {
+        ++motor_port_fake.enables;
+        /* A failed enable may still require shutdown. */
+        motor_port_fake.enabled = true;
+        return motor_port_fake.enable;
+    }
+    return MFOC_RESULT_OK;
 }
 
 /** @brief Disable only on successful hardware shutdown.
  * @return Injected shutdown status. */
-mfoc_result_t mfoc_motor_port_DisablePwm(void)
+mfoc_result_t mfoc_port_pwm_stop(void)
 {
     ++motor_port_fake.disables;
+    if (motor_port_fake.step_during_disable != NULL) {
+        mfoc_motor_t *motor = motor_port_fake.step_during_disable;
+        motor_port_fake.step_during_disable = NULL;
+        assert(mfoc_motor_Step(motor) == MFOC_RESULT_INVALID_STATE);
+    }
     if (motor_port_fake.disable == MFOC_RESULT_OK) {
         motor_port_fake.enabled = false;
     }
     return motor_port_fake.disable;
 }
 
-/** @brief Model nestable interrupt masking. @return Previous mask. */
-uint32_t mfoc_motor_port_EnterCritical(void)
-{
-    uint32_t previous = motor_port_fake.irq_mask;
-    if (previous == 0U && motor_port_fake.trip_before_commit != NULL) {
-        mfoc_motor_t *motor = motor_port_fake.trip_before_commit;
-        motor_port_fake.trip_before_commit = NULL;
-        assert(mfoc_motor_Trip(motor, MFOC_MOTOR_FAULT_EXTERNAL) ==
-               MFOC_RESULT_OK);
-    }
-    motor_port_fake.irq_mask = 1U;
-    return previous;
-}
-
-/** @brief Restore rather than blindly enable.
- * @param mask Previous interrupt state. @return None. */
-void mfoc_motor_port_ExitCritical(uint32_t mask)
-{
-    motor_port_fake.irq_mask = mask;
-}
+#endif

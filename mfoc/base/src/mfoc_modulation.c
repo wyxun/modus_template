@@ -48,18 +48,16 @@ mfoc_result_t mfoc_modulation_ModelVoltageAlphaBeta(const mfoc_uvw_t *ptDuty,
 
 /** @brief Center phases with a shared common-mode offset.
  * @param ptVoltage Modulation vector. @param ptDuty Clamped output.
- * @param pbSaturated Optional clipping flag. @return NULL or OK. */
-mfoc_result_t mfoc_svpwm(const mfoc_ab_t *ptVoltage,
-                       mfoc_uvw_t *ptDuty, bool *pbSaturated)
+ * @param pbSaturated Optional clipping flag. @return None.
+ * @note Voltage and duty pointers must be valid. */
+void mfoc_svpwm(const mfoc_ab_t *ptVoltage,
+                mfoc_uvw_t *ptDuty, bool *pbSaturated)
 {
     mfoc_uvw_t tPhase = {0};
     mfoc_scalar_t qMaximum = MFOC_ZERO;
     mfoc_scalar_t qMinimum = MFOC_ZERO;
     mfoc_scalar_t qOffset = MFOC_ZERO;
 
-    if (ptVoltage == NULL || ptDuty == NULL) {
-        return MFOC_RESULT_NULL;
-    }
     /* Preserve separate Q15 product rounding before phase subtraction. */
     mfoc_scalar_t a = mfoc_mul_pu(ptVoltage->qAlpha, MFOC_HALF);
     mfoc_scalar_t b = mfoc_mul_pu(ptVoltage->qBeta,
@@ -87,7 +85,6 @@ mfoc_result_t mfoc_svpwm(const mfoc_ab_t *ptVoltage,
     ptDuty->qU = mfoc_sat(ptDuty->qU, MFOC_ZERO, MFOC_ONE);
     ptDuty->qV = mfoc_sat(ptDuty->qV, MFOC_ZERO, MFOC_ONE);
     ptDuty->qW = mfoc_sat(ptDuty->qW, MFOC_ZERO, MFOC_ONE);
-    return MFOC_RESULT_OK;
 }
 
 /** @brief Generate centered sinusoidal duties from the modulation vector.

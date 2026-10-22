@@ -80,11 +80,11 @@ mfoc_result_t mfoc_core_Reset(mfoc_core_t *c);
 
 /** @brief Execute Park, two PI steps, vector limit, inverse Park and SVPWM.
  * @param c Initialized instance. @param in Valid synchronous inputs.
- * @param out Command output. @return OK or NULL.
- * Caller validates data at the motor boundary; OK is not a validity check.
+ * @param out Command output. @return None.
+ * All pointers must be valid; caller guarantees the input/state preconditions.
  * sin/cos is evaluated once. No speed/decoupling or voltage mode is added. */
-mfoc_result_t mfoc_core_Step(mfoc_core_t *c,
-                            const mfoc_core_input_t *in,
-                            mfoc_core_output_t *out);
+void mfoc_core_Step(mfoc_core_t *c,
+                    const mfoc_core_input_t *in,
+                    mfoc_core_output_t *out);
 
 #endif

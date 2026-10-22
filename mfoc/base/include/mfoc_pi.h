@@ -42,9 +42,10 @@ mfoc_result_t mfoc_pi_Reset(mfoc_pi_t *p);
 /** @brief Apply external output correction after Step: ui += applied - out.
  * @param p Initialized PI. @param out Output returned by Step.
  * @param applied Externally limited output, in the same units.
- * @return OK or NULL. Integral limits still apply; no next-step preload. */
-mfoc_result_t mfoc_pi_ApplyLimit(mfoc_pi_t *p, mfoc_scalar_t out,
-                                mfoc_scalar_t applied);
+ * @return None. Integral limits still apply; no next-step preload.
+ * @note p must be valid and initialized. */
+void mfoc_pi_ApplyLimit(mfoc_pi_t *p, mfoc_scalar_t out,
+                        mfoc_scalar_t applied);
 
 /** @brief Set ui = clamp(out - kp*err - ki_ts*err) for the next Step.
  * @param p Initialized PI. @param out Target output, clipped to output limits.
@@ -57,11 +58,12 @@ mfoc_result_t mfoc_pi_Track(mfoc_pi_t *p, mfoc_scalar_t out,
 
 /** @brief Run parallel PI with conditional integration and output clamping.
  * @param p Initialized PI. @param ref Reference. @param fbk Feedback.
- * @param out Output; must not overlap p. @return OK or NULL.
+ * @param out Output; must not overlap p. @return None.
  * @note Freeze ui when the previous integral plus current proportional term
  * is saturated and di drives further outward; reverse di may recover it.
- * No implicit [-1,1] error clipping. See mfoc_pi_t for numeric preconditions. */
-mfoc_result_t mfoc_pi_Step(mfoc_pi_t *p, mfoc_scalar_t ref,
-                          mfoc_scalar_t fbk, mfoc_scalar_t *out);
+ * Valid pointers are required. No implicit [-1,1] error clipping.
+ * See mfoc_pi_t for numeric preconditions. */
+void mfoc_pi_Step(mfoc_pi_t *p, mfoc_scalar_t ref,
+                  mfoc_scalar_t fbk, mfoc_scalar_t *out);
 
 #endif

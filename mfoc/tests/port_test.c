@@ -8,13 +8,16 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
-#include "mfoc_driver.h"
+#include "mfoc_motor.h"
 #include "motor_port_fake.h"
 
 static TIM_TypeDef s_tim;
 static ADC_TypeDef s_adc1;
 static ADC_TypeDef s_adc2;
 static I2C_TypeDef s_i2c;
+static COMP_TypeDef s_comp1;
+static COMP_TypeDef s_comp2;
+static COMP_TypeDef s_comp4;
 #undef TIM1
 #define TIM1 (&s_tim)
 #undef ADC1
@@ -23,6 +26,12 @@ static I2C_TypeDef s_i2c;
 #define ADC2 (&s_adc2)
 #undef I2C1
 #define I2C1 (&s_i2c)
+#undef COMP1
+#define COMP1 (&s_comp1)
+#undef COMP2
+#define COMP2 (&s_comp2)
+#undef COMP4
+#define COMP4 (&s_comp4)
 
 static bool s_feed_current;
 
@@ -32,6 +41,7 @@ volatile bool g_bG431JeosConsumed;
 volatile uint32_t g_awG431AdcMean[G431_ADC_CHANNEL_COUNT];
 volatile uint32_t g_wG431AdcSequence;
 volatile bool g_bG431AdcMeanValid;
+volatile bool g_bG431FaultLatched;
 static int64_t s_tick;
 
 /** @brief Supply the raw timer for port linkage. @return Fake raw ticks. */
@@ -180,19 +190,18 @@ static void _test_Pwm(void)
     TIM1->CCER = TIM_CCER_CC4E;
     TIM1->BDTR = TIM_BDTR_MOE;
     TIM1->EGR = 0U;
-    assert(mfoc_port_pwm(NULL) == MFOC_RESULT_NULL);
     assert(TIM1->CCR1 == 101U && TIM1->CCR2 == 202U);
     assert(TIM1->CCR3 == 303U);
     TIM1->ARR = 0U;
-    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OUT_OF_RANGE);
     assert(TIM1->CCR1 == 101U && TIM1->CCR3 == 303U);
     TIM1->ARR = 4250U;
-    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OK);
     assert(TIM1->CCR1 == 0U && TIM1->CCR2 == 2125U);
     assert(TIM1->CCR3 == 4250U);
     duty = (mfoc_uvw_t){
         MFOC_SCALAR(0.25f), MFOC_HALF, MFOC_SCALAR(0.75f)};
-    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OK);
     assert(TIM1->CCR1 == 1063U && TIM1->CCR2 == 2125U);
     assert(TIM1->CCR3 == 3188U);
     assert(TIM1->CCER == TIM_CCER_CC4E && TIM1->EGR == 0U);
@@ -264,6 +273,33 @@ static void _test_Init(void)
     assert(TIM1->CCER == TIM_CCER_CC4E);
 }
 
+/** @brief Exercise real lifecycle adapters against the MDI register provider.
+ * @return None. */
+static void _test_Lifecycle(void)
+{
+    const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
+    g_bG431AdcMeanValid = false; /* Startup no longer reads the bus. */
+    g_bG431FaultLatched = true;
+    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_SAFETY);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    g_bG431FaultLatched = false;
+    TIM1->ARR = 0U;
+    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    TIM1->ARR = 4250U;
+    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OK);
+    assert(TIM1->CCR1 == 2125U && TIM1->CCR2 == 2125U);
+    assert(TIM1->CCR3 == 2125U && MDI_PWM_IsEnabled(bridge));
+    assert(!g_bG431AdcMeanValid);
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+    assert(TIM1->CCER == TIM_CCER_CC4E);
+    assert((TIM1->CR1 & TIM_CR1_CEN) != 0U);
+    assert((TIM1->BDTR & TIM_BDTR_MOE) != 0U);
+    assert(mfoc_port_pwm(&neutral, false) == MFOC_RESULT_OK);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+}
+
 /** @brief Run the real G431 MDI adapter against host register storage.
  * @return Zero when initialization, current and PWM checks pass. */
 int main(void)
@@ -275,6 +311,7 @@ int main(void)
     _test_InitGate();
     _test_Bus();
     _test_Init();
+    _test_Lifecycle();
     puts("G431 current conversion and PWM passed");
     return 0;
 }

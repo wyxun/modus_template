@@ -4,14 +4,15 @@ $repo = Split-Path -Parent $library
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-port-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $includes = @('mfoc/base/include', 'mfoc/port/include', 'mfoc/core/include',
-    'mfoc/motor/include', 'mfoc/driver/include', 'mfoc/position/include',
+    'mfoc/motor/include', 'mfoc/position/include',
     'modus/lib/perf_counter', 'modus/src',
     'modus/src/utilities', 'peripheral/stm32g431',
     'vendor/cortex-m/cmsis_device_g4/Include', 'vendor/cortex-m/cmsis_core') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c",
-    "$library/motor/src/*.c" | ForEach-Object { $_.FullName }) +
-    @("$library/driver/src/mfoc_driver.c", "$PSScriptRoot/motor_port_fake.c")
+    "$library/motor/src/*.c" |
+    Where-Object { $_.Name -ne 'mfoc_feedback.c' } | ForEach-Object { $_.FullName }) +
+    @("$PSScriptRoot/motor_port_fake.c")
 foreach ($numeric in @('FLOAT', 'FIXED')) {
     $exe = Join-Path $output "port-$numeric.exe"
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -Wno-int-to-pointer-cast `

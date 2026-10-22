@@ -72,7 +72,8 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback);
  * @param feedback Instance. @param input Current/prior Core samples; encoder
  * ignores this argument, which may be NULL for that backend.
  * @param output Electrical feedback, unchanged on failure.
- * @return Backend status; NONE returns INVALID_STATE. No I2C access here. */
+ * @return Backend status; NONE returns INVALID_STATE. No I2C access here.
+ * @note Valid initialized feedback and output pointers are preconditions. */
 mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     const mfoc_feedback_input_t *input, mfoc_feedback_output_t *output);
 
