@@ -39,10 +39,11 @@ void mfoc_motor_IRQHandler(void)
 #endif
 #if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
     uint32_t elapsed = (uint32_t)get_system_ticks() - start;
-    tMfocApp.tIsrTiming.qwTotalTicks += elapsed;
-    tMfocApp.tIsrTiming.wSamples += 1U;
     if (elapsed > tMfocApp.tIsrTiming.wMaximumTicks) {
         tMfocApp.tIsrTiming.wMaximumTicks = elapsed;
+    }
+    if (elapsed > MFOC_ISR_BUDGET_TICKS) {
+        tMfocApp.tIsrTiming.bOverrun = true;
     }
 #endif
 }

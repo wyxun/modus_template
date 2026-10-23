@@ -72,12 +72,12 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 
 /** @brief Initialize the test-only feedback service.
  * @param feedback Instance. @param cfg Unused settings.
- * @param pole_pairs Unused motor count. @return OK. */
+ * @param model Unused motor constants. @return OK. */
 mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
-    const mfoc_feedback_cfg_t *cfg, uint16_t pole_pairs)
+    const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model)
 {
     (void)cfg;
-    (void)pole_pairs;
+    (void)model;
     feedback->initialized = true;
     return MFOC_RESULT_OK;
 }

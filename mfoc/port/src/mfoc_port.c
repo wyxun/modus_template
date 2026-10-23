@@ -6,6 +6,7 @@
  */
 #include "mfoc_port.h"
 #include "mfoc_numeric.h"
+#include "mfoc_config.h"
 #include "mdi/instance.h"
 #include "perf_counter.h"
 #include <stddef.h>
@@ -16,6 +17,38 @@
 
 #define MFOC_PORT_GAIN_SCALE UINT32_C(1073741824)
 #define MFOC_PORT_OFFSET_SAMPLES UINT32_C(10)
+
+#if MFOC_FEEDBACK_ENABLE_ENCODER
+/** @brief Restore the AS5600 SF=3 reference used in the SMO bench tests.
+ * @return IO on transfer failure, SAFETY on configuration mismatch.
+ * @note Startup only with outputs gated; preserve all other CONF bits.
+ * Volatile register writes only; never program OTP. */
+static mfoc_result_t _mfoc_port_EncoderInit(void)
+{
+    uint8_t config[2] = {0U, 0U};
+    uint8_t readback[2] = {0U, 0U};
+    if (MDI_I2C_Reg8_Read(encoder_angle, 0x07U, config, 2U) != MDI_OK) {
+        return MFOC_RESULT_IO;
+    }
+    uint8_t high = (uint8_t)(config[0] | 0x03U);
+    if (high != config[0] && MDI_I2C_Reg8_WriteByte(
+            encoder_angle, 0x07U, high) != MDI_OK) {
+        return MFOC_RESULT_IO;
+    }
+    if (MDI_I2C_Reg8_Read(encoder_angle, 0x07U, readback, 2U) != MDI_OK) {
+        return MFOC_RESULT_IO;
+    }
+    if (readback[0] != high || readback[1] != config[1]) {
+        return MFOC_RESULT_SAFETY;
+    }
+#if !defined(__NO_USE_LOG__)
+    MLOGF(I, "AS5600 CONF=0x%02X%02X SF=3 FTH=%u\r\n",
+        (unsigned int)readback[0], (unsigned int)readback[1],
+        (unsigned int)((readback[0] >> 2U) & 0x07U));
+#endif
+    return MFOC_RESULT_OK;
+}
+#endif
 
 /** @brief Read the fixed AS5600 provider through the MDI register contract.
  * @param angle Mechanical BAM32. @return Read status. */
@@ -98,7 +131,7 @@ static mfoc_result_t _mfoc_port_MeasureOffsets(mfoc_mdi_port_t *port)
     return MFOC_RESULT_OK;
 }
 
-/** @brief Measure ADC offsets and precompute the signed PU scale.
+/** @brief Verify encoder configuration and prepare current conversion.
  * @return Status; failure preserves the previous port settings.
  * @note Call before the control IRQ is enabled, with ADC triggering active
  * and phase outputs gated. No bus acquisition or IRQ management occurs here.
@@ -114,8 +147,13 @@ mfoc_result_t mfoc_port_init(void)
     if (MFOC_PORT_COUNTS_PER_BASE > MFOC_PORT_GAIN_SCALE) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
+    mfoc_result_t rc = MFOC_RESULT_OK;
+#if MFOC_FEEDBACK_ENABLE_ENCODER
+    rc = _mfoc_port_EncoderInit();
+    if (rc != MFOC_RESULT_OK) { return rc; }
+#endif
     mfoc_mdi_port_t next = {0};
-    mfoc_result_t rc = _mfoc_port_MeasureOffsets(&next);
+    rc = _mfoc_port_MeasureOffsets(&next);
     if (rc != MFOC_RESULT_OK) { return rc; }
     next.configured = true;
 #if defined(MFOC_NUMERIC_FIXED)

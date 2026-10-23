@@ -215,7 +215,6 @@ static void test_transforms(void)
     mfoc_ab_t roundtrip = {0};
     mfoc_dq_t rotating = {0};
     mfoc_uvw_t duty = {0};
-    bool saturated = true;
 
     for (unsigned int i = 0U; i < 4096U; i++) {
         mfoc_scalar_t sine = MFOC_ZERO;
@@ -225,8 +224,10 @@ static void test_transforms(void)
         mfoc_ipark_cached(&rotating, sine, cosine, &roundtrip);
         near_value(roundtrip.qAlpha, 0.5, 0.0002);
         near_value(roundtrip.qBeta, -0.25, 0.0002);
-        mfoc_svpwm(&roundtrip, &duty, &saturated);
-        assert(!saturated);
+        mfoc_svpwm(&roundtrip, &duty);
+        assert(duty.qU > MFOC_ZERO && duty.qU < MFOC_ONE);
+        assert(duty.qV > MFOC_ZERO && duty.qV < MFOC_ONE);
+        assert(duty.qW > MFOC_ZERO && duty.qW < MFOC_ONE);
         assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
             MFOC_ONE, &roundtrip) == MFOC_RESULT_OK);
         near_value(roundtrip.qAlpha, 0.5, 0.0003);
@@ -236,9 +237,9 @@ static void test_transforms(void)
     near_value(roundtrip.qAlpha, 1.0, 0.0);
     near_value(roundtrip.qBeta, 0.0, 0.0);
     roundtrip = (mfoc_ab_t){MFOC_ONE, MFOC_ZERO};
-    mfoc_svpwm(&roundtrip, &duty, &saturated);
-    assert(saturated);
-    assert(duty.qU == MFOC_ONE && duty.qV == MFOC_ZERO);
+    mfoc_svpwm(&roundtrip, &duty);
+    assert(duty.qU == MFOC_ONE && duty.qV == MFOC_ZERO &&
+           duty.qW == MFOC_ZERO);
     duty = (mfoc_uvw_t){MFOC_HALF, MFOC_HALF, MFOC_HALF};
     assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
         MFOC_SCALAR(2.0f), &roundtrip) == MFOC_RESULT_OK);

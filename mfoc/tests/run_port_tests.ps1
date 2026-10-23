@@ -3,7 +3,8 @@ $library = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent $library
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-port-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
-$includes = @('mfoc/base/include', 'mfoc/port/include', 'mfoc/core/include',
+$includes = @('mfoc', 'mfoc/base/include', 'mfoc/port/include',
+    'mfoc/core/include',
     'mfoc/motor/include', 'mfoc/position/include',
     'modus/lib/perf_counter', 'modus/src',
     'modus/src/utilities', 'peripheral/stm32g431',

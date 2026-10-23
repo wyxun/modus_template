@@ -7,7 +7,10 @@ base/Core 不依赖硬件；Motor 通过端口读取电流和提交 PWM。
 算法和控制模块不包含旧库、MODUS、MDI 或厂商寄存器头文件，
 `port/` 通过 MDI 实现硬件迁移。
 
-计算基座统一归入 `base/` 模块，公开头文件位于 `base/include/`，实现位于 `base/src/`。通用 PI 也属于这个基座；电流环、速度环通过各自的 PI 实例和参数使用同一套控制器接口。
+库入口 `mfoc.h` 和统一配置 `mfoc_config.h` 放在 `mfoc/` 根目录。
+计算基座统一归入 `base/` 模块，模块头文件位于 `base/include/`，
+实现位于 `base/src/`。通用 PI 也属于这个基座；电流环、速度环通过各自的
+PI 实例和参数使用同一套控制器接口。
 
 ## 首批边界
 
@@ -73,6 +76,10 @@ ADC 触发。目标板负责确保启动占空比在使能前生效，MDI 错误
 `phase_current_completed`、`adc_bus_voltage`、`bridge`、`encoder_angle` 和
 `raw_tick`，所有硬件操作均走 MDI。编码器地址由 `encoder_angle` 绑定；
 Port 将 AS5600 原始 12 位机械角度转换成 BAM32。
+端口初始化在相输出关闭时把 AS5600 易失 CONF 的 SF 设为 3，保留其余位并
+读回核验；启动日志打印 CONF、SF 和 FTH。失败则初始化失败，不允许忽略后
+继续控制。不写 OTP，ISR 不读写配置，也不对 SMO 角度增加经验补偿。
+这是恢复旧库快滤波对照的参考条件；不代表当前角差已通过台架验收。
 采样使用 `MDI_Sample_ReadCompleted()`，母线使用现有 `MDI_ADC_Read()`
 读取稳定的已发布均值；未发布或正在发布时返回失败，不等待、不覆盖输出。
 PWM 提交使用 `MDI_PWM_SetDuty()`。校零前通过现有 `MDI_OP` 调用 G431
@@ -175,10 +182,35 @@ mfoc_port_current -> Clarke -> mfoc_feedback_Step
 `motor/src/mfoc_feedback.c` 与 `motor/include/mfoc_feedback.h`
 提供 Init、Run 和 Step。算法启用与控制输出来源分开：
 `MFOC_FEEDBACK_ENABLE_ENCODER=1`（默认）编入并运行编码器；
+`MFOC_FEEDBACK_ENABLE_SMO=1`（默认）同时运行 SMO；
 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_ENCODER`（默认）选择编码器输出。
+这些开关统一位于根目录 `mfoc_config.h`。
 BACKEND 只选择最终角度和速度，不控制各算法是否运行。
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
-目前只实现编码器，SMO 等算法按需要另加独立配置、状态和启用宏。
+`MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
+当前应用保持编码器闭环、SMO 影子运行，不包含强拖启动或无感接管。
+
+`position/include/mfoc_smo.h` 和 `position/src/mfoc_smo.c` 是独立 SMO 算法。
+公共 `motor/include/mfoc_motor_params.h` 保存原有电机参数类型；
+Feedback Init 借用 Motor 参数完成系数推导，不在观测器中再保存电机参数。
+仅支持 Ld=Lq，Step 接收 i[k]（I/Ibase）和上一控制区间电压（V/Vbase）。
+Feedback 的 SMO 启用分支用 `previous_core_output.duty` 和 `.bus`
+调用 `mfoc_modulation_ModelVoltageAlphaBeta`，生成局部 αβ 电压后调用 SMO。
+首次缺少上一拍输出时清空 SMO 历史，编码器反馈照常返回。
+
+应用参数沿用旧 FOC：采样 20 kHz，电速度基值 400 Hz，滤波截止 4000 rad/s，
+滑模电压 5/12 PU，电流误差边界半宽 0.1 PU，估计电流限制 1 PU。
+Init 预计算 ku、kr、b0、a1、边界层斜率和速度系数；Step 使用原梯形电流递推、
+边界层饱和切换、反电势滤波和约 1 ms 窗口速度，不加入 PLL 或角度补偿。
+SMO 输出 `valid` 只表示反电势非零，不能作为接管判据。
+复位保留系数、清空历史；停止后首次 Step 因上一拍输出失效而复位 SMO。
+算法入口要求调用方提供有效指针及有限、可表示的输入，不新增有限数检查。
+
+这里重建的是最终占空比对应的理想平均电压，尚未计入定时器计数量化、
+死区和器件压降。`bus` 是控制使用的快照，固定母线时是模型近似；
+实际 PWM 生效时刻与 ADC 采样区间仍需台架确认。代码接入不代表接管已验证。
+`MFOC_FEEDBACK_SMO` 启动需要已有电压区间和可观测转速；当前 Motor
+首次运行还没有上一拍输出，直接选择它启动会返回反馈无效，不做自动回退。
 
 `position/include/mfoc_encoder.h` 与 `position/src/mfoc_encoder.c` 实现编码器算法。
 Motor 的 `cfg.feedback.encoder` 配置读取周期、超时、滤波、电角度零偏、方向和
@@ -253,15 +285,44 @@ Align 使用固定角度电流环，前台 Run 在 1500 ms 到期时采集编码
 须先 Stop。speed 受 `limits.speed_max` 限制，配置为 0.7583 PU（约 303.3 Hz，
 以 400 Hz 为速度基值）。按 7 极对计算，`motor speed 0.02` 约为 68.6 rpm。
 速度命令使用编码器反馈；先执行 `motor align` 建立电角度零位并确认旋转方向。
+
+`motor openloop <speed_pu> <id_pu>` 从 IDLE 启动电流闭环强拖：以正 d 轴
+电流保持电角度零点 1500 ms，再按速度斜坡旋转磁场。速度有正负，电流必须为
+正且不超过 `i_max`；保持和旋转均使用同一给定电流，q 轴给定为零。
+当前配置为 20 kHz、400 电 Hz 基值、0.2 PU/s（80 电 Hz/s）的速度斜坡。
+例如 `motor openloop 0.1 0.04` 指令为 40 电 Hz、0.14 A 强拖电流幅值；
+保持结束后约 0.5 s 达到目标磁场速度，实际转子是否跟随必须用波形验证。
+它不依赖编码器角度或 SMO 有效标志来控制，但继续运行两者的影子观测；
+采样和 PWM 失败仍按原流程停机。没有自动 SMO 接管、速度 PI 或失步判定。
+需要比较编码器零位时，先执行独立的 `motor align`；强拖保持不捕获编码器零位。
+运行中拒绝模式切换和新的强拖启动命令，用 `motor stop` 结束保持或旋转，
+不因达到目标速度自动停止。停机/故障恢复清除强拖速度及目标。
+四路波形保持不变；强拖时 `Iq_mpu` 是强拖坐标系内的反馈 q 电流，
+不能直接当作编码器转子坐标系内的转矩电流。
+
+`mfoc_motor_cfg_t.openloop.sample_hz=0` 禁用强拖；否则配置正的
+`speed_base_hz`、`accel`，且 `limits.speed_max` 在 (0,1]。
+独立 `mfoc_openloop_Init/Reset/SetSpeed/Step` 只负责角度发生，不访问硬件。
+初始化将斜坡换成整数 BAM32 tick；小于每拍一个 tick 的斜坡会被拒绝，
+有效斜坡向下量化，实际加速度略低于设定值。Step 无乘除、三角或浮点运算。
+Motor 在 Feedback 后、Core 前调用它；实际采样、前拍 PWM 电压模型保持原关系。
+本轮仅有主机与构建验证，启动电流、转子跟踪和 20 kHz ISR 峰值需要台架确认。
+
 `motor clear` 尚只解析参数；status 仅显示 App 状态和最近一次前台结果。
 当前磁链为未测量的 1 PU，初始编码器零位和方向未校准；Align 保持时使用固定角度，
 不能将固定磁场保持通过视为编码器闭环运行已验证。
 
 浮点且启用 `MWAVEFORM_ENABLE` 时，MFOC 注册四路波形：`Enc_mT` 为编码器电角度，
-`Ctrl_mT` 为实际选择的控制角度，`Err_mT` 为两者最短角差，单位均为电角周；
+`SMO_mT` 为 SMO 电角度，`Err_mT` 为 SMO 减编码器的最短角差，单位均为电角周；
 `Iq_mpu` 为最近一次控制步的实测 q 轴电流标幺值。角度和电流按 1000 倍显示，
 无有效样本时显示 -1。控制频率为 20 kHz 时，波形以 10 kHz 采样；角度来自
 编码器已发布样本并作速度外推，不在 ISR 读取 I2C。
+
+启用计时日志时，ISR 每拍只比较并保存本窗口最大 tick；
+超过 `mfoc_config.h` 中的 `MFOC_ISR_BUDGET_TICKS` 就锁存过载标志。
+G431 的 perfc 时钟为 170 MHz，默认 8500 ticks 对应 50 μs。
+前台每秒取出并清空最大值和过载标志，T 日志输出最大 tick、微秒值及
+`overrun` 标记；无 ISR 样本时不打印，不累计平均值或在 ISR 内打印。
 
 ## Motor 标幺参数
 
@@ -293,10 +354,16 @@ Motor 与 Core 共用固定的电压、电流基值。Motor 持有运行用参�
   `ki_ts` 已含采样周期；d/q 两轴独立配置同一种 PI。
 - 计算顺序：一次 sin/cos → Park → 两轴 PI → 电压圆限幅 →
   乘以预计算的母线倒数 → 逆 Park → SVPWM。输出限幅后 dq 电压、αβ 调制度、
-  dq 电流、占空比及圆限幅/PWM 触轨标志。
-- `m_max` 是允许的电压矢量幅值与母线之比，推荐留出 PWM 裕量，
-  例如 0.55，最高 1/√3；初始化预计算 `u_max = bus * m_max`
-  和 `bus_inv = 1 / bus`，Step 不再计算母线半径和除法。
+  dq 电流、占空比及圆限幅标志。
+- `MFOC_CORE_M_MAX` 是编译期固定的电压矢量幅值与母线之比，
+  在根目录的统一配置头文件 `mfoc_config.h` 中默认取 0.55，最高 1/√3。
+  可通过全局编译定义覆盖，例如 `-DMFOC_CORE_M_MAX=0.55f`，
+  所有编译单元应使用相同配置。配置和运行时结构体不再保存 `m_max`。
+  初始化和母线更新计算半径 `r = bus * MFOC_CORE_M_MAX`，
+  FLOAT 保存 `u_max_sq = r * r`，FIXED 保存原始半径 `u_max = r`。
+  两种后端都预计算 `bus_inv = 1 / bus`，Step 直接使用系数。
+  FLOAT 直接比较平方和，超限时用 `sqrtf(u_max_sq / n2)` 缩放；
+  母线更新拒绝平方溢出、为零或非正规数的配置，并保留原系数。
   当前 Core 要求两轴 PI 输出上下限位于 [-1,1] V/Vbase，
   选取 Vbase 时应覆盖所需的单轴电压范围。
 - 圆限幅通过 `mfoc_pi_ApplyLimit` 回写 `ui += u_limited - u`，
@@ -305,7 +372,7 @@ Motor 与 Core 共用固定的电压、电流基值。Motor 持有运行用参�
 - FIXED 的圆限幅保留 Q30 平方和，以整数平方根向上取整，
   缩放向零取整；避免先量化平方和造成小矢量限幅失真。
   母线更新拒绝半径或倒数量化为零的配置。逆 Park 和 PWM 仍有量化误差，
-  `clipped` 独立报告最终占空比触轨。
+  SVPWM 最终将三相占空比限制在 [0,1]。
 - 电机操作层保证初始化、有限值、正母线、有效角度和算术范围；
   Core 不逐层做 `isfinite`，不承担故障停机。输出是下一控制区间的
   请求，不是本拍电流对应的实际施加电压。
@@ -392,7 +459,9 @@ powershell -ExecutionPolicy Bypass -File mfoc/tests/run_tests.ps1
 不覆盖依赖定时 ADC 帧及 perfc 的阻塞式 Init。ARM 检查编译 FLOAT/FIXED G431 端口，
 并确认 FIXED 端口没有软浮点辅助依赖；这些检查不替代实机采样/PWM 时序验证。
 
-`mfoc.mk` 是可选的源文件清单，当前没有加入任何 target。调用方指定 `MFOC_NUMERIC_*` 和 `base/include` 包含路径后可使用 `mfoc.h`。旧 FOC 与新库使用不同文件名、类型和符号，可在审核阶段并存。
+`mfoc.mk` 提供源文件和包含路径清单。调用方指定 `MFOC_NUMERIC_*`，
+将 `mfoc/` 根目录及各模块 `include/` 加入头文件搜索路径后可使用 `mfoc.h`。
+旧 FOC 与新库使用不同文件名、类型和符号，可在审核阶段并存。
 
 默认三角后端是 LUT。`MFOC_TRIG_BACKEND_LIBM` 仅支持 FLOAT；`MFOC_TRIG_BACKEND_EXTERNAL` 由目标提供两个直接函数 `mfoc_trig_port_sincos` / `mfoc_trig_port_atan2`，不引入运行时 ops 表。首批不复制 G431 CORDIC 驱动，也不宣称已经完成硬件适配。
 

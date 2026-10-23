@@ -16,6 +16,30 @@ static unsigned s_run_count;
 static unsigned s_register_count;
 static int s_register_result;
 
+#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+static int64_t s_ticks;
+/** @brief Supply a 170 MHz test clock. @return Current ticks. */
+int64_t get_system_ticks(void) { return s_ticks; }
+/** @brief Convert milliseconds to test ticks.
+ * @param ms Milliseconds. @return Clock ticks. */
+int64_t perfc_convert_ms_to_ticks(uint32_t ms)
+{
+    return (int64_t)ms * 170000;
+}
+/** @brief Decode test ticks. @param ticks Clock ticks.
+ * @return Whole microseconds. */
+int64_t perfc_convert_ticks_to_us(int64_t ticks) { return ticks / 170; }
+/** @brief Model periodic foreground reporting.
+ * @param period Interval. @param stamp Previous report. @param reload Reload.
+ * @return Whether the interval expired. */
+bool __perfc_is_time_out(int64_t period, int64_t *stamp, bool reload)
+{
+    if (s_ticks - *stamp < period) { return false; }
+    if (reload) { *stamp = s_ticks; }
+    return true;
+}
+#endif
+
 #if MSHELL_ENABLE
 static char s_log[512];
 static unsigned s_align_count;
@@ -26,6 +50,7 @@ static uint32_t s_encoder_raw;
 static mfoc_result_t s_encoder_result;
 static unsigned s_current_count;
 static unsigned s_speed_count;
+static unsigned s_openloop_count;
 static unsigned s_start_count;
 static mfoc_dq_t s_current_ref;
 static mfoc_scalar_t s_speed_ref;
@@ -64,6 +89,43 @@ static void command(const char *args, const char *response)
     assert(tMfocApp.state == MFOC_APP_IDLE);
 }
 
+#if !defined(FOC_ISR_TIMING_DWT_ONLY)
+/** @brief Check one-second peak windows, overrun clearing and idle silence.
+ * @return None. */
+static void timing_windows(void)
+{
+    mfoc_app_t app = {0};
+    mfoc_app_isr_timing_t *timing = &app.tIsrTiming;
+    timing->lReportPeriodTicks = perfc_convert_ms_to_ticks(1000U);
+    timing->wMaximumTicks = MFOC_ISR_BUDGET_TICKS;
+    s_log[0] = '\0';
+    s_ticks = timing->lReportPeriodTicks - 1;
+    _mfoc_app_ReportIsrTiming(&app);
+    assert(s_log[0] == '\0');
+    assert(timing->wMaximumTicks == MFOC_ISR_BUDGET_TICKS);
+    ++s_ticks;
+    _mfoc_app_ReportIsrTiming(&app);
+    assert(strstr(s_log, "max=8500 ticks (50.0 us)") != NULL);
+    assert(strstr(s_log, "overrun") == NULL);
+    assert(timing->wMaximumTicks == 0U && !timing->bOverrun);
+    timing->wMaximumTicks = MFOC_ISR_BUDGET_TICKS + 170U;
+    timing->bOverrun = true;
+    s_ticks += timing->lReportPeriodTicks;
+    _mfoc_app_ReportIsrTiming(&app);
+    assert(strstr(s_log, "max=8670 ticks (51.0 us) (overrun)") != NULL);
+    assert(timing->wMaximumTicks == 0U && !timing->bOverrun);
+    timing->wMaximumTicks = 170U;
+    s_ticks += timing->lReportPeriodTicks;
+    _mfoc_app_ReportIsrTiming(&app);
+    assert(strstr(s_log, "max=170 ticks (1.0 us)") != NULL);
+    assert(strstr(s_log, "overrun") == NULL);
+    s_log[0] = '\0';
+    s_ticks += timing->lReportPeriodTicks;
+    _mfoc_app_ReportIsrTiming(&app);
+    assert(s_log[0] == '\0');
+}
+#endif
+
 /** @brief Exercise parsing and alignment routing at the Motor boundary.
  * @return None. */
 static void shell_commands(void)
@@ -100,6 +162,13 @@ static void shell_commands(void)
     assert(s_start_count == 3U);
     tMfocApp.motor.state = MFOC_MOTOR_IDLE;
     command("speed -0.1", "motor speed result=0");
+    command("openloop 0.1 0.04", "motor openloop result=0");
+    assert(s_openloop_count == 1U);
+    command("openloop 0.1", "invalid motor arguments");
+    command("openloop nan 0.04", "invalid motor arguments");
+    command("openloop 0.1 inf", "invalid motor arguments");
+    command("openloop 0.1 0.04 trailing", "invalid motor arguments");
+    assert(s_openloop_count == 1U);
     command("align", "motor align result=0");
     command("stop", "motor stop result=0");
     assert(s_align_count == 1U && s_stop_count == 1U);
@@ -214,6 +283,19 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     ++s_stop_count;
     return MFOC_RESULT_OK;
 }
+
+/** @brief Verify the forced startup Shell argument order.
+ * @param motor App instance. @param speed Electrical PU. @param id Current.
+ * @return OK. */
+mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
+    mfoc_scalar_t speed, mfoc_scalar_t id)
+{
+    assert(motor == &tMfocApp.motor);
+    assert(speed == mfoc_from_float(0.1f));
+    assert(id == mfoc_from_float(0.04f));
+    ++s_openloop_count;
+    return MFOC_RESULT_OK;
+}
 #endif
 
 /** @brief Supply Motor initialization and record invocation.
@@ -275,6 +357,9 @@ int main(void)
     unsigned run_count = s_run_count;
     shell_commands();
     assert(s_init_count == init_count && s_run_count == run_count);
+#if !defined(FOC_ISR_TIMING_DWT_ONLY)
+    timing_windows();
+#endif
 #endif
     puts("Application Init order, Clock binding and failures passed");
     return 0;

@@ -9,3 +9,4 @@ build
 reference
 tests/foc/*.exe
 docs/superpowers/*
+artifacts

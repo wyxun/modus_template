@@ -13,7 +13,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     & gcc -std=c11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" "-DMFOC_FEEDBACK_BACKEND=$backend" `
         "-DMFOC_FEEDBACK_ENABLE_ENCODER=$enabled" `
-        "-I$library/base/include" "-I$library/core/include" `
+        -DMFOC_FEEDBACK_ENABLE_SMO=0 `
+        "-I$library" "-I$library/base/include" "-I$library/core/include" `
         "-I$library/port/include" "-I$library/motor/include" `
         "-I$library/position/include" "$PSScriptRoot/encoder_test.c" `
         @encoderSources `

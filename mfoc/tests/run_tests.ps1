@@ -16,7 +16,8 @@ foreach ($case in $cases) {
     $exe = Join-Path $output "math-$numeric-$trig.exe"
     $arguments = @('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
         '-ffp-contract=off', "-DMFOC_NUMERIC_$numeric=1",
-        "-DMFOC_TRIG_BACKEND=$trig", "-I$(Join-Path $base 'include')",
+        "-DMFOC_TRIG_BACKEND=$trig", "-I$library",
+        "-I$(Join-Path $base 'include')",
         $testSource) + $sources + @('-lm', '-o', $exe)
     & gcc @arguments
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $numeric/$trig" }
@@ -38,7 +39,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     $arguments = @('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
         '-ffp-contract=off', "-DMFOC_NUMERIC_$numeric=1",
         "-DFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
-        '-DFOC_TRIG_BACKEND=1', "-I$(Join-Path $base 'include')",
+        '-DFOC_TRIG_BACKEND=1', "-I$library",
+        "-I$(Join-Path $base 'include')",
         (Join-Path $PSScriptRoot 'migration_test.c')) + $legacyIncludes +
         $sources + $legacySources + @('-lm', '-o', $exe)
     & gcc @arguments
@@ -52,5 +54,6 @@ Write-Output "Host test artifacts: $output"
 
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_encoder_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_smo_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_port_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_app_tests.ps1')

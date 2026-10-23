@@ -24,7 +24,7 @@ foreach ($profile in $profiles) {
         '-Wall', '-Wextra', '-Werror', '-ffunction-sections',
         "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
         '-D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1',
-        "-I$(Join-Path $base 'include')",
+        "-I$library", "-I$(Join-Path $base 'include')",
         "-I$(Join-Path $library 'core/include')",
         "-I$(Join-Path $library 'motor/include')",
         "-I$(Join-Path $library 'position/include')",
@@ -38,7 +38,7 @@ foreach ($profile in $profiles) {
     }
     Write-Output "$numeric / $cpu object compilation passed"
 }
-$portIncludes = @('mfoc/base/include', 'mfoc/port/include',
+$portIncludes = @('mfoc', 'mfoc/base/include', 'mfoc/port/include',
     'mfoc/motor/include', 'modus/src',
     'modus/lib/perf_counter',
     'modus/src/utilities', 'peripheral/stm32g431',
@@ -98,6 +98,19 @@ if ($piUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
     throw "FIXED PI must not use soft-float helpers: $piUndefined"
 }
 Write-Output 'Cortex-M0 FIXED PI: no soft-float helper symbols'
+$smoUndefined = & $nm --undefined-only (Join-Path $output 'FIXED-mfoc_smo.o')
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED SMO object' }
+if ($smoUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
+    throw "FIXED SMO must not use soft-float helpers: $smoUndefined"
+}
+Write-Output 'Cortex-M0 FIXED SMO: no soft-float helper symbols'
+$loopUndefined = & $nm --undefined-only (
+    Join-Path $output 'FIXED-mfoc_openloop.o')
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED OpenLoop object' }
+if ($loopUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
+    throw "FIXED OpenLoop must not use soft-float helpers: $loopUndefined"
+}
+Write-Output 'Cortex-M0 FIXED OpenLoop: no soft-float helper symbols'
 $legacyTrig = Join-Path $output 'legacy-fixed-trig.o'
 & $clang --target=arm-none-eabi -mcpu=cortex-m0 -mthumb -mfloat-abi=soft `
     -std=c11 -O2 -DFOC_NUMERIC_FIXED=1 -DFOC_TRIG_BACKEND=1 `

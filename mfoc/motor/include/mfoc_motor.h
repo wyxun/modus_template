@@ -9,29 +9,12 @@
 
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
+#include "mfoc_openloop.h"
 
 /** @brief Fixed-field hold duration, serviced by Motor Run. */
 #ifndef MFOC_MOTOR_ALIGN_TIME_MS
 #define MFOC_MOTOR_ALIGN_TIME_MS 1500U
 #endif
-
-/** @brief Motor constants on one fixed set of bases.
- * Use amplitude-invariant Clarke and peak phase-current base Ib.
- * Vb is the phase-voltage base; wb is electrical rad/s, not Hz.
- * rs = Rs*Ib/Vb; ld/lq = Ld/Lq*wb*Ib/Vb; flux = psi*wb/Vb.
- * With p=pole_pairs: tb=1/wb, wmb=wb/p, psib=Vb/wb,
- * Tb=1.5*p*psib*Ib, Jb=Tb*tb/wmb; inertia=J/Jb.
- * All scalars must be finite. rs/ld/lq/flux must be positive.
- * inertia >= 0; zero means unspecified, unused by current control.
- * Convert physical units once before Init; pole_pairs is an integer count. */
-typedef struct {
-    uint16_t pole_pairs;
-    mfoc_scalar_t rs;      /* Per-phase stator resistance, R/Rb. */
-    mfoc_scalar_t ld;      /* d-axis inductance, Ld/Lb. */
-    mfoc_scalar_t lq;      /* q-axis inductance, Lq/Lb. */
-    mfoc_scalar_t flux;    /* Permanent-magnet flux linkage, psi/psib. */
-    mfoc_scalar_t inertia; /* Rotor inertia, J/Jb; zero if unspecified. */
-} mfoc_motor_params_t;
 
 /** @brief Motor operating limits in the selected per-unit bases. */
 typedef struct {
@@ -43,9 +26,10 @@ typedef struct {
 typedef enum {
     MFOC_MOTOR_MODE_CURRENT = 0,
     MFOC_MOTOR_MODE_SPEED,
+    MFOC_MOTOR_MODE_OPENLOOP,
 } mfoc_motor_mode_t;
 
-/** @brief Persistent current command; angle comes from feedback/alignment. */
+/** @brief Persistent current command in the selected control frame. */
 typedef struct {
     mfoc_dq_t i_ref; /* dq current reference, I/Ib. */
 } mfoc_motor_command_t;
@@ -78,7 +62,7 @@ typedef struct {
  * Motor and Core must share the same fixed Ib/Vb bases.
  * speed_divider=0 disables speed mode; N>0 enables it, with
  * ki_ts=Ki*N*current_period and output bounds inside +/-i_max.
- * speed_max is required only when speed_divider is nonzero. */
+ * speed_max is required when speed PI or OpenLoop is enabled. */
 typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;
@@ -86,6 +70,7 @@ typedef struct {
     mfoc_feedback_cfg_t feedback;
     mfoc_pi_params_t speed;
     uint16_t speed_divider; /* 0: current mode; N: speed PI every N Steps. */
+    mfoc_openloop_cfg_t openloop; /* sample_hz=0 disables forced startup. */
 } mfoc_motor_cfg_t;
 
 /** @brief Motor-owned runtime data; initialize before use.
@@ -103,6 +88,7 @@ typedef struct {
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
     mfoc_feedback_t feedback;
+    mfoc_openloop_t openloop;
     mfoc_motor_command_t command;
     volatile mfoc_motor_mode_t mode;
     volatile mfoc_motor_state_t state;
@@ -159,7 +145,7 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
  * Caller must handle invalid measured voltage through its safety policy. */
 mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus);
 
-/** @brief Poll feedback and service an active alignment hold.
+/** @brief Poll feedback and service a fixed-field hold.
  * @param motor Valid initialized instance. @return Service/stop status.
  * @note Foreground only; keep calling while idle, running, or aligning.
  * Feedback errors do not block alignment timeout and Stop. */
@@ -174,6 +160,16 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor);
 mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     mfoc_scalar_t id_pu, mfoc_scalar_t angle_pu);
 
+/** @brief Hold a fixed field, then ramp a forced electrical angle from IDLE.
+ * @param motor Instance with OpenLoop configured.
+ * @param speed Nonzero signed electrical PU within speed_max and [-1,1].
+ * @param id_pu Positive forced-frame d current within i_max; iq remains zero.
+ * @return Command/start status. Existing Stop cancels hold or rotation.
+ * @note Encoder/SMO remain observational; no zero capture or SMO takeover.
+ * The initial hold lasts MFOC_MOTOR_ALIGN_TIME_MS, serviced by Run. */
+mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
+    mfoc_scalar_t speed, mfoc_scalar_t id_pu);
+
 /** @brief Select speed mode and set a bounded electrical-speed reference.
  * @param motor Instance with the speed PI configured.
  * @param ref Electrical speed PU.
@@ -185,7 +181,9 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
  * @note Control ISR only, one call per completed current frame. A single
  * RUNNING check precedes current read, Clarke, feedback, optional speed PI,
  * Core, and PWM submission. Idle/fault calls consume no frame. Runtime
- * failures Trip Motor; successful PWM submission publishes the prior output. */
+ * failures Trip Motor; successful PWM submission publishes the prior output.
+ * In OPENLOOP, observer status is diagnostic and cannot gate forced control;
+ * current sampling and PWM errors retain the normal shutdown behavior. */
 mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor);
 
 /** @brief Read the published bus sample and update Core coefficients.

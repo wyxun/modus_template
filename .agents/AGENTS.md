@@ -72,3 +72,5 @@ file is the single authority for embedded coding and MODUS usage.
 
 - Preserve unrelated worktree and submodule changes.
 - Do not stage, commit, switch branches, or push unless explicitly requested.
+- MFOC: do not add `mfoc_scalar_is_finite()` checks by default. Consult the
+  user before introducing new uses or equivalent NaN/Inf validation.

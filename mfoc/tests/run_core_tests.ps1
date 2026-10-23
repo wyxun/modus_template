@@ -7,7 +7,8 @@ $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c",
     Where-Object { $_.Name -notin @('mfoc_feedback.c', 'mfoc_motor_irq.c') } |
     ForEach-Object { $_.FullName })
 foreach ($numeric in @('FLOAT', 'FIXED')) {
-  foreach ($test in @('core', 'motor', 'motor_run', 'motor_control', 'motor_irq')) {
+  foreach ($test in @('openloop', 'core', 'motor', 'motor_run',
+      'motor_control', 'motor_irq')) {
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
     if ($test -eq 'motor_irq') {
@@ -19,7 +20,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
         -D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1 `
         @irqArguments `
-        "-I$library/base/include" "-I$library/core/include" `
+        "-I$library" "-I$library/base/include" "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/port/include" `
         "-I$library/position/include" `
         "-I$library/../modus/lib/perf_counter" `

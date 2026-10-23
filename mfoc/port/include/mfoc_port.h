@@ -25,12 +25,13 @@
  * from the control ISR.
  * Sampling and PWM trigger/update timing belong to the target setup. */
 
-/** @brief Measure ADC zero offsets and prepare current conversion.
- * @return OK, INVALID_ARGUMENT, OUT_OF_RANGE, INVALID_STATE or IO.
+/** @brief Verify AS5600 SF=3, measure offsets and prepare conversion.
+ * @return OK, INVALID_ARGUMENT, OUT_OF_RANGE, INVALID_STATE, SAFETY or IO.
  * @note Collects ten completed current frames with bounded waits.
  * Call after perfc and ADC trigger setup, before enabling the control IRQ,
  * with Motor stopped and phase outputs gated. Exclude other frame consumers.
  * No bus read, ADC scheduling or interrupt control occurs here.
+ * AS5600 CONF is read back after setting only SF; OTP is never written.
  * Polarity and current scale are
  * compile-time settings above. Init does not enable hardware. */
 mfoc_result_t mfoc_port_init(void);

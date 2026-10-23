@@ -7,18 +7,17 @@
 #ifndef MFOC_CORE_H
 #define MFOC_CORE_H
 
+#include "mfoc_config.h"
 #include "mfoc_pi.h"
 #include "mfoc_angle.h"
 
-/** @brief Two independent axis gains/limits and usable bus fraction.
+/** @brief Two independent axis gains/limits and initial bus voltage.
  * PI input is I/Ibase, output and integral are V/Vbase.
  * This core supports axis output bounds within [-1,1] V/Vbase.
- * m_max is in (0, 1/sqrt(3)], e.g. 0.55 for PWM margin.
  * Configure integral bounds to allow the required saturation recovery. */
 typedef struct {
     mfoc_pi_params_t d;
     mfoc_pi_params_t q;
-    mfoc_scalar_t m_max;
     mfoc_scalar_t bus; /* Initial Vdc/Vbase, strictly positive. */
 } mfoc_core_params_t;
 
@@ -26,8 +25,11 @@ typedef struct {
 typedef struct {
     mfoc_pi_t d;
     mfoc_pi_t q;
-    mfoc_scalar_t m_max;
-    mfoc_scalar_t u_max;   /* Voltage radius, V/Vbase. */
+#if defined(MFOC_NUMERIC_FLOAT)
+    mfoc_scalar_t u_max_sq; /* Squared voltage radius, (V/Vbase)^2. */
+#else
+    mfoc_scalar_t u_max;    /* Voltage radius, V/Vbase. */
+#endif
     mfoc_scalar_t bus;     /* Vdc/Vbase used for the current coefficients. */
     mfoc_scalar_t bus_inv; /* Vbase/Vdc. */
 } mfoc_core_t;
@@ -47,7 +49,7 @@ typedef struct {
 /** @brief Computed command for the next PWM interval, not measured voltage.
  * i is dq current; u is limited dq V/Vbase; m is alpha-beta V/Vdc.
  * bus is the Vdc/Vbase snapshot used for this output.
- * limited reports circular limiting; clipped reports PWM rail contact.
+ * limited reports circular limiting.
  * PI axis limits are configured separately and remain active. */
 typedef struct {
     mfoc_dq_t i;
@@ -56,7 +58,6 @@ typedef struct {
     mfoc_uvw_t duty;
     mfoc_scalar_t bus;
     bool limited;
-    bool clipped;
 } mfoc_core_output_t;
 
 /** @brief Copy valid configuration; failure leaves c unchanged.
@@ -70,6 +71,7 @@ mfoc_result_t mfoc_core_Init(mfoc_core_t *c,
  * @return OK, NULL, INVALID_ARGUMENT or OUT_OF_RANGE.
  * @note Failure leaves state unchanged. Radius and reciprocal must be
  * representable and positive (FIXED uses Q15, with truncated reciprocal).
+ * FLOAT also requires a finite, normal squared voltage radius.
  * Serialize with Step/Reset; no hardware access or synchronization here.
  * Fixed bus: call only at Init. Dynamic bus: update before the next Step. */
 mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus);

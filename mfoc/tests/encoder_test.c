@@ -16,6 +16,16 @@ static unsigned reads;
 static mfoc_angle_t mechanical;
 static mfoc_result_t read_result;
 
+/** @brief Initialize encoder-only Feedback with the requested pole count.
+ * @param feedback Instance. @param cfg Settings. @param poles Pole count.
+ * @return Feedback Init result. */
+static mfoc_result_t initialize(mfoc_feedback_t *feedback,
+    const mfoc_feedback_cfg_t *cfg, uint16_t poles)
+{
+    const mfoc_motor_params_t model = {.pole_pairs = poles};
+    return mfoc_feedback_Init(feedback, cfg, &model);
+}
+
 /** @brief Supply a controllable raw clock. @return Low 32-bit tick. */
 uint32_t mfoc_port_tick(void) { return tick; }
 
@@ -56,7 +66,7 @@ int main(void)
     mfoc_feedback_t feedback = {0};
     mfoc_feedback_output_t output = {0};
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_NONE
-    assert(mfoc_feedback_Init(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
+    assert(initialize(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
     assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     assert(reads == (unsigned)MFOC_FEEDBACK_ENABLE_ENCODER);
     assert(mfoc_feedback_Step(&feedback, NULL, &output) ==
@@ -68,9 +78,9 @@ int main(void)
     puts("Algorithm execution is independent of feedback output selection");
 #else
     assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_INVALID_STATE);
-    assert(mfoc_feedback_Init(&feedback, &cfg, 0U) != MFOC_RESULT_OK);
+    assert(initialize(&feedback, &cfg, 0U) != MFOC_RESULT_OK);
     tick = UINT32_MAX - 499U;
-    assert(mfoc_feedback_Init(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
+    assert(initialize(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
     assert(mfoc_feedback_Step(&feedback, NULL, &output) != MFOC_RESULT_OK);
     mechanical.wBam32 = 0xFF000000U;
     assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
@@ -103,7 +113,7 @@ int main(void)
     cfg.encoder.speed_filter_alpha = MFOC_HALF;
     cfg.encoder.electrical_zero.wBam32 = 0U;
     read_result = MFOC_RESULT_OK;
-    assert(mfoc_feedback_Init(&feedback, &cfg, 4U) == MFOC_RESULT_OK);
+    assert(initialize(&feedback, &cfg, 4U) == MFOC_RESULT_OK);
     mechanical.wBam32 = 0x40000000U;
     assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     tick += 10000U;
@@ -115,7 +125,7 @@ int main(void)
     /* A fresh held-rotor read calibrates zero and clears old velocity. */
     for (unsigned inverted = 0U; inverted < 2U; ++inverted) {
         cfg.encoder.inverted = inverted != 0U;
-        assert(mfoc_feedback_Init(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
+        assert(initialize(&feedback, &cfg, 7U) == MFOC_RESULT_OK);
         mechanical.wBam32 = 3234U << 20U;
         mfoc_angle_t held = {0x20000000U};
         unsigned before = reads;
@@ -131,7 +141,7 @@ int main(void)
         read_result = MFOC_RESULT_OK;
     }
     frequency = 0U;
-    assert(mfoc_feedback_Init(&feedback, &cfg, 4U) != MFOC_RESULT_OK);
+    assert(initialize(&feedback, &cfg, 4U) != MFOC_RESULT_OK);
     puts("Encoder wrap, cadence, filter, extrapolation and timeout passed");
 #endif
     return 0;

@@ -62,14 +62,11 @@ int main(void)
         same(ab.qBeta, old_ab.qBeta);
         mfoc_uvw_t duty = {0};
         foc_duty_abc_t old_duty = {0};
-        bool clipped = false;
-        bool old_clipped = false;
-        mfoc_svpwm(&ab, &duty, &clipped);
-        assert(foc_svpwm(&old_ab, &old_duty, &old_clipped) == FOC_RESULT_OK);
+        mfoc_svpwm(&ab, &duty);
+        assert(foc_svpwm(&old_ab, &old_duty, NULL) == FOC_RESULT_OK);
         same(duty.qU, old_duty.qU);
         same(duty.qV, old_duty.qV);
         same(duty.qW, old_duty.qW);
-        assert(clipped == old_clipped);
         assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty,
             MFOC_ONE, &ab) == MFOC_RESULT_OK);
         assert(foc_modulation_ModelVoltageAlphaBeta(&old_duty,

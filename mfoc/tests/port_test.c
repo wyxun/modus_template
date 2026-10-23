@@ -260,6 +260,19 @@ static void _test_Init(void)
     TIM1->CCER = TIM_CCER_CC4E;
     g_bG431AdcMeanValid = false;
     s_feed_current = true;
+    int64_t before = s_tick;
+    I2C1->ISR = I2C_ISR_NACKF;
+    assert(mfoc_port_init() == MFOC_RESULT_IO);
+    assert(s_tick == before && TIM1->CCER == TIM_CCER_CC4E);
+    I2C1->ISR = I2C_ISR_TXIS | I2C_ISR_TC | I2C_ISR_RXNE | I2C_ISR_STOPF;
+    /* Constant RXDR cannot echo the write: reject SF readback mismatch. */
+    I2C1->RXDR = 0xA8U;
+    assert(mfoc_port_init() == MFOC_RESULT_SAFETY);
+    assert(s_tick == before && TIM1->CCER == TIM_CCER_CC4E);
+    /* SF=3 with nonzero unrelated fields must also pass unchanged. */
+    I2C1->RXDR = 0xABU;
+    assert(mfoc_port_init() == MFOC_RESULT_OK);
+    I2C1->RXDR = 0x03U;
     assert(mfoc_port_init() == MFOC_RESULT_OK);
     assert(!g_bG431AdcMeanValid);
     assert(s_port.offset_u == 8192U && s_port.offset_v == 8200U);

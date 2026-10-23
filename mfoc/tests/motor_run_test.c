@@ -19,7 +19,7 @@ static void setup(mfoc_motor_t *motor)
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.2f), MFOC_SCALAR(0.4f), MFOC_ZERO},
         .limits = {.i_max = MFOC_SCALAR(0.8f)},
-        .core = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE},
+        .core = {pi, pi, MFOC_ONE},
     };
     motor_port_fake = (motor_port_fake_t){0};
     assert(mfoc_motor_Init(motor, &cfg) == MFOC_RESULT_OK);

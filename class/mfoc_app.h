@@ -21,14 +21,12 @@ typedef struct {
 } mfoc_app_cfg_t;
 
 #if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
-/** @brief Interrupt-owned elapsed-time counters; foreground resets snapshots. */
+/** @brief ISR maximum and overrun latch for the current reporting window. */
 typedef struct {
-    volatile uint64_t qwTotalTicks;
-    volatile uint32_t wSamples;
     volatile uint32_t wMaximumTicks;
+    volatile bool bOverrun;
     int64_t lReportTimestamp;
     int64_t lReportPeriodTicks;
-    int64_t lBudgetTicks;
 } mfoc_app_isr_timing_t;
 #endif
 

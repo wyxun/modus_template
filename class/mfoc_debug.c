@@ -18,7 +18,7 @@
 
 enum {
     MFOC_DEBUG_ENCODER_ANGLE = 0,
-    MFOC_DEBUG_CONTROL_ANGLE,
+    MFOC_DEBUG_SMO_ANGLE,
     MFOC_DEBUG_ANGLE_ERROR,
     MFOC_DEBUG_IQ,
     MFOC_DEBUG_CHANNEL_COUNT,
@@ -30,39 +30,46 @@ extern mfoc_app_t tMfocApp;
 void mfoc_debug_CaptureWaveform(void)
 {
     mfoc_motor_t *motor = &tMfocApp.motor;
-    mfoc_angle_t encoder_angle = {0U};
-    mfoc_scalar_t speed = MFOC_ZERO;
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] = -1.0f;
-    s_waveform[MFOC_DEBUG_CONTROL_ANGLE] = -1.0f;
+    s_waveform[MFOC_DEBUG_SMO_ANGLE] = -1.0f;
     s_waveform[MFOC_DEBUG_ANGLE_ERROR] = -1.0f;
     s_waveform[MFOC_DEBUG_IQ] = -1.0f;
     if (motor->state != MFOC_MOTOR_RUNNING) { return; }
 
-    mfoc_angle_t control_angle = motor->align_angle;
-    if (motor->align_active) {
-        s_waveform[MFOC_DEBUG_CONTROL_ANGLE] =
-            mfoc_angle_to_turns(control_angle);
+    if (motor->previous_core_output_valid) {
         s_waveform[MFOC_DEBUG_IQ] =
             mfoc_to_float(motor->previous_core_output.i.qQ);
     }
+#if MFOC_FEEDBACK_ENABLE_SMO
+    bool smo_valid = !motor->align_active &&
+        motor->feedback.smo_status == MFOC_RESULT_OK &&
+        motor->feedback.smo_output.valid;
+    if (smo_valid) {
+        s_waveform[MFOC_DEBUG_SMO_ANGLE] =
+            mfoc_angle_to_turns(motor->feedback.smo_output.angle);
+    }
+#endif
+#if MFOC_FEEDBACK_ENABLE_ENCODER
+    mfoc_angle_t encoder_angle = {0U};
+    mfoc_scalar_t speed = MFOC_ZERO;
     mfoc_result_t rc = mfoc_encoder_Step(&motor->feedback.encoder,
         &encoder_angle, &speed);
     if (rc != MFOC_RESULT_OK) { return; }
-    if (!motor->align_active) { control_angle = encoder_angle; }
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] =
         mfoc_angle_to_turns(encoder_angle);
-    s_waveform[MFOC_DEBUG_CONTROL_ANGLE] =
-        mfoc_angle_to_turns(control_angle);
-    s_waveform[MFOC_DEBUG_ANGLE_ERROR] =
-        mfoc_to_float(mfoc_angle_diff(control_angle, encoder_angle));
-    s_waveform[MFOC_DEBUG_IQ] =
-        mfoc_to_float(motor->previous_core_output.i.qQ);
+#if MFOC_FEEDBACK_ENABLE_SMO
+    if (smo_valid) {
+        s_waveform[MFOC_DEBUG_ANGLE_ERROR] = mfoc_to_float(
+            mfoc_angle_diff(motor->feedback.smo_output.angle, encoder_angle));
+    }
+#endif
+#endif
 }
 
 void mfoc_debug_WaveformInit(void)
 {
     static const char *const names[MFOC_DEBUG_CHANNEL_COUNT] = {
-        "Enc_mT", "Ctrl_mT", "Err_mT", "Iq_mpu"};
+        "Enc_mT", "SMO_mT", "Err_mT", "Iq_mpu"};
     int rc = mwaveform.Init(NULL);
     if (rc != MODUS_SUCCESS) {
         MLOGF(W, "MFOC waveform init failed (%d)\r\n", rc);

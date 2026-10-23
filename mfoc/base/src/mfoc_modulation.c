@@ -48,10 +48,10 @@ mfoc_result_t mfoc_modulation_ModelVoltageAlphaBeta(const mfoc_uvw_t *ptDuty,
 
 /** @brief Center phases with a shared common-mode offset.
  * @param ptVoltage Modulation vector. @param ptDuty Clamped output.
- * @param pbSaturated Optional clipping flag. @return None.
+ * @return None.
  * @note Voltage and duty pointers must be valid. */
 void mfoc_svpwm(const mfoc_ab_t *ptVoltage,
-                mfoc_uvw_t *ptDuty, bool *pbSaturated)
+                mfoc_uvw_t *ptDuty)
 {
     mfoc_uvw_t tPhase = {0};
     mfoc_scalar_t qMaximum = MFOC_ZERO;
@@ -76,12 +76,6 @@ void mfoc_svpwm(const mfoc_ab_t *ptVoltage,
     ptDuty->qU = mfoc_add_sat(mfoc_add_sat(tPhase.qU, qOffset), MFOC_HALF);
     ptDuty->qV = mfoc_add_sat(mfoc_add_sat(tPhase.qV, qOffset), MFOC_HALF);
     ptDuty->qW = mfoc_add_sat(mfoc_add_sat(tPhase.qW, qOffset), MFOC_HALF);
-    if (pbSaturated != NULL) {
-        /* Report clipping before the duty clamp, including endpoint hits. */
-        *pbSaturated = ptDuty->qU <= MFOC_ZERO || ptDuty->qU >= MFOC_ONE ||
-                       ptDuty->qV <= MFOC_ZERO || ptDuty->qV >= MFOC_ONE ||
-                       ptDuty->qW <= MFOC_ZERO || ptDuty->qW >= MFOC_ONE;
-    }
     ptDuty->qU = mfoc_sat(ptDuty->qU, MFOC_ZERO, MFOC_ONE);
     ptDuty->qV = mfoc_sat(ptDuty->qV, MFOC_ZERO, MFOC_ONE);
     ptDuty->qW = mfoc_sat(ptDuty->qW, MFOC_ZERO, MFOC_ONE);

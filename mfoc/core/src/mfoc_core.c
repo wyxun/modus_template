@@ -9,23 +9,24 @@
 #include "mfoc_modulation.h"
 #include <stddef.h>
 #if defined(MFOC_NUMERIC_FLOAT)
+#include <float.h>
 #include <math.h>
 #endif
 
-/** @brief Limit dq voltage to radius r; both input axes are within [-1,1].
+/** @brief Limit dq voltage; both input axes are within [-1,1].
  * @param u Voltage request, replaced by limited voltage.
- * @param r Nonnegative voltage radius. @return Whether limiting occurred. */
-static bool _mfoc_core_limit(mfoc_dq_t *u, mfoc_scalar_t r)
+ * @param c Core with a precomputed voltage limit.
+ * @return Whether limiting occurred. */
+static bool _mfoc_core_limit(mfoc_dq_t *u, const mfoc_core_t *c)
 {
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t n2 = u->qD * u->qD + u->qQ * u->qQ;
-    /* Axes are bounded by 1; avoid overflow in r*r for large buses. */
-    if (r >= 2.0f || n2 <= r * r) { return false; }
-    mfoc_scalar_t n = sqrtf(n2);
-    mfoc_scalar_t k = r / n;
+    if (n2 <= c->u_max_sq) { return false; }
+    mfoc_scalar_t k = sqrtf(c->u_max_sq / n2);
     u->qD *= k;
     u->qQ *= k;
 #else
+    mfoc_scalar_t r = c->u_max;
     /* Raw Q30 squared norm fits uint32 for two Q15 axes in [-1,1].
      * Integer sqrt rounded upward gives a conservative Q15 magnitude.
      * No intermediate Q15 square truncation near a small voltage limit. */
@@ -60,9 +61,9 @@ mfoc_result_t mfoc_core_Init(mfoc_core_t *c,
                             const mfoc_core_params_t *cfg)
 {
     if (c == NULL || cfg == NULL) { return MFOC_RESULT_NULL; }
-    if (!mfoc_scalar_is_finite(cfg->m_max) ||
-        cfg->m_max <= MFOC_ZERO ||
-        cfg->m_max > MFOC_SCALAR(0.5773502691896258f) ||
+    if (!mfoc_scalar_is_finite(MFOC_SCALAR(MFOC_CORE_M_MAX)) ||
+        MFOC_SCALAR(MFOC_CORE_M_MAX) <= MFOC_ZERO ||
+        MFOC_SCALAR(MFOC_CORE_M_MAX) > MFOC_SCALAR(0.5773502691896258f) ||
         cfg->d.out_min < -MFOC_ONE || cfg->d.out_max > MFOC_ONE ||
         cfg->q.out_min < -MFOC_ONE || cfg->q.out_max > MFOC_ONE) {
         return MFOC_RESULT_INVALID_ARGUMENT;
@@ -72,31 +73,38 @@ mfoc_result_t mfoc_core_Init(mfoc_core_t *c,
     if (rc != MFOC_RESULT_OK) { return rc; }
     rc = mfoc_pi_Init(&next.q, &cfg->q);
     if (rc != MFOC_RESULT_OK) { return rc; }
-    next.m_max = cfg->m_max;
     rc = mfoc_core_SetBus(&next, cfg->bus);
     if (rc != MFOC_RESULT_OK) { return rc; }
     *c = next;
     return MFOC_RESULT_OK;
 }
 
-/** @brief Precompute voltage radius and bus reciprocal.
+/** @brief Precompute the voltage limit and bus reciprocal.
  * @param c Initialized instance. @param bus Vdc/Vbase.
  * @return Validation result; failure preserves both coefficients. */
 mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
 {
     if (c == NULL) { return MFOC_RESULT_NULL; }
-    if (!mfoc_scalar_is_finite(bus) || bus <= MFOC_ZERO) {
+    if (bus <= MFOC_ZERO) {
         return MFOC_RESULT_INVALID_ARGUMENT;
     }
     mfoc_scalar_t bus_inv = MFOC_ZERO;
     mfoc_result_t rc = mfoc_div_checked(MFOC_ONE, bus, &bus_inv);
     if (rc != MFOC_RESULT_OK) { return rc; }
-    mfoc_scalar_t u_max = mfoc_mul_wide(bus, c->m_max);
-    if (!mfoc_scalar_is_finite(u_max) || u_max <= MFOC_ZERO ||
-        bus_inv <= MFOC_ZERO) {
+    mfoc_scalar_t u_max = mfoc_mul_wide(bus, MFOC_SCALAR(MFOC_CORE_M_MAX));
+    if (u_max <= MFOC_ZERO || bus_inv <= MFOC_ZERO) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
+#if defined(MFOC_NUMERIC_FLOAT)
+    mfoc_scalar_t u_max_sq = u_max * u_max;
+    /* Reject unrepresentable squares before publishing any coefficients. */
+    if (u_max_sq < FLT_MIN || u_max_sq > FLT_MAX) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    c->u_max_sq = u_max_sq;
+#else
     c->u_max = u_max;
+#endif
     c->bus = bus;
     c->bus_inv = bus_inv;
     return MFOC_RESULT_OK;
@@ -128,7 +136,7 @@ void mfoc_core_Step(mfoc_core_t *c,
     mfoc_pi_Step(&c->d, in->ref.qD, out->i.qD, &u.qD);
     mfoc_pi_Step(&c->q, in->ref.qQ, out->i.qQ, &u.qQ);
     out->u = u;
-    out->limited = _mfoc_core_limit(&out->u, c->u_max);
+    out->limited = _mfoc_core_limit(&out->u, c);
     if (out->limited) {
         mfoc_pi_ApplyLimit(&c->d, u.qD, out->u.qD);
         mfoc_pi_ApplyLimit(&c->q, u.qQ, out->u.qQ);
@@ -137,6 +145,6 @@ void mfoc_core_Step(mfoc_core_t *c,
     m.qD = mfoc_mul_wide(out->u.qD, c->bus_inv);
     m.qQ = mfoc_mul_wide(out->u.qQ, c->bus_inv);
     mfoc_ipark_cached(&m, sin_theta, cos_theta, &out->m);
-    mfoc_svpwm(&out->m, &out->duty, &out->clipped);
+    mfoc_svpwm(&out->m, &out->duty);
     out->bus = c->bus;
 }

@@ -6,6 +6,7 @@
  */
 #include "mfoc_core.h"
 #include <assert.h>
+#include <float.h>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -14,7 +15,7 @@ int main(void)
 {
     mfoc_pi_params_t pi = {MFOC_ONE, MFOC_ZERO,
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
-    mfoc_core_params_t cfg = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE};
+    mfoc_core_params_t cfg = {pi, pi, MFOC_ONE};
     mfoc_core_t c = {0};
     mfoc_core_input_t in = {0};
     mfoc_core_output_t out = {0};
@@ -31,7 +32,7 @@ int main(void)
             mfoc_core_Step(&c, &in, &out);
             float d = mfoc_to_float(out.u.qD);
             float q = mfoc_to_float(out.u.qQ);
-            float radius = mfoc_to_float(c.u_max);
+            float radius = mfoc_to_float(bus) * MFOC_CORE_M_MAX;
             assert(hypotf(d, q) <= radius + 0.000002f);
             float err = fabsf(mfoc_to_float(out.m.qAlpha) -
                               d / mfoc_to_float(bus));
@@ -52,6 +53,9 @@ int main(void)
 #if defined(MFOC_NUMERIC_FLOAT)
     assert(mfoc_core_SetBus(&c, NAN) != MFOC_RESULT_OK);
     assert(mfoc_core_SetBus(&c, INFINITY) != MFOC_RESULT_OK);
+    assert(mfoc_core_SetBus(&c, FLT_MAX) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_core_SetBus(&c, 1.0e-20f) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_core_SetBus(&c, 1.0e-30f) == MFOC_RESULT_OUT_OF_RANGE);
 #else
     assert(mfoc_core_SetBus(&c, 1) == MFOC_RESULT_OUT_OF_RANGE);
     assert(mfoc_core_SetBus(&c, INT32_MAX) == MFOC_RESULT_OUT_OF_RANGE);
@@ -63,7 +67,16 @@ int main(void)
     assert(mfoc_core_SetBus(&c, MFOC_ONE) == MFOC_RESULT_OK);
     assert(c.d.ui == saved.d.ui && c.q.ui == saved.q.ui);
     assert(mfoc_core_Reset(&c) == MFOC_RESULT_OK);
-    assert(c.bus_inv == MFOC_ONE && c.u_max == cfg.m_max);
+    assert(c.bus_inv == MFOC_ONE);
+#if defined(MFOC_NUMERIC_FLOAT)
+    assert(c.u_max_sq == MFOC_CORE_M_MAX * MFOC_CORE_M_MAX);
+    assert(mfoc_core_SetBus(&c, 1.0e10f) == MFOC_RESULT_OK);
+    in.ref = (mfoc_dq_t){MFOC_ONE, MFOC_ONE};
+    mfoc_core_Step(&c, &in, &out);
+    assert(!out.limited && out.u.qD == MFOC_ONE && out.u.qQ == MFOC_ONE);
+#else
+    assert(c.u_max == MFOC_SCALAR(MFOC_CORE_M_MAX));
+#endif
     assert(c.d.ui == MFOC_ZERO && c.q.ui == MFOC_ZERO);
     printf("Core passed; max normalization error %.9g\n", (double)worst);
     return 0;

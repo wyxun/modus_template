@@ -46,7 +46,7 @@ int main(void)
     mfoc_motor_cfg_t cfg = {
         .params = {7U, MFOC_ONE, MFOC_ONE, MFOC_ONE, MFOC_ONE, MFOC_ZERO},
         .limits = {.i_max = MFOC_ONE},
-        .core = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE},
+        .core = {pi, pi, MFOC_ONE},
     };
     assert(mfoc_motor_Init(&mfoc_motor_instance, &cfg) == MFOC_RESULT_OK);
     pending = true;

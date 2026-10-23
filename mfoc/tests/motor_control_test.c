@@ -22,7 +22,7 @@ static mfoc_motor_cfg_t config(uint16_t divider)
             MFOC_SCALAR(0.2f), MFOC_SCALAR(0.4f), MFOC_ZERO},
         .limits = {.i_max = MFOC_SCALAR(0.8f),
             .speed_max = MFOC_SCALAR(0.75f)},
-        .core = {pi, pi, MFOC_SCALAR(0.55f), MFOC_ONE},
+        .core = {pi, pi, MFOC_ONE},
         .speed = {MFOC_HALF, MFOC_SCALAR(0.1f),
             -MFOC_HALF, MFOC_HALF, -MFOC_HALF, MFOC_HALF},
         .speed_divider = divider,

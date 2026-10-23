@@ -19,7 +19,7 @@ void mfoc_debug_WaveformInit(void);
 void mfoc_debug_WaveformStep(void);
 
 /** @brief Refresh bound values for one accepted MWaveform sample.
- * @return None. @note Uses only the published encoder cache. */
+ * @return None. @note Reads cached encoder data and the latest SMO output. */
 void mfoc_debug_CaptureWaveform(void);
 #endif
 

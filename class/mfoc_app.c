@@ -38,8 +38,6 @@ int mfoc_app_Init(uintptr_t object, uintptr_t cfg)
     app->state = status == MODUS_SUCCESS ? MFOC_APP_IDLE : MFOC_APP_ERROR;
 #if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
     app->tIsrTiming.lReportPeriodTicks = perfc_convert_ms_to_ticks(1000U);
-    app->tIsrTiming.lBudgetTicks =
-        app->tIsrTiming.lReportPeriodTicks / FOC_HF_ISR_HZ;
     app->tIsrTiming.lReportTimestamp = get_system_ticks();
 #endif
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
@@ -54,35 +52,29 @@ int mfoc_app_Clock(uintptr_t object)
 }
 
 #if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
-/** @brief Report average ISR time, or the peak when the budget is exceeded.
+/** @brief Report the maximum ISR ticks in the preceding one-second window.
  * @param app Application owning the timing window. @return None.
  * @note Snapshot and reset are atomic with respect to the control IRQ. */
 static void _mfoc_app_ReportIsrTiming(mfoc_app_t *app)
 {
     mfoc_app_isr_timing_t *timing = &app->tIsrTiming;
-    uint64_t total = 0U;
-    uint32_t samples = 0U;
     uint32_t maximum = 0U;
+    bool overrun = false;
     perfc_global_interrupt_status_t irq_state = 0U;
 
     if (!__perfc_is_time_out(timing->lReportPeriodTicks,
         &timing->lReportTimestamp, true)) { return; }
     irq_state = perfc_port_disable_global_interrupt();
-    total = timing->qwTotalTicks;
-    samples = timing->wSamples;
     maximum = timing->wMaximumTicks;
-    timing->qwTotalTicks = 0U;
-    timing->wSamples = 0U;
+    overrun = timing->bOverrun;
     timing->wMaximumTicks = 0U;
+    timing->bOverrun = false;
     perfc_port_resume_global_interrupt(irq_state);
-    if (samples == 0U) { return; }
-
-    bool overrun = (int64_t)maximum > timing->lBudgetTicks;
-    uint32_t ticks = overrun ? maximum : (uint32_t)(total / samples);
+    if (maximum == 0U) { return; }
     uint32_t tenths_us = (uint32_t)perfc_convert_ticks_to_us(
-        (int64_t)ticks * 10);
-    MLOGF(T, "mfoc ISR %s=%lu.%lu us%s\r\n",
-        overrun ? "max" : "avg",
+        (int64_t)maximum * 10);
+    MLOGF(T, "mfoc ISR max=%lu ticks (%lu.%lu us)%s\r\n",
+        (unsigned long)maximum,
         (unsigned long)(tenths_us / 10U),
         (unsigned long)(tenths_us % 10U),
         overrun ? " (overrun)" : "");
@@ -135,15 +127,20 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .speed_max = MFOC_APP_SPEED_MAX},
         .core = {
             .d = MFOC_APP_CURRENT_PI, .q = MFOC_APP_CURRENT_PI,
-            .m_max = MFOC_SCALAR(0.55f), .bus = MFOC_ONE,
+            .bus = MFOC_ONE,
         },
         .feedback = {.encoder = {
             .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
             .speed_filter_alpha = MFOC_SCALAR(0.25f),
             .sample_period_us = 1000U, .timeout_ms = 20U,
+        }, .smo = {
+            .sample_hz = 20000U, .speed_base_hz = MFOC_SCALAR(400.0f),
+            .cutoff_rad_s = 4000U, .h = MFOC_SCALAR(5.0f / 12.0f),
+            .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE,
         }},
         .speed = MFOC_APP_SPEED_PI,
         .speed_divider = 20U,
+        .openloop = {20000U, MFOC_SCALAR(400.0f), MFOC_SCALAR(0.2f)},
     },
 )
 
@@ -235,6 +232,16 @@ static void _mfoc_app_CmdMotor(const char *args)
             MLOGF(I, "motor speed result=%d\r\n", (int)tMfocApp.result);
             return;
         }
+    } else if (mshell_ConsumeWord(&cursor, "openloop")) {
+        valid = mshell_Parse(&cursor, &q) == MSHELL_PARSE_OK &&
+            mshell_Parse(&cursor, &d) == MSHELL_PARSE_OK &&
+            mshell_AtEnd(cursor);
+        if (valid) {
+            tMfocApp.result = mfoc_motor_OpenLoopStart(&tMfocApp.motor,
+                mfoc_from_float(q), mfoc_from_float(d));
+            MLOGF(I, "motor openloop result=%d\r\n", (int)tMfocApp.result);
+            return;
+        }
     } else if (mshell_ConsumeWord(&cursor, "align")) {
         valid = mshell_AtEnd(cursor);
         if (valid) {
@@ -263,6 +270,7 @@ static void _mfoc_app_CmdMotor(const char *args)
         }
     } else {
         MLOGF(I, "usage: motor current <id> <iq> | speed <pu> | align\r\n"
+            "       motor openloop <speed_pu> <id_pu>\r\n"
             "       motor encoder | stop | clear | status | help\r\n"
             "       clear: parse only; execution pending\r\n");
         return;
@@ -275,5 +283,5 @@ static void _mfoc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, _mfoc_app_CmdMotor,
-    "MFOC: current/speed/encoder/align/stop/status; clear parse only");
+    "MFOC: current/speed/openloop/encoder/align/stop/status");
 #endif
