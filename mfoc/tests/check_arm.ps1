@@ -5,6 +5,7 @@ $base = Join-Path $library 'base'
 $sources = @(Get-ChildItem (Join-Path $base 'src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'core/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'motor/src') -Filter '*.c') +
+    @(Get-ChildItem (Join-Path $library 'identification/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'position/src') -Filter '*.c')
 $sources = @($sources | Where-Object { $_.Name -ne 'mfoc_motor_irq.c' })
 $repo = Split-Path -Parent $library
@@ -28,6 +29,7 @@ foreach ($profile in $profiles) {
         "-I$(Join-Path $library 'core/include')",
         "-I$(Join-Path $library 'motor/include')",
         "-I$(Join-Path $library 'position/include')",
+        "-I$(Join-Path $library 'identification/include')",
         "-I$(Join-Path $repo 'modus/lib/perf_counter')",
         "-I$(Join-Path $library 'port/include')")
     if ($abi -eq 'hard') { $arguments += '-mfpu=fpv4-sp-d16' }
@@ -45,7 +47,7 @@ $portIncludes = @('mfoc', 'mfoc/base/include', 'mfoc/port/include',
     'vendor/cortex-m/cmsis_device_g4/Include', 'vendor/cortex-m/cmsis_core') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 $irqIncludes = @('mfoc/core/include', 'mfoc/motor/include',
-    'mfoc/position/include',
+    'mfoc/position/include', 'mfoc/identification/include',
     'class', 'modus/src/mdebug', 'modus/lib/plooc') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 foreach ($numeric in @('FLOAT', 'FIXED')) {

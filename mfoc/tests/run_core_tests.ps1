@@ -1,14 +1,15 @@
+param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
+    'motor_control', 'motor_irq', 'identification'))
 $ErrorActionPreference = 'Stop'
 $library = Split-Path -Parent $PSScriptRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-core-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c",
-    "$library/motor/src/*.c" |
+    "$library/motor/src/*.c", "$library/identification/src/*.c" |
     Where-Object { $_.Name -notin @('mfoc_feedback.c', 'mfoc_motor_irq.c') } |
     ForEach-Object { $_.FullName })
 foreach ($numeric in @('FLOAT', 'FIXED')) {
-  foreach ($test in @('openloop', 'core', 'motor', 'motor_run',
-      'motor_control', 'motor_irq')) {
+  foreach ($test in $Tests) {
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
     if ($test -eq 'motor_irq') {
@@ -22,7 +23,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         @irqArguments `
         "-I$library" "-I$library/base/include" "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/port/include" `
-        "-I$library/position/include" `
+        "-I$library/position/include" "-I$library/identification/include" `
         "-I$library/../modus/lib/perf_counter" `
         "$PSScriptRoot/${test}_test.c" "$PSScriptRoot/motor_port_fake.c" `
         @sources -lm -o $exe

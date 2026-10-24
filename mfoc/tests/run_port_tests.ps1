@@ -4,14 +4,14 @@ $repo = Split-Path -Parent $library
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-port-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $includes = @('mfoc', 'mfoc/base/include', 'mfoc/port/include',
-    'mfoc/core/include',
+    'mfoc/core/include', 'mfoc/identification/include',
     'mfoc/motor/include', 'mfoc/position/include',
     'modus/lib/perf_counter', 'modus/src',
     'modus/src/utilities', 'peripheral/stm32g431',
     'vendor/cortex-m/cmsis_device_g4/Include', 'vendor/cortex-m/cmsis_core') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c",
-    "$library/motor/src/*.c" |
+    "$library/motor/src/*.c", "$library/identification/src/*.c" |
     Where-Object { $_.Name -notin @('mfoc_feedback.c', 'mfoc_motor_irq.c') } |
     ForEach-Object { $_.FullName }) +
     @("$PSScriptRoot/motor_port_fake.c")

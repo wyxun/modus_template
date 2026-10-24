@@ -21,12 +21,17 @@
 #define MFOC_FEEDBACK_NONE 0
 #define MFOC_FEEDBACK_ENCODER 1
 #define MFOC_FEEDBACK_SMO 2
+#define MFOC_FEEDBACK_HFI 3
 
 #ifndef MFOC_FEEDBACK_ENABLE_ENCODER
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
 #define MFOC_FEEDBACK_ENABLE_SMO 1
+#endif
+/* Framework only: no injection or valid HFI estimate until implemented. */
+#ifndef MFOC_FEEDBACK_ENABLE_HFI
+#define MFOC_FEEDBACK_ENABLE_HFI 0
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND

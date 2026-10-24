@@ -10,13 +10,15 @@
 #include "mfoc_core.h"
 #include "mfoc_encoder.h"
 #include "mfoc_smo.h"
+#include "mfoc_hfi.h"
 
 #if MFOC_FEEDBACK_ENABLE_ENCODER != 0 && MFOC_FEEDBACK_ENABLE_ENCODER != 1
 #error "MFOC_FEEDBACK_ENABLE_ENCODER must be 0 or 1"
 #endif
 #if MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_NONE &&                              \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_ENCODER &&                           \
-    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO &&                             \
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI
 #error "MFOC_FEEDBACK_BACKEND must select an implemented position algorithm"
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER &&                           \
@@ -28,6 +30,9 @@
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO && !MFOC_FEEDBACK_ENABLE_SMO
 #error "The selected SMO output requires MFOC_FEEDBACK_ENABLE_SMO"
+#endif
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI && !MFOC_FEEDBACK_ENABLE_HFI
+#error "The selected HFI output requires MFOC_FEEDBACK_ENABLE_HFI"
 #endif
 
 /** @brief Independent algorithm settings; enable flags control execution. */
@@ -47,6 +52,7 @@ typedef struct {
 typedef struct {
     mfoc_angle_t angle;   /**< Electrical BAM32. */
     mfoc_scalar_t speed;  /**< omega_e/omega_base. */
+    mfoc_ab_t u_inject_ab; /**< Next-interval V/Vbase; zero when inactive. */
 } mfoc_feedback_output_t;
 
 /** @brief Instance-owned algorithm states, independent of output selection. */
@@ -57,8 +63,13 @@ typedef struct {
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO
     mfoc_smo_t smo;
+    mfoc_smo_cfg_t smo_cfg; /**< Retained for stopped model updates. */
     mfoc_smo_output_t smo_output;
     mfoc_result_t smo_status;
+#endif
+#if MFOC_FEEDBACK_ENABLE_HFI
+    mfoc_hfi_t hfi;
+    mfoc_hfi_output_t hfi_output;
 #endif
     bool initialized;
 } mfoc_feedback_t;
@@ -69,6 +80,13 @@ typedef struct {
  * @return Initialization status. */
 mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model);
+
+/** @brief Rebuild model-dependent observers, preserving encoder calibration.
+ * @param feedback Instance. @param model New motor PU parameters.
+ * @return OK or rejected model; failure preserves all observer state.
+ * @note Motor must be stopped. Pole pairs and PU bases remain unchanged. */
+mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
+    const mfoc_motor_params_t *model);
 
 /** @brief Service enabled foreground algorithms at their own cadences.
  * @param feedback Instance. @return Sampling/state status.

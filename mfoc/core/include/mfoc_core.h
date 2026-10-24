@@ -44,10 +44,12 @@ typedef struct {
     mfoc_ab_t i;
     mfoc_dq_t ref;
     mfoc_angle_t angle;
+    mfoc_ab_t u_inject_ab; /* Added stationary voltage V/Vbase; zero disables. */
 } mfoc_core_input_t;
 
 /** @brief Computed command for the next PWM interval, not measured voltage.
- * i is dq current; u is limited dq V/Vbase; m is alpha-beta V/Vdc.
+ * i is dq current; u includes injection, limited dq V/Vbase.
+ * m is alpha-beta V/Vdc.
  * bus is the Vdc/Vbase snapshot used for this output.
  * limited reports circular limiting.
  * PI axis limits are configured separately and remain active. */

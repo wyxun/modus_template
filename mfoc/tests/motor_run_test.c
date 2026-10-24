@@ -6,7 +6,9 @@
  */
 #include "mfoc_motor.h"
 #include "motor_port_fake.h"
+#include "mfoc_modulation.h"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 
 /** @brief Prepare a current-controlled motor with a known inactive port.
@@ -118,6 +120,15 @@ int main(void)
 
     setup(&motor);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    motor_port_fake.feedback.angle.wBam32 = UINT32_C(0x40000000);
+    motor_port_fake.feedback.u_inject_ab =
+        (mfoc_ab_t){MFOC_SCALAR(0.2f), MFOC_SCALAR(-0.1f)};
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    mfoc_ab_t voltage = {0};
+    assert(mfoc_modulation_ModelVoltageAlphaBeta(&motor_port_fake.duty,
+        motor.previous_core_output.bus, &voltage) == MFOC_RESULT_OK);
+    assert(fabsf(mfoc_to_float(voltage.qAlpha) - 0.2f) < 0.0003f);
+    assert(fabsf(mfoc_to_float(voltage.qBeta) + 0.1f) < 0.0003f);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     puts("Motor control, startup rejection and fault recovery passed");
     return 0;

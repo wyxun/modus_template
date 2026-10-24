@@ -9,6 +9,7 @@
 #include "mfoc_port.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 static uint32_t tick;
 /** @brief Supply the test clock. @return Microseconds. */
@@ -38,7 +39,8 @@ int main(void)
             .h = MFOC_SCALAR(5.0f / 12.0f),
             .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE}};
     mfoc_feedback_t feedback = {0};
-    mfoc_feedback_output_t output = {{0x12345678U}, MFOC_HALF};
+    mfoc_feedback_output_t output = {
+        .angle = {0x12345678U}, .speed = MFOC_HALF};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
     assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, NULL, &output);
@@ -63,6 +65,11 @@ int main(void)
         mfoc_smo_Step(&reference, &current, &voltage, &expected);
         rc = mfoc_feedback_Step(&feedback, &input, &output);
         assert(feedback.smo_status == MFOC_RESULT_OK);
+#if MFOC_FEEDBACK_ENABLE_HFI
+        assert(!feedback.hfi_output.valid);
+        assert(output.u_inject_ab.qAlpha == MFOC_ZERO);
+        assert(output.u_inject_ab.qBeta == MFOC_ZERO);
+#endif
         assert(feedback.smo_output.angle.wBam32 == expected.angle.wBam32);
         assert(feedback.smo_output.speed == expected.speed);
         assert(feedback.smo.axis[0].i_hat == reference.axis[0].i_hat);
@@ -93,6 +100,26 @@ int main(void)
     assert(!feedback.smo_output.valid && !feedback.smo.has_angle);
     assert(feedback.smo.axis[0].i_hat == MFOC_ZERO);
     assert(feedback.smo.axis[1].e_hat == MFOC_ZERO);
-    puts("Feedback voltage preparation, shadow and SMO selection passed");
+#if MFOC_FEEDBACK_ENABLE_ENCODER
+    mfoc_encoder_t encoder = feedback.encoder;
+#endif
+    model.rs = MFOC_HALF;
+    model.ld = MFOC_HALF;
+    model.lq = MFOC_HALF;
+    assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
+        MFOC_RESULT_OK);
+    assert(mfoc_smo_Init(&reference, &cfg.smo, &model) == MFOC_RESULT_OK);
+    assert(feedback.smo.c.ku == reference.c.ku);
+    assert(feedback.smo.c.kr == reference.c.kr);
+    assert(!feedback.smo_output.valid && !feedback.smo.has_angle);
+#if MFOC_FEEDBACK_ENABLE_ENCODER
+    assert(memcmp(&encoder, &feedback.encoder, sizeof(encoder)) == 0);
+#endif
+    mfoc_smo_t retained = feedback.smo;
+    model.lq = MFOC_ONE;
+    assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
+        MFOC_RESULT_INVALID_ARGUMENT);
+    assert(memcmp(&retained, &feedback.smo, sizeof(retained)) == 0);
+    puts("Feedback preparation, selection and model refresh passed");
     return 0;
 }

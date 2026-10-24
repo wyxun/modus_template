@@ -183,9 +183,21 @@ mfoc_port_current -> Clarke -> mfoc_feedback_Step
 提供 Init、Run 和 Step。算法启用与控制输出来源分开：
 `MFOC_FEEDBACK_ENABLE_ENCODER=1`（默认）编入并运行编码器；
 `MFOC_FEEDBACK_ENABLE_SMO=1`（默认）同时运行 SMO；
+`MFOC_FEEDBACK_ENABLE_HFI=0`（默认）关闭 HFI 框架；
 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_ENCODER`（默认）选择编码器输出。
 这些开关统一位于根目录 `mfoc_config.h`。
 BACKEND 只选择最终角度和速度，不控制各算法是否运行。
+
+HFI 当前仅提供 `mfoc_hfi_Init/Step` 框架，载波、同步解调、位置估计和
+磁极判定留 TODO。启用后仍输出零注入和无效估计；选择
+`MFOC_FEEDBACK_HFI` 时 Step 返回 INVALID_STATE，不能用作控制角度来源。
+不引入尚未使用的 HFI 配置项。
+
+Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Motor
+直接传入 Core。Core 复用 sin/cos 转到控制 dq 坐标系，与 PI 电压相加后
+执行总电压圆限幅、抗饱和和 SVPWM。`previous_core_output` 缓存的是最终
+提交的合成电压对应输出；SMO/HFI 共用一次上一拍模型电压重建。
+注入为零时跳过附加 Park；HFI Step 不重复检查调用方提供的采样指针。
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
 `MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
 当前应用保持编码器闭环、SMO 影子运行，不包含强拖启动或无感接管。
@@ -466,3 +478,70 @@ powershell -ExecutionPolicy Bypass -File mfoc/tests/run_tests.ps1
 默认三角后端是 LUT。`MFOC_TRIG_BACKEND_LIBM` 仅支持 FLOAT；`MFOC_TRIG_BACKEND_EXTERNAL` 由目标提供两个直接函数 `mfoc_trig_port_sincos` / `mfoc_trig_port_atan2`，不引入运行时 ops 表。首批不复制 G431 CORDIC 驱动，也不宣称已经完成硬件适配。
 
 公式审核、已修正问题和暂缓优化见 [迁移审核](MIGRATION_REVIEW.md)。本轮仅有主机及目标编译证据，没有电机台架性能结论。
+
+## 参数辨识框架（算法待实现）
+
+`identification/include/mfoc_identification.h` 定义管理接口，Motor 按值拥有
+`identification` 实例。实例保存状态、结果模型及前台 PT/超时槽，不保存 cfg 或 Motor 指针。
+`Start(id, model, operation)` 在 Motor 停止时准备辨识，复制原模型以保留未辨识字段；
+实际 PWM 启动仍使用 `mfoc_motor_Start()`。所有前台操作由调用方与 ISR 串行化。
+
+`mfoc_motor_Run()` 内部调用 `mfoc_identification_Run()`，应用层仍只调度 Motor。
+前台 Run 使用非阻塞 perfc-PT，电气参数流程按对齐 → Rs → Ld → Lq → 完成推进；
+磁链和惯量各自按闭环升速准备 → 对应辨识 → 完成推进，暂未实现升速或估算。
+每阶段由 ISR 发布 `stage_done` 后切换，超时进入 ERROR，下一次 ISR 请求停机。
+阶段超时由 `MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS` 配置，默认 5000 ms。
+`operation` 可选 `MFOC_IDENTIFICATION_ELECTRICAL/FLUX/INERTIA`，不复制 cfg。
+
+Motor 在 Clarke 之后用 `GetControl()` 查询本拍控制需求，再按需读取 Feedback：
+
+- 固定轴：跳过位置反馈，使用辨识给定角度，供对齐、Rs、Ld/Lq 使用。
+- 旋转：使用正常 Feedback 的角度/速度；反馈失败沿用 Motor 的故障停机路径。
+- 未活动：执行原有电流、速度或强拖控制。
+
+活动时 Motor 将下列输入交给 `mfoc_identification_Step()`：
+
+- 本拍 `i_ab_k`、上一拍已提交的 `previous_core_output`（首拍为 NULL）。
+- 旋转辨识额外借用本拍已选定的有效 Feedback；固定轴不提供该指针。
+- 输出：`i_ref`、固定电角度 `angle`、`u_inject_ab` 和优先处理的 `stop`。
+- 辨识期间不推进正常速度 PI；注入电压与 Feedback/HFI 的注入相加，由 Core 限幅。
+
+`mfoc_identification_algorithms.h` 定义叶子接口，分别由 `rs.c`、`inductance.c`、
+`flux.c`、`inertia.c`（文件名前缀均为 `mfoc_identification_`）承载算法：
+
+| 叶子 | 输入 | 成功结果 |
+|---|---|---|
+| Rs、Ld/Lq | 电流、上一拍 Core 输出、固定轴角度；电感另选 d/q 轴 | Rs 或 Ld/Lq PU |
+| 磁链 | 电流、上一拍 Core 输出、反馈角度/速度、已知模型 | 磁链 PU |
+| 惯量 | 电流、反馈角度/速度、已知转矩模型 | 惯量 PU |
+
+惯量叶子可按需要分频后自行算 iq，避免 Motor 重复做 Park 或拿上一拍电流充当本拍值。
+`MFOC_IDENTIFICATION_SAMPLE_HZ` / `MFOC_IDENTIFICATION_SPEED_BASE_HZ` 约定
+采样与电速度基值，默认 20 kHz / 400 Hz，必须匹配实际控制和共享 PU 基值。
+叶子只接收对应采样纯数据，不接收 Motor/Feedback 对象；未来采样历史由各算法自己的
+实例状态持有。ISR 调用保持 Motor → identification → 对应叶子，未引入回调或包装层。
+
+上一拍 duty/bus 可用于重构模型电压，不等于实测端电压。公式 TODO 留在各叶子源码，
+尚未实现对齐、激励、采集和估算；当前第一次活动 Step 会报告 ERROR 并请求 Motor
+停机，不发送测试激励，也不会把原模型冒充辨识成功结果。旋转闭环调速准备、
+稳速判定及惯量辨识的负载转矩处理仍是 TODO，不代表已实现可用的辨识。
+
+`mfoc_motor_Stop/Trip` 会取消活动辨识；完成或错误状态保留供查询。
+`mfoc_identification_Stop` 只取消算法，前台直接调用它前先停止 Motor。
+`GetStatus` 查询生命周期；`GetResult` 仅在 DONE 时复制结果，否则保持目标不变。
+
+完成并停机后，由 identification 提交结果：
+
+```c
+mfoc_result_t rc = mfoc_identification_ApplyResult(
+    &motor.identification, &motor.params, &motor.feedback);
+/* 调用方处理 rc；失败时原模型和反馈系数保持不变。 */
+```
+
+此入口先调用 `mfoc_feedback_SetMotorParamModel()`，成功后才写入 Motor 参数。
+Feedback 只在启用 SMO 时保留其初始化调参，复用 `mfoc_smo_Init()` 重算离散系数
+并清空观测历史，保留编码器零位。当前 SMO 仍要求 Ld == Lq，不兼容模型会被拒绝。
+极对数和 PU 基值不在本次更新范围内；PI 增益独立配置，不自动重整定。
+
+框架用例可单独运行 `mfoc/tests/run_core_tests.ps1 -Tests identification`；
+模型更新与拒绝路径由 `run_smo_tests.ps1` 覆盖。

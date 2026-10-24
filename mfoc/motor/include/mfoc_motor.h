@@ -10,6 +10,7 @@
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
 #include "mfoc_openloop.h"
+#include "mfoc_identification.h"
 
 /** @brief Fixed-field hold duration, serviced by Motor Run. */
 #ifndef MFOC_MOTOR_ALIGN_TIME_MS
@@ -88,6 +89,7 @@ typedef struct {
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
     mfoc_feedback_t feedback;
+    mfoc_identification_t identification;
     mfoc_openloop_t openloop;
     mfoc_motor_command_t command;
     volatile mfoc_motor_mode_t mode;
@@ -127,7 +129,8 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
 
 /** @brief Disable PWM, clear command/integrals and retain any fault latch.
  * @param motor Initialized instance. @return Shutdown/reset status.
- * @note Foreground operation; ISR faults use Trip. Idempotent in IDLE. */
+ * @note Foreground or control ISR on identification stop; no waits.
+ * Foreground callers serialize control changes. Idempotent in IDLE. */
 mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor);
 
 /** @brief Select current mode and accept a dq command within i_max.

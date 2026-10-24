@@ -13,7 +13,7 @@
 #include <math.h>
 #endif
 
-/** @brief Limit dq voltage; both input axes are within [-1,1].
+/** @brief Limit the combined PI and injection voltage vector.
  * @param u Voltage request, replaced by limited voltage.
  * @param c Core with a precomputed voltage limit.
  * @return Whether limiting occurred. */
@@ -27,17 +27,14 @@ static bool _mfoc_core_limit(mfoc_dq_t *u, const mfoc_core_t *c)
     u->qQ *= k;
 #else
     mfoc_scalar_t r = c->u_max;
-    /* Raw Q30 squared norm fits uint32 for two Q15 axes in [-1,1].
-     * Integer sqrt rounded upward gives a conservative Q15 magnitude.
-     * No intermediate Q15 square truncation near a small voltage limit. */
-    /* ponytail: bounded axes keep sqrt at 32 bits; widen this kernel
-     * if a future core must support axis voltage above 1 pu. */
-    uint32_t n2 = (uint32_t)((int64_t)u->qD * u->qD +
-                            (int64_t)u->qQ * u->qQ);
-    if ((int64_t)n2 <= (int64_t)r * r) { return false; }
-    uint32_t rem = n2;
-    uint32_t n = 0;
-    uint32_t bit = 1UL << 30;
+    /* Injection can push either axis above 1 PU. Keep the Q30 norm wide;
+     * ceil(sqrt(norm)) preserves conservative vector limiting. */
+    uint64_t n2 = (uint64_t)((int64_t)u->qD * u->qD) +
+                  (uint64_t)((int64_t)u->qQ * u->qQ);
+    if (n2 <= (uint64_t)((int64_t)r * r)) { return false; }
+    uint64_t rem = n2;
+    uint64_t n = 0;
+    uint64_t bit = UINT64_C(1) << 62;
     while (bit != 0U) {
         if (rem >= n + bit) {
             rem -= n + bit;
@@ -49,8 +46,8 @@ static bool _mfoc_core_limit(mfoc_dq_t *u, const mfoc_core_t *c)
     }
     if (rem != 0U) { ++n; }
     /* Single wide product/division per axis, rounded toward zero. */
-    u->qD = (mfoc_scalar_t)((int64_t)u->qD * r / n);
-    u->qQ = (mfoc_scalar_t)((int64_t)u->qQ * r / n);
+    u->qD = (mfoc_scalar_t)((int64_t)u->qD * r / (int64_t)n);
+    u->qQ = (mfoc_scalar_t)((int64_t)u->qQ * r / (int64_t)n);
 #endif
     return true;
 }
@@ -135,6 +132,15 @@ void mfoc_core_Step(mfoc_core_t *c,
     mfoc_park_cached(&in->i, sin_theta, cos_theta, &out->i);
     mfoc_pi_Step(&c->d, in->ref.qD, out->i.qD, &u.qD);
     mfoc_pi_Step(&c->q, in->ref.qQ, out->i.qQ, &u.qQ);
+    // 仅在HFI状态不为零情况下有用
+    if (in->u_inject_ab.qAlpha != MFOC_ZERO ||
+        in->u_inject_ab.qBeta != MFOC_ZERO) {
+        mfoc_dq_t injection = {0};
+        mfoc_park_cached(&in->u_inject_ab, sin_theta, cos_theta, &injection);
+        u.qD = mfoc_add_sat(u.qD, injection.qD);
+        u.qQ = mfoc_add_sat(u.qQ, injection.qQ);
+    }
+    /* Anti-windup below tracks only the total request's saturation loss. */
     out->u = u;
     out->limited = _mfoc_core_limit(&out->u, c);
     if (out->limited) {
