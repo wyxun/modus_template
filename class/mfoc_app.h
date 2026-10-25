@@ -20,7 +20,7 @@ typedef struct {
     mfoc_motor_cfg_t motor;
 } mfoc_app_cfg_t;
 
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
 /** @brief ISR maximum and overrun latch for the current reporting window. */
 typedef struct {
     volatile uint32_t wMaximumTicks;
@@ -36,7 +36,7 @@ typedef struct {
     mfoc_motor_t motor;
     mfoc_app_state_t state;
     mfoc_result_t result;
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
     mfoc_app_isr_timing_t tIsrTiming;
 #endif
 } mfoc_app_t;

@@ -14,8 +14,8 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 C_DEFS += -DFOC_TRIG_BACKEND=2
 C_DEFS += -DFOC_HF_ISR_HZ=20000U
-# 20 mOhm shunt, 10k/22k/976 input network, PGA x16: about 34 counts/A.
-# Injected ADC keeps the 4x sum: preserve the existing rounded scale * 4.
+# Legacy FOC scale settings; active MFOC profile bases live in
+# mfoc/mfoc_motor_config.h and its ADC sensitivity lives in mfoc_port.h.
 C_DEFS += -DFOC_CURRENT_BASE_MILLIAMP=3500U
 C_DEFS += -DFOC_CURRENT_COUNTS_PER_BASE=476U
 C_DEFS += -DFOC_DCBUS_SOURCE=2U
@@ -26,6 +26,13 @@ C_DEFS += -DFOC_DCBUS_MV_PER_COUNT_DEN=2457U
 C_DEFS += -DFOC_DCBUS_OFFSET_MILLIVOLT=0
 C_DEFS += -DFOC_SUPPORT=0 -DMFOC_APP_ENABLED=1
 C_DEFS += -DMFOC_NUMERIC_FLOAT=1 -DMFOC_TRIG_BACKEND=1
+# Timing is enabled for debug builds and compiled out of release builds.
+ifeq ($(BUILD),release)
+MFOC_ISR_MEASURE ?= 0
+else
+MFOC_ISR_MEASURE ?= 1
+endif
+C_DEFS += -DMFOC_ISR_MEASURE=$(MFOC_ISR_MEASURE)
 C_DEFS += -DFOC_ENCODER_STATIC_BINDING=1
 C_DEFS += -DMDI_MAIN_STREAM_RESOURCE=board_stream
 

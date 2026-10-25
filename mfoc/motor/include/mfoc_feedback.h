@@ -102,7 +102,7 @@ mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
 
 /** @brief Run enabled ISR algorithms, then select the configured output.
  * @param feedback Instance. @param input Current/prior Core samples; encoder
- * ignores this argument; absent prior voltage resets SMO history only.
+ * ignores this argument; absent prior voltage resets model histories.
  * @param output Electrical feedback, unchanged on failure.
  * @return Backend status; NONE returns INVALID_STATE. No I2C access here.
  * @note Valid initialized feedback and output pointers are preconditions. */

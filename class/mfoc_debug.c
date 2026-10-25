@@ -1,6 +1,6 @@
 /**
  * @file mfoc_debug.c
- * @brief MFOC angle and current waveform diagnostics.
+ * @brief MFOC complete-carrier demodulation and angle diagnostics.
  * @author Codex
  * @date 2026-10-22
  */
@@ -13,14 +13,26 @@
 
 #define MFOC_DEBUG_WAVEFORM_PERIOD_NS 50000U
 #define MFOC_DEBUG_WAVEFORM_RATE_HZ 10000U
+#if MFOC_FEEDBACK_ENABLE_HFI
+/* 0.0001 PU transport resolution, below the current ADC's 1/476 PU/count. */
+#define MFOC_DEBUG_WAVEFORM_SCALE 10000.0f
+#else
 #define MFOC_DEBUG_WAVEFORM_SCALE 1000.0f
+#endif
 #define MFOC_DEBUG_CHANNEL_INVALID 0xFFU
 
 enum {
+#if MFOC_FEEDBACK_ENABLE_HFI
+    MFOC_DEBUG_DI_ALPHA = 0,
+    MFOC_DEBUG_DI_BETA,
+    MFOC_DEBUG_DU_ALPHA,
+    MFOC_DEBUG_DU_BETA,
+#else
     MFOC_DEBUG_ENCODER_ANGLE = 0,
-    MFOC_DEBUG_SMO_ANGLE,
+    MFOC_DEBUG_OBSERVER_ANGLE,
     MFOC_DEBUG_ANGLE_ERROR,
     MFOC_DEBUG_IQ,
+#endif
     MFOC_DEBUG_CHANNEL_COUNT,
 };
 
@@ -29,9 +41,10 @@ extern mfoc_app_t tMfocApp;
 
 void mfoc_debug_CaptureWaveform(void)
 {
+#if !MFOC_FEEDBACK_ENABLE_HFI
     mfoc_motor_t *motor = &tMfocApp.motor;
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] = -1.0f;
-    s_waveform[MFOC_DEBUG_SMO_ANGLE] = -1.0f;
+    s_waveform[MFOC_DEBUG_OBSERVER_ANGLE] = -1.0f;
     s_waveform[MFOC_DEBUG_ANGLE_ERROR] = -1.0f;
     s_waveform[MFOC_DEBUG_IQ] = -1.0f;
     if (motor->state != MFOC_MOTOR_RUNNING) { return; }
@@ -41,12 +54,14 @@ void mfoc_debug_CaptureWaveform(void)
             mfoc_to_float(motor->previous_core_output.i.qQ);
     }
 #if MFOC_FEEDBACK_ENABLE_SMO
-    bool smo_valid = !motor->align_active &&
+    mfoc_angle_t observer_angle = {0U};
+    observer_angle = motor->feedback.smo_output.angle;
+    bool observer_available = !motor->align_active &&
         motor->feedback.smo_status == MFOC_RESULT_OK &&
         motor->feedback.smo_output.valid;
-    if (smo_valid) {
-        s_waveform[MFOC_DEBUG_SMO_ANGLE] =
-            mfoc_angle_to_turns(motor->feedback.smo_output.angle);
+    if (observer_available) {
+        s_waveform[MFOC_DEBUG_OBSERVER_ANGLE] =
+            mfoc_angle_to_turns(observer_angle);
     }
 #endif
 #if MFOC_FEEDBACK_ENABLE_ENCODER
@@ -58,10 +73,11 @@ void mfoc_debug_CaptureWaveform(void)
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] =
         mfoc_angle_to_turns(encoder_angle);
 #if MFOC_FEEDBACK_ENABLE_SMO
-    if (smo_valid) {
+    if (observer_available) {
         s_waveform[MFOC_DEBUG_ANGLE_ERROR] = mfoc_to_float(
-            mfoc_angle_diff(motor->feedback.smo_output.angle, encoder_angle));
+            mfoc_angle_diff(observer_angle, encoder_angle));
     }
+#endif
 #endif
 #endif
 }
@@ -69,13 +85,22 @@ void mfoc_debug_CaptureWaveform(void)
 void mfoc_debug_WaveformInit(void)
 {
     static const char *const names[MFOC_DEBUG_CHANNEL_COUNT] = {
+#if MFOC_FEEDBACK_ENABLE_HFI
+        "DiA_pu", "DiB_pu", "DuA_pu", "DuB_pu"};
+#else
         "Enc_mT", "SMO_mT", "Err_mT", "Iq_mpu"};
+#endif
     int rc = mwaveform.Init(NULL);
     if (rc != MODUS_SUCCESS) {
         MLOGF(W, "MFOC waveform init failed (%d)\r\n", rc);
         return;
     }
     for (uint8_t index = 0U; index < MFOC_DEBUG_CHANNEL_COUNT; ++index) {
+#if MFOC_FEEDBACK_ENABLE_HFI
+        s_waveform[index] = -3.2f;
+#else
+        s_waveform[index] = -1.0f;
+#endif
         if (mwaveform.AddVariable(names[index], MFOC_DEBUG_WAVEFORM_SCALE,
             &s_waveform[index], MWAVEFORM_VAR_FLOAT) ==
             MFOC_DEBUG_CHANNEL_INVALID) {
@@ -94,10 +119,40 @@ void mfoc_debug_WaveformInit(void)
     mwaveform.Start();
     MLOGF(I, "MFOC waveform %lu Hz, 4 channels\r\n",
         (unsigned long)rate);
+#if MFOC_FEEDBACK_ENABLE_HFI
+    MLOGF(I, "HFI Di/Du excitation=%s, PU, unavailable=-3.2\r\n",
+        MFOC_DEBUG_HFI_AXIS == 0 ? "alpha" : "beta");
+#endif
 }
 
 void mfoc_debug_WaveformStep(void)
 {
+#if MFOC_FEEDBACK_ENABLE_HFI
+    const mfoc_motor_t *motor = &tMfocApp.motor;
+    const mfoc_hfi_t *hfi = &motor->feedback.hfi;
+    if (motor->state != MFOC_MOTOR_RUNNING || motor->align_active ||
+        !hfi->has_current ||
+        hfi->startup_count <= MFOC_HFI_CARRIER_SAMPLES ||
+        hfi->state == MFOC_HFI_FAILED) {
+        s_waveform[MFOC_DEBUG_DI_ALPHA] = -3.2f;
+        s_waveform[MFOC_DEBUG_DI_BETA] = -3.2f;
+        s_waveform[MFOC_DEBUG_DU_ALPHA] = -3.2f;
+        s_waveform[MFOC_DEBUG_DU_BETA] = -3.2f;
+    } else if (hfi->carrier == 0U &&
+               (hfi->state == MFOC_HFI_ACQUIRE ||
+                hfi->state == MFOC_HFI_TRACK)) {
+        /* Latch before 10 kHz decimation: only every eighth control step
+         * contains two complete pulse pairs. Reuse the bound slots. */
+        const mfoc_ab_t *i = &hfi->delta_i[MFOC_DEBUG_HFI_AXIS];
+        const mfoc_ab_t *u = &hfi->delta_u[MFOC_DEBUG_HFI_AXIS];
+        /* Preserve signed PU values; no angle extraction or normalization.
+         * Reserve -3.2 for missing data, +/-3.1 for diagnostic clipping. */
+        s_waveform[MFOC_DEBUG_DI_ALPHA] = mfoc_sat(i->qAlpha, -3.1f, 3.1f);
+        s_waveform[MFOC_DEBUG_DI_BETA] = mfoc_sat(i->qBeta, -3.1f, 3.1f);
+        s_waveform[MFOC_DEBUG_DU_ALPHA] = mfoc_sat(u->qAlpha, -3.1f, 3.1f);
+        s_waveform[MFOC_DEBUG_DU_BETA] = mfoc_sat(u->qBeta, -3.1f, 3.1f);
+    } else { /* Partial pairs and polarity pauses retain the last full group. */ }
+#endif
     mwaveform.Step();
 }
 #endif

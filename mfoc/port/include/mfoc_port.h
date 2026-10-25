@@ -8,14 +8,18 @@
 #define MFOC_PORT_H
 
 #include "mfoc_angle.h"
+#include "mfoc_motor_config.h"
 
 /** @brief Board bus-voltage conversion settings used by mfoc_port_bus(). */
 #define MFOC_PORT_BUS_MV_PER_COUNT_NUM UINT32_C(20570)
 #define MFOC_PORT_BUS_MV_PER_COUNT_DEN UINT32_C(2457)
-#define MFOC_PORT_BUS_BASE_MILLIVOLT UINT32_C(12000)
+#define MFOC_PORT_BUS_BASE_MILLIVOLT MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT
 #define MFOC_PORT_BUS_OFFSET_MILLIVOLT INT32_C(0)
 #define MFOC_PORT_BUS_MAX_MILLIVOLT UINT32_C(60000)
-#define MFOC_PORT_COUNTS_PER_BASE UINT32_C(476)
+#define MFOC_PORT_ADC_SUM_COUNTS_PER_AMP UINT32_C(136)
+#define MFOC_PORT_COUNTS_PER_BASE \
+    ((MFOC_PORT_ADC_SUM_COUNTS_PER_AMP * \
+      MFOC_MOTOR_BASE_CURRENT_MILLIAMP + 500U) / 1000U)
 /* Preserve G431 legacy current feedback: (calibrated offset - ADC raw). */
 #define MFOC_PORT_CURRENT_INVERTED 1U
 

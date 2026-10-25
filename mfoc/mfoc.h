@@ -7,6 +7,7 @@
 #ifndef MFOC_H
 #define MFOC_H
 #include "mfoc_config.h"
+#include "mfoc_motor_config.h"
 #include "mfoc_numeric.h"
 #include "mfoc_angle.h"
 #include "mfoc_trig.h"

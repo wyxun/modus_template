@@ -25,7 +25,6 @@ typedef struct {
     unsigned feedback_runs;
     mfoc_result_t feedback_run;
     mfoc_result_t feedback_step;
-    mfoc_result_t model_update;
     mfoc_result_t calibration;
     unsigned calibrations;
     mfoc_angle_t held_angle;

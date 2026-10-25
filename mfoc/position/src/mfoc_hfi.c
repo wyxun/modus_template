@@ -1,6 +1,6 @@
 /**
  * @file mfoc_hfi.c
- * @brief Four-interval saliency demodulation and opposite-pulse polarity.
+ * @brief Two-interval vector holds and second-increment HFI demodulation.
  * @author Codex
  * @date 2026-10-24
  */
@@ -102,7 +102,7 @@ static bool _mfoc_hfi_Axis(const mfoc_hfi_t *hfi, mfoc_angle_t *axis)
 
 /** @brief Correct the phase predictor and integrate electrical speed.
  * @param hfi Tracker. @param axis Measured axis modulo pi. @return None.
- * @note Gains apply once per four samples; error is electrical turns. */
+ * @note Gains apply once per eight samples; error is electrical turns. */
 static void _mfoc_hfi_Track(mfoc_hfi_t *hfi, mfoc_angle_t axis)
 {
     if (!hfi->has_angle) {
@@ -152,23 +152,26 @@ static void _mfoc_hfi_Track(mfoc_hfi_t *hfi, mfoc_angle_t axis)
 
 /** @brief Pair current increments with the carrier actually issued last Step.
  * @param hfi Demodulator. @param i Present current. @param u Prior voltage.
- * @return None. One matrix extraction per four intervals. */
+ * @return None. One matrix extraction per eight intervals. */
 static void _mfoc_hfi_Demodulate(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
     const mfoc_ab_t *u)
 {
-    mfoc_ab_t di = {i->qAlpha - hfi->previous_i.qAlpha,
-                    i->qBeta - hfi->previous_i.qBeta};
-    uint8_t axis = hfi->carrier / 2U;
-    if ((hfi->carrier & 1U) == 0U) {
-        hfi->delta_i[axis] = di;
-        hfi->delta_u[axis] = *u;
-    } else {
-        hfi->delta_i[axis].qAlpha -= di.qAlpha;
-        hfi->delta_i[axis].qBeta -= di.qBeta;
-        hfi->delta_u[axis].qAlpha -= u->qAlpha;
-        hfi->delta_u[axis].qBeta -= u->qBeta;
+    if ((hfi->carrier & 1U) != 0U) {
+        mfoc_ab_t di = {i->qAlpha - hfi->previous_i.qAlpha,
+                        i->qBeta - hfi->previous_i.qBeta};
+        uint8_t axis = hfi->carrier / 4U;
+        if ((hfi->carrier & 2U) == 0U) {
+            hfi->delta_i[axis] = di;
+            hfi->delta_u[axis] = *u;
+        } else {
+            hfi->delta_i[axis].qAlpha -= di.qAlpha;
+            hfi->delta_i[axis].qBeta -= di.qBeta;
+            hfi->delta_u[axis].qAlpha -= u->qAlpha;
+            hfi->delta_u[axis].qBeta -= u->qBeta;
+        }
     }
-    hfi->carrier = (uint8_t)((hfi->carrier + 1U) & 3U);
+    hfi->carrier = (uint8_t)((hfi->carrier + 1U) &
+                            (MFOC_HFI_CARRIER_SAMPLES - 1U));
     if (hfi->carrier == 0U) {
         mfoc_angle_t angle = {0U};
         if (_mfoc_hfi_Axis(hfi, &angle)) {
@@ -285,9 +288,9 @@ static mfoc_ab_t _mfoc_hfi_Injection(const mfoc_hfi_t *hfi)
 {
     mfoc_ab_t u = {0};
     if (hfi->state == MFOC_HFI_ACQUIRE || hfi->state == MFOC_HFI_TRACK) {
-        mfoc_scalar_t amplitude = (hfi->carrier & 1U) == 0U ?
+        mfoc_scalar_t amplitude = (hfi->carrier & 2U) == 0U ?
             MFOC_HFI_VOLTAGE : -MFOC_HFI_VOLTAGE;
-        if (hfi->carrier < 2U) { u.qAlpha = amplitude; }
+        if (hfi->carrier < 4U) { u.qAlpha = amplitude; }
         else { u.qBeta = amplitude; }
 #if MFOC_HFI_ENABLE_POLARITY
     } else if (hfi->state == MFOC_HFI_PULSE_POSITIVE ||

@@ -1,11 +1,12 @@
 /**
  * @file mfoc_identification.c
- * @brief Identification management; excitation and estimation remain TODO.
+ * @brief Foreground stages and synchronous standstill Rs identification.
  * @author Codex
  * @date 2026-10-24
  */
 #include "mfoc_identification.h"
 #include "perfc_task_pt.h"
+#include <stddef.h>
 
 /** @brief Clear experiment state before use.
  * @param id Instance. @return None. */
@@ -19,33 +20,47 @@ void mfoc_identification_Init(mfoc_identification_t *id)
  * @return OK or INVALID_STATE if already active. */
 mfoc_result_t mfoc_identification_Start(mfoc_identification_t *id,
     const mfoc_motor_params_t *model,
-    mfoc_identification_operation_t operation)
+    mfoc_identification_operation_t operation, mfoc_scalar_t bus)
 {
+    if (id == NULL || model == NULL) { return MFOC_RESULT_NULL; }
+    if (bus <= MFOC_ZERO) { return MFOC_RESULT_INVALID_ARGUMENT; }
+    if (operation < MFOC_IDENTIFICATION_ELECTRICAL ||
+        operation > MFOC_IDENTIFICATION_RESISTANCE) {
+        return MFOC_RESULT_INVALID_ARGUMENT;
+    }
     if (id->state == MFOC_IDENTIFICATION_RUNNING) {
         return MFOC_RESULT_INVALID_STATE;
     }
     id->result = *model;
+    id->bus = bus;
+    id->work = (mfoc_identification_work_t){0};
     id->operation = operation;
     id->fixed_angle = (mfoc_angle_t){0U};
     id->run_pt = 0U;
     id->stage_deadline = 0;
     id->stage_done = false;
-    id->stage = operation == MFOC_IDENTIFICATION_ELECTRICAL ?
-        MFOC_IDENTIFICATION_STAGE_ALIGN : MFOC_IDENTIFICATION_STAGE_SPINUP;
+    id->stage = operation == MFOC_IDENTIFICATION_FLUX ||
+        operation == MFOC_IDENTIFICATION_INERTIA ?
+        MFOC_IDENTIFICATION_STAGE_SPINUP : MFOC_IDENTIFICATION_STAGE_ALIGN;
     id->state = MFOC_IDENTIFICATION_RUNNING;
     return MFOC_RESULT_OK;
 }
 
 /** @brief Choose feedback preparation before the leaf receives its sample.
- * @param id Instance. @return Inactive, fixed frame, or valid feedback. */
+ * @param id Instance. @return Current/voltage/feedback requirement. */
 mfoc_identification_control_t mfoc_identification_GetControl(
     const mfoc_identification_t *id)
 {
     if (id->stage == MFOC_IDENTIFICATION_STAGE_NONE) {
         return MFOC_IDENTIFICATION_CONTROL_INACTIVE;
     }
+    if (id->stage == MFOC_IDENTIFICATION_STAGE_ALIGN ||
+        id->stage == MFOC_IDENTIFICATION_STAGE_RS) {
+        return MFOC_IDENTIFICATION_CONTROL_VOLTAGE;
+    }
     return id->state == MFOC_IDENTIFICATION_RUNNING &&
-        id->operation != MFOC_IDENTIFICATION_ELECTRICAL ?
+        (id->operation == MFOC_IDENTIFICATION_FLUX ||
+         id->operation == MFOC_IDENTIFICATION_INERTIA) ?
         MFOC_IDENTIFICATION_CONTROL_FEEDBACK :
         MFOC_IDENTIFICATION_CONTROL_FIXED;
 }
@@ -90,9 +105,18 @@ fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
             id->state = MFOC_IDENTIFICATION_ERROR;
             return fsm_rt_err;
         }
-        /* TODO: prepare the next experiment while Step is paused by
-         * stage_done. Rotating preparation must establish stable speed. */
-        if (id->stage == MFOC_IDENTIFICATION_STAGE_SPINUP) {
+        /* The ISR is paused by stage_done while its workspace is reused. */
+        if (id->stage == MFOC_IDENTIFICATION_STAGE_RS &&
+            mfoc_identification_rs_Finish(&id->work.rs, id->bus,
+                &id->result.rs) !=
+                fsm_rt_cpl) {
+            id->state = MFOC_IDENTIFICATION_ERROR;
+            return fsm_rt_err;
+        }
+        if (id->stage == MFOC_IDENTIFICATION_STAGE_RS &&
+            id->operation == MFOC_IDENTIFICATION_RESISTANCE) {
+            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        } else if (id->stage == MFOC_IDENTIFICATION_STAGE_SPINUP) {
             id->stage = id->operation == MFOC_IDENTIFICATION_FLUX ?
                 MFOC_IDENTIFICATION_STAGE_FLUX :
                 MFOC_IDENTIFICATION_STAGE_INERTIA;
@@ -104,6 +128,7 @@ fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
             id->stage = (mfoc_identification_stage_t)(id->stage + 1);
         }
         if (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
+            id->work = (mfoc_identification_work_t){0};
             id->stage_done = false;
         }
     }
@@ -137,21 +162,26 @@ mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Commit a completed model after dependent coefficients succeed.
- * @param id Completed experiment. @param model Motor-owned parameters.
- * @param feedback Stopped feedback. @return OK or rejected result. */
-mfoc_result_t mfoc_identification_ApplyResult(const mfoc_identification_t *id,
-    mfoc_motor_params_t *model, mfoc_feedback_t *feedback)
+/** @brief Establish a bounded fixed field before electrical measurement.
+ * @param id Active ALIGN stage. @param input Current sample.
+ * @param output Fixed alpha modulation. @return Stage progress. */
+static fsm_rt_t _mfoc_identification_Align(mfoc_identification_t *id,
+    const mfoc_identification_input_t *input,
+    mfoc_identification_output_t *output)
 {
-    if (id->state != MFOC_IDENTIFICATION_DONE) {
-        return MFOC_RESULT_INVALID_STATE;
+    const mfoc_ab_t *current = input->i_ab_k;
+    if (current == NULL || mfoc_abs(current->qAlpha) >
+            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) ||
+        mfoc_abs(current->qBeta) >
+            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) -
+                mfoc_abs(current->qAlpha)) {
+        return fsm_rt_err;
     }
-    if (id->result.pole_pairs != model->pole_pairs) {
-        return MFOC_RESULT_INVALID_ARGUMENT;
-    }
-    mfoc_result_t rc = mfoc_feedback_SetMotorParamModel(feedback, &id->result);
-    if (rc == MFOC_RESULT_OK) { *model = id->result; }
-    return rc;
+    output->modulation = MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW);
+    id->work.align_samples++;
+    return id->work.align_samples >= MFOC_IDENTIFICATION_SAMPLE_HZ *
+        MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U ?
+        fsm_rt_cpl : fsm_rt_on_going;
 }
 
 /** @brief Dispatch one synchronous sample directly to the selected leaf.
@@ -161,14 +191,17 @@ void mfoc_identification_Step(mfoc_identification_t *id,
     const mfoc_identification_input_t *input,
     mfoc_identification_output_t *output)
 {
-    *output = (mfoc_identification_output_t){.angle = id->fixed_angle};
+    *output = (mfoc_identification_output_t){.angle = id->fixed_angle,
+        .bus = id->bus};
     if (id->state != MFOC_IDENTIFICATION_RUNNING) {
         output->stop = true;
         return;
     }
     if (id->stage_done) { return; }
     fsm_rt_t progress = fsm_rt_err;
-    if (id->stage == MFOC_IDENTIFICATION_STAGE_RS ||
+    if (id->stage == MFOC_IDENTIFICATION_STAGE_ALIGN) {
+        progress = _mfoc_identification_Align(id, input, output);
+    } else if (id->stage == MFOC_IDENTIFICATION_STAGE_RS ||
         id->stage == MFOC_IDENTIFICATION_STAGE_LD ||
         id->stage == MFOC_IDENTIFICATION_STAGE_LQ) {
         mfoc_identification_fixed_input_t sample = {
@@ -177,7 +210,7 @@ void mfoc_identification_Step(mfoc_identification_t *id,
             .angle = id->fixed_angle};
         if (id->stage == MFOC_IDENTIFICATION_STAGE_RS) {
             progress = mfoc_identification_rs_Step(
-                &sample, output, &id->result.rs);
+                &id->work.rs, input->i_ab_k, output);
         } else {
             bool d_axis = id->stage == MFOC_IDENTIFICATION_STAGE_LD;
             progress = mfoc_identification_inductance_Step(&sample,
@@ -189,13 +222,13 @@ void mfoc_identification_Step(mfoc_identification_t *id,
         mfoc_identification_flux_input_t sample = {
             .i_ab_k = input->i_ab_k,
             .previous_core_output = input->previous_core_output,
-            .angle = input->feedback->angle, .speed = input->feedback->speed};
+            .angle = input->angle, .speed = input->speed};
         progress = mfoc_identification_flux_Step(
             &sample, &id->result, output, &id->result.flux);
     } else if (id->stage == MFOC_IDENTIFICATION_STAGE_INERTIA) {
         mfoc_identification_inertia_input_t sample = {
-            .i_ab_k = input->i_ab_k, .angle = input->feedback->angle,
-            .speed = input->feedback->speed};
+            .i_ab_k = input->i_ab_k, .angle = input->angle,
+            .speed = input->speed};
         progress = mfoc_identification_inertia_Step(
             &sample, &id->result, output, &id->result.inertia);
     } else {
@@ -203,6 +236,7 @@ void mfoc_identification_Step(mfoc_identification_t *id,
          * Unsupported preparation never reports completion or energizes. */
         output->stop = true;
     }
+    output->bus = id->bus;
     if (progress == fsm_rt_err || output->stop) {
         output->stop = true;
         id->state = MFOC_IDENTIFICATION_ERROR;
@@ -211,7 +245,8 @@ void mfoc_identification_Step(mfoc_identification_t *id,
     } else {
         /* Leaf retains sampling history until a terminal result. */
     }
-    if (!output->stop && id->operation == MFOC_IDENTIFICATION_ELECTRICAL) {
+    if (!output->stop && (id->operation == MFOC_IDENTIFICATION_ELECTRICAL ||
+        id->operation == MFOC_IDENTIFICATION_RESISTANCE)) {
         id->fixed_angle = output->angle;
     }
 }

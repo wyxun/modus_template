@@ -16,7 +16,7 @@ static unsigned s_run_count;
 static unsigned s_register_count;
 static int s_register_result;
 
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
 static int64_t s_ticks;
 /** @brief Supply a 170 MHz test clock. @return Current ticks. */
 int64_t get_system_ticks(void) { return s_ticks; }
@@ -51,6 +51,7 @@ static mfoc_result_t s_encoder_result;
 static unsigned s_current_count;
 static unsigned s_speed_count;
 static unsigned s_openloop_count;
+static unsigned s_hfi_count;
 static unsigned s_start_count;
 static mfoc_dq_t s_current_ref;
 static mfoc_scalar_t s_speed_ref;
@@ -89,7 +90,7 @@ static void command(const char *args, const char *response)
     assert(tMfocApp.state == MFOC_APP_IDLE);
 }
 
-#if !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
 /** @brief Check one-second peak windows, overrun clearing and idle silence.
  * @return None. */
 static void timing_windows(void)
@@ -169,6 +170,28 @@ static void shell_commands(void)
     command("openloop 0.1 inf", "invalid motor arguments");
     command("openloop 0.1 0.04 trailing", "invalid motor arguments");
     assert(s_openloop_count == 1U);
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    command("hfi start", "motor hfi result=0");
+    command("hfi", "motor hfi result=5");
+    assert(s_hfi_count == 2U);
+    command("hfi start 0.04", "invalid motor arguments");
+    command("hfi start status", "invalid motor arguments");
+    command("hfi off", "invalid motor arguments");
+    assert(s_hfi_count == 2U);
+    command("hfi status", "hfi state=");
+#if MFOC_FEEDBACK_ENABLE_HFI
+    tMfocApp.motor.feedback.hfi.startup_count = 17U;
+    tMfocApp.motor.feedback.hfi.lock_count = 3U;
+    command("hfi status", "steps=17 lock=3");
+#if MFOC_ISR_MEASURE
+    tMfocApp.tIsrTiming.wMaximumTicks = MFOC_ISR_BUDGET_TICKS + 1U;
+    tMfocApp.tIsrTiming.bOverrun = true;
+    command("hfi status", "isr_win_max=8501 overrun=1 budget=8500");
+    assert(tMfocApp.tIsrTiming.wMaximumTicks == 8501U);
+    assert(tMfocApp.tIsrTiming.bOverrun);
+#endif
+#endif
+    command("hfi status trailing", "invalid motor arguments");
     command("align", "motor align result=0");
     command("stop", "motor stop result=0");
     assert(s_align_count == 1U && s_stop_count == 1U);
@@ -296,6 +319,19 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     ++s_openloop_count;
     return MFOC_RESULT_OK;
 }
+
+/** @brief Capture HFI startup routing without touching hardware.
+ * @param motor App instance. @return State-dependent result. */
+mfoc_result_t mfoc_motor_HfiStart(mfoc_motor_t *motor)
+{
+    ++s_hfi_count;
+    if (motor->state != MFOC_MOTOR_IDLE) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    motor->state = MFOC_MOTOR_RUNNING;
+    return MFOC_RESULT_OK;
+}
+
 #endif
 
 /** @brief Supply Motor initialization and record invocation.
@@ -357,7 +393,7 @@ int main(void)
     unsigned run_count = s_run_count;
     shell_commands();
     assert(s_init_count == init_count && s_run_count == run_count);
-#if !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
     timing_windows();
 #endif
 #endif

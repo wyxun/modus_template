@@ -7,17 +7,22 @@
 #ifndef MFOC_HFI_H
 #define MFOC_HFI_H
 #include "mfoc_angle.h"
+#include "mfoc_motor_config.h"
 
 /* Same sampling rate and electrical speed base as Motor. These are tuning
  * starting points, not measured motor data. All voltages/currents are PU.
- * Four intervals form one +alpha, -alpha, +beta, -beta carrier cycle. */
+ * Hold +alpha, -alpha, +beta, -beta for two intervals each. Demodulate
+ * only the second 50 us current increment of each vector (eight steps). */
 #define MFOC_HFI_SAMPLE_HZ 20000U
-#define MFOC_HFI_SPEED_BASE_HZ 400U
+#define MFOC_HFI_CARRIER_SAMPLES 8U
+#define MFOC_HFI_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
 #define MFOC_HFI_VOLTAGE MFOC_SCALAR(0.04f)
 #define MFOC_HFI_RESPONSE_MIN MFOC_SCALAR(0.002f)
 #define MFOC_HFI_SALIENCY_MIN MFOC_SCALAR(0.04f)
 /* +1 for Ld < Lq, -1 for Ld > Lq; must match measured HF saliency. */
 #define MFOC_HFI_SALIENCY_SIGN 1
+/* Per completed carrier group; retained during the two-interval experiment.
+ * At 20 kHz, tracker corrections run at 2.5 kHz; 64 groups take 25.6 ms. */
 #define MFOC_HFI_PLL_KP MFOC_SCALAR(0.05f)
 #define MFOC_HFI_PLL_KI MFOC_SCALAR(0.02f)
 #define MFOC_HFI_SPEED_MAX MFOC_SCALAR(0.05f)
@@ -93,7 +98,7 @@ typedef struct {
     mfoc_hfi_state_t state;
     uint32_t startup_count;
     uint16_t lock_count;
-    uint8_t carrier; /* Index of the voltage applied in the prior interval. */
+    uint8_t carrier; /* Prior interval: bit 0=second, 1=negative, 2=beta. */
     bool has_current;
     bool has_angle;
 } mfoc_hfi_t;
@@ -117,6 +122,8 @@ void mfoc_hfi_Init(mfoc_hfi_t *hfi);
  * @return None. Valid instance/current/output pointers are preconditions.
  * @note Caller supplies bounded finite samples (|i_axis| <= 1, |u_axis| <= 4).
  * i[k]-i[k-1] must correspond to u_previous and the preceding injection.
+ * Current history advances every ISR, including the discarded first interval;
+ * accepted increments span 50 us, not the full 100 us vector hold.
  * No extra PWM delay is assumed. Missing voltage resets the whole sequence.
  * Polarity identification requires rest and zero fundamental current command;
  * current control must leave enough injection voltage and HF response.

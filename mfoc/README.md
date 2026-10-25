@@ -7,7 +7,10 @@ base/Core 不依赖硬件；Motor 通过端口读取电流和提交 PWM。
 算法和控制模块不包含旧库、MODUS、MDI 或厂商寄存器头文件，
 `port/` 通过 MDI 实现硬件迁移。
 
-库入口 `mfoc.h` 和统一配置 `mfoc_config.h` 放在 `mfoc/` 根目录。
+库入口 `mfoc.h`、库配置 `mfoc_config.h` 和选定电机配置
+`mfoc_motor_config.h` 放在 `mfoc/` 根目录。
+`mfoc_config.h` 管库功能开关；电机铭牌数据及 PU 基值集中在
+`mfoc_motor_config.h`。板级 ADC 灵敏度、分压和零偏仍归 port 配置。
 计算基座统一归入 `base/` 模块，模块头文件位于 `base/include/`，
 实现位于 `base/src/`。通用 PI 也属于这个基座；电流环、速度环通过各自的
 PI 实例和参数使用同一套控制器接口。
@@ -94,12 +97,15 @@ bridge 的 `_pwm_AnyOutputEnabled` 板级能力，不扩展 modus 公共接口�
 这段时间 ADC 触发必须持续工作，且不能有 ISR/其他调用方读取同一采样资源。
 G431 使用注入 ADC 右对齐四倍累加值，`mfoc_port.h` 中的
 `MFOC_PORT_COUNTS_PER_BASE` 定义为 476 个累加计数，对应当前 Motor/Core 的
-3.5 A Ibase。换板或更改 Ibase 时应调整该宏；`MFOC_PORT_CURRENT_INVERTED`
+3.5 A Ibase。port 将板级累加计数灵敏度设为 136 counts/A，再按
+`MFOC_MOTOR_BASE_CURRENT_MILLIAMP` 推导 counts/base；换板时调整灵敏度，
+更改 Ibase 时 counts/base 自动随之变化。`MFOC_PORT_CURRENT_INVERTED`
 配置固定电流极性，不通过运行时配置传入。
 G431 使用 `MFOC_PORT_CURRENT_INVERTED=1`，保持旧 FOC 的
 `(offset - raw) / 476` 反馈方向；不要改成相反的 `raw - offset`。
 母线通道按 `20570/2457` mV/count 换算，并以 12 V 为 Vbase 归一化；
-`mfoc_port.h` 中的参数需与电压采样分压、Vbase 和测量范围一致。
+12 V 这个基值直接引用 `mfoc_motor_config.h`；分压、偏置和测量范围仍由
+`mfoc_port.h` 配置。
 Init 不会使能桥臂，完成均值计算后
 才发布新的偏置和换算系数。
 `mfoc_port_bus()` 读取 MDI 最近一次完整发布的母线均值；它不等待新 ADC 转换，
@@ -183,15 +189,25 @@ mfoc_port_current -> Clarke -> mfoc_feedback_Step
 提供 Init、Run 和 Step。算法启用与控制输出来源分开：
 `MFOC_FEEDBACK_ENABLE_ENCODER=1`（默认）编入并运行编码器；
 `MFOC_FEEDBACK_ENABLE_SMO=1`（默认）同时运行 SMO；
-`MFOC_FEEDBACK_ENABLE_HFI=0`（默认）关闭 HFI 框架；
+`MFOC_FEEDBACK_ENABLE_HFI` 控制是否编入 HFI；
 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_ENCODER`（默认）选择编码器输出。
 这些开关统一位于根目录 `mfoc_config.h`。
 BACKEND 只选择最终角度和速度，不控制各算法是否运行。
 
-HFI 当前仅提供 `mfoc_hfi_Init/Step` 框架，载波、同步解调、位置估计和
-磁极判定留 TODO。启用后仍输出零注入和无效估计；选择
-`MFOC_FEEDBACK_HFI` 时 Step 返回 INVALID_STATE，不能用作控制角度来源。
-不引入尚未使用的 HFI 配置项。
+HFI 使用正交方波注入、同步解调和位置跟踪，参数位于
+`position/include/mfoc_hfi.h`。启用后 Feedback 也会在普通电流、速度和
+强拖模式提交真实注入电压。默认不启用磁极极性辨识，轴线锁定仍可能存在
+半个电角周期的歧义，不能仅凭 valid 将它作为转矩控制角度。
+`MFOC_FEEDBACK_HFI` 的反馈选择门槛仍要求估计有效；HFI 专用辨识模式
+允许未锁定时先持续注入以获得估计，不经过该有效角度门槛启动。
+
+当前对照版本让 +alpha、-alpha、+beta、-beta 各保持两拍，仅使用第二拍
+的 `i[k]-i[k-1]` 及对应上一拍模型电压解调。电流历史仍每个 50 us 更新，
+不是累加 100 us 的电流增量；完整组为八拍，即 2.5 kHz。角度预测和启动
+超时仍按 20 kHz 推进。PLL 增益保留原数值、不同时整定，64 组轴锁定
+窗口相应为 25.6 ms；跟踪带宽发生变化，不能宣称动态跟踪能力不变。
+这用于验证换向瞬态/电压拍关系的敏感性，尚不证明真实硬件根因或改进。
+极性辨识保持关闭，先验证轴锁定，再单独验证极性脉冲。
 
 Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Motor
 直接传入 Core。Core 复用 sin/cos 转到控制 dq 坐标系，与 PI 电压相加后
@@ -200,7 +216,8 @@ Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Moto
 注入为零时跳过附加 Park；HFI Step 不重复检查调用方提供的采样指针。
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
 `MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
-当前应用保持编码器闭环、SMO 影子运行，不包含强拖启动或无感接管。
+当前普通电流/速度模式使用所选反馈；强拖和 HFI 辨识通过独立模式启动，
+不包含无感接管。
 
 `position/include/mfoc_smo.h` 和 `position/src/mfoc_smo.c` 是独立 SMO 算法。
 公共 `motor/include/mfoc_motor_params.h` 保存原有电机参数类型；
@@ -284,6 +301,7 @@ TIM1 Break 仍由硬件关断和板级锁存处理；软件故障关联及波形
 
 App 已注册 `motor current <id> <iq>`、`motor speed <pu>`、`motor align`、
 `motor encoder`、`motor stop`、`motor clear`、`motor status` 和 `motor help`。
+启用 HFI 时，另提供 `motor hfi`、`motor hfi start` 和 `motor hfi status`。
 `motor encoder` 复用现有端口读取一次 AS5600，打印 0～4095 原始计数和机械角度；
 失败时打印错误码，不改变 Motor 状态，不新增缓存或周期打印。
 `motor align` 直接调用 Motor AlignStart，默认
@@ -297,6 +315,30 @@ Align 使用固定角度电流环，前台 Run 在 1500 ms 到期时采集编码
 须先 Stop。speed 受 `limits.speed_max` 限制，配置为 0.7583 PU（约 303.3 Hz，
 以 400 Hz 为速度基值）。按 7 极对计算，`motor speed 0.02` 约为 68.6 rpm。
 速度命令使用编码器反馈；先执行 `motor align` 建立电角度零位并确认旋转方向。
+
+`motor hfi start`（简写 `motor hfi`）从 IDLE 启动静止 HFI 辨识，
+不需要电流或速度参数，也不执行对齐。基波 d/q 电流给定均为零，控制坐标系
+固定为零角度；HFI 的注入电压经 Core 叠加、限幅和 SVPWM 输出。
+注入幅值 `MFOC_HFI_VOLTAGE=0.04 PU`，当前 Vbase=12 V 时为 0.48 V；
+零基波给定仍会产生高频电流，实际幅值须在台架验证。
+未锁定时继续注入，默认 500 ms 启动超时或 HFI FAILED 时自动 Stop；
+成功锁定后持续注入，用统一的 `motor stop` 停机，无单独的 HFI off 命令。
+再次启动会清除旧 HFI 历史，运行中拒绝重复启动或切换到 current/speed。
+ADC/PWM 错误仍锁存正常 Motor 故障。编译关闭 HFI 时启动返回 INVALID_STATE。
+本模式不依赖编码器校准/有效标志来控制；编码器仅作角度对照，需有有效零位
+才能比较电角度，必要时先单独 align。HFI 角度不参与本模式转矩控制。
+
+`motor hfi status` 仅按需打印 state（acquire/track/failed/polarity）、
+Motor 状态、valid、angle_mT（千分之一电角周）、speed_mpu（千分之一
+电速度 PU）、polarity 开关、steps（启动计数）和 lock（连续锁定计数）。
+启用原有 ISR 计时时，还在同一条前台回复中打印 isr_win_max（当前报告
+窗口的最大 ticks）、overrun 和 budget；查询不清零、不增加计时状态或 ISR 日志。
+这个峰值属于当前窗口；停止后窗口可能已经刷新，不能当作上一轮运行峰值。
+下一轮 AITrace 在启动回复后立即查询并保存 `motor hfi status`，同时留存
+原有一秒计时日志，检查记录是否覆盖实际运行区间。
+停止后 valid 显示 0，保留最近辨识状态供查询。
+四路波形为下述 HFI 诊断配置，采样率保持 10 kHz。
+此轮仅做软件验证，实际锁定、磁极歧义、注入电流和 ISR 峰值需烧录后验证。
 
 `motor openloop <speed_pu> <id_pu>` 从 IDLE 启动电流闭环强拖：以正 d 轴
 电流保持电角度零点 1500 ms，再按速度斜坡旋转磁场。速度有正负，电流必须为
@@ -324,17 +366,51 @@ Motor 在 Feedback 后、Core 前调用它；实际采样、前拍 PWM 电压模
 当前磁链为未测量的 1 PU，初始编码器零位和方向未校准；Align 保持时使用固定角度，
 不能将固定磁场保持通过视为编码器闭环运行已验证。
 
-浮点且启用 `MWAVEFORM_ENABLE` 时，MFOC 注册四路波形：`Enc_mT` 为编码器电角度，
-`SMO_mT` 为 SMO 电角度，`Err_mT` 为 SMO 减编码器的最短角差，单位均为电角周；
-`Iq_mpu` 为最近一次控制步的实测 q 轴电流标幺值。角度和电流按 1000 倍显示，
-无有效样本时显示 -1。控制频率为 20 kHz 时，波形以 10 kHz 采样；角度来自
-编码器已发布样本并作速度外推，不在 ISR 读取 I2C。
+浮点且启用 `MWAVEFORM_ENABLE` 时，MFOC 始终注册四路，20 kHz 控制下
+保持 10 kHz 波形采样，不在 ISR 读取 I2C。HFI 和 SMO 同时启用时优先 HFI。
 
-启用计时日志时，ISR 每拍只比较并保存本窗口最大 tick；
-超过 `mfoc_config.h` 中的 `MFOC_ISR_BUDGET_TICKS` 就锁存过载标志。
-G431 的 perfc 时钟为 170 MHz，默认 8500 ticks 对应 50 μs。
-前台每秒取出并清空最大值和过载标志，T 日志输出最大 tick、微秒值及
-`overrun` 标记；无 ISR 样本时不打印，不累计平均值或在 ISR 内打印。
+HFI 开启时，当前四路临时用于解调输入排查：
+
+| 通道 | 内容 | 单位 |
+|---|---|---|
+| DiA_pu | 选定激励轴的正负脉冲电流增量之差，alpha 分量 | I/Ibase |
+| DiB_pu | 同一电流增量差的 beta 分量 | I/Ibase |
+| DuA_pu | 对应总模型电压之差，alpha 分量 | V/Vbase |
+| DuB_pu | 同一模型电压差的 beta 分量 | V/Vbase |
+
+`class/mfoc_debug.h` 中 `MFOC_DEBUG_HFI_AXIS=0` 默认观察 alpha 激励，
+改为 1 后重新构建可观察 beta 激励。它只选择已有 Di/Du 矩阵的一列，
+不会改变实际正交注入顺序。当前诊断不绘制角度；锁定和失败通过
+`motor hfi status` 查询。
+
+Di 不是单次 ADC 电流，也不是跨 100 us 的电流差。每个脉冲仅保留第二个
+50 us 区间的 `i[k]-i[k-1]`，再计算正脉冲增量减负脉冲增量。
+Du 是这两个区间由最终占空比重建的总模型电压之差，包含电流 PI 与注入；
+它不是注入幅值本身，也不是对实际桥臂电压的测量。
+
+WaveformStep 在 20 kHz 入口检查 carrier，只在两对脉冲均完成的
+carrier=0 处同时更新原有四路缓存；10 kHz 抽取读取最近完整组。
+每组八个控制步，对应四个波形点；启动第九步才有首个完整组。
+第一组之前、对齐、失败和停机时置 -3.2；半组或极性暂停期间保持最近完整组。
+未锁定的 ACQUIRE 阶段也记录输入，不能把有响应等同于角度有效。
+
+四路传输比例为 10000，CSV 解码后仍为 PU，分辨率 0.0001 PU；
+带宽、四路数量和 10 kHz 波形率不变。观察值限在 [-3.1,3.1]，
+触及边界说明诊断裁剪，该组不参与定量分析；-3.2 是专用不可用标记。
+当前 alpha 原始 ADC 一个累加计数对应 1/476 PU，约 7.35 mA；
+高精度传输只避免再次明显量化，不能提高 ADC 本身的分辨率。
+ISR 只读已有成员、比较并写原缓存，不再重算 X/Y、比值或角度；
+没有新增公共诊断 API、算法成员或缓存。问题定位完成后恢复正式观察通道。
+
+HFI 关闭时保留 Enc_mT、SMO_mT、Err_mT、Iq_mpu。Err_mT 是 SMO 减编码器
+的最短角差，Iq_mpu 是控制坐标系的实测 q 电流 PU；无效角度/对齐用 -1。
+
+`MFOC_ISR_MEASURE=1` 编入 ISR 耗时采样和过载标志；设为 0 时移除这段
+计时代码。G431 调试构建默认开启，release 默认关闭，可在 make 命令中用
+`MFOC_ISR_MEASURE=0/1` 覆盖。G431 的 perfc 时钟为 170 MHz，默认
+`MFOC_ISR_BUDGET_TICKS=8500` 对应 50 μs。日志可用时，前台每秒取出并清空
+最大值和过载标志，T 日志输出 tick、微秒值及 `overrun`；无样本时不打印，
+不累计平均值，也不在 ISR 内打印。
 
 ## Motor 标幺参数
 
@@ -350,6 +426,14 @@ G431 的 perfc 时钟为 170 MHz，默认 8500 ticks 对应 50 μs。
   `psi_base=Vbase/omega_base`、
   `torque_base=1.5*pole_pairs*psi_base*Ibase`，
   则 `Jbase=torque_base*tbase/omega_m_base`，`inertia=J/Jbase`。
+
+当前单电机配置把独立基值设为 `Ibase=3.5 A`、`Vbase=12 V`、
+`fbase=400 Hz`。`Rbase`、`Lbase`、磁链、时间、机械速度、转矩和惯量等
+派生基值由这些常量计算，
+不再另存一份；`mfoc_app.c` 用派生 PU 参数初始化 Motor。磁链仍是未实测的
+1 PU 占位值，转动惯量为 0（未提供）；电阻和电感仍是沿用的配置值，尚未由
+辨识流程测定。改变电流、电压或速度基值时，port、
+编码器、SMO、HFI、强拖和辨识共享同一来源。
 
 Motor 与 Core 共用固定的电压、电流基值。Motor 持有运行用参数和 Core，
 不另存完整 cfg，不缓存逐拍电流、角度或输出。ADC 原始零偏与标度属于
@@ -479,69 +563,12 @@ powershell -ExecutionPolicy Bypass -File mfoc/tests/run_tests.ps1
 
 公式审核、已修正问题和暂缓优化见 [迁移审核](MIGRATION_REVIEW.md)。本轮仅有主机及目标编译证据，没有电机台架性能结论。
 
-## 参数辨识框架（算法待实现）
+## 参数辨识（暂未接入）
 
-`identification/include/mfoc_identification.h` 定义管理接口，Motor 按值拥有
-`identification` 实例。实例保存状态、结果模型及前台 PT/超时槽，不保存 cfg 或 Motor 指针。
-`Start(id, model, operation)` 在 Motor 停止时准备辨识，复制原模型以保留未辨识字段；
-实际 PWM 启动仍使用 `mfoc_motor_Start()`。所有前台操作由调用方与 ISR 串行化。
+`identification/` 保留独立辨识源码及 Rs 算法测试，暂不加入默认固件构建。
+Motor 不持有辨识对象，不调度辨识，不负责激励或自动应用辨识结果。
+Feedback 已移除辨识专用的 HFI 抑制标志；Shell 已移除 `motor identify`
+命令。辨识独立运行流程待后续确定，本轮不新增替代入口。
 
-`mfoc_motor_Run()` 内部调用 `mfoc_identification_Run()`，应用层仍只调度 Motor。
-前台 Run 使用非阻塞 perfc-PT，电气参数流程按对齐 → Rs → Ld → Lq → 完成推进；
-磁链和惯量各自按闭环升速准备 → 对应辨识 → 完成推进，暂未实现升速或估算。
-每阶段由 ISR 发布 `stage_done` 后切换，超时进入 ERROR，下一次 ISR 请求停机。
-阶段超时由 `MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS` 配置，默认 5000 ms。
-`operation` 可选 `MFOC_IDENTIFICATION_ELECTRICAL/FLUX/INERTIA`，不复制 cfg。
-
-Motor 在 Clarke 之后用 `GetControl()` 查询本拍控制需求，再按需读取 Feedback：
-
-- 固定轴：跳过位置反馈，使用辨识给定角度，供对齐、Rs、Ld/Lq 使用。
-- 旋转：使用正常 Feedback 的角度/速度；反馈失败沿用 Motor 的故障停机路径。
-- 未活动：执行原有电流、速度或强拖控制。
-
-活动时 Motor 将下列输入交给 `mfoc_identification_Step()`：
-
-- 本拍 `i_ab_k`、上一拍已提交的 `previous_core_output`（首拍为 NULL）。
-- 旋转辨识额外借用本拍已选定的有效 Feedback；固定轴不提供该指针。
-- 输出：`i_ref`、固定电角度 `angle`、`u_inject_ab` 和优先处理的 `stop`。
-- 辨识期间不推进正常速度 PI；注入电压与 Feedback/HFI 的注入相加，由 Core 限幅。
-
-`mfoc_identification_algorithms.h` 定义叶子接口，分别由 `rs.c`、`inductance.c`、
-`flux.c`、`inertia.c`（文件名前缀均为 `mfoc_identification_`）承载算法：
-
-| 叶子 | 输入 | 成功结果 |
-|---|---|---|
-| Rs、Ld/Lq | 电流、上一拍 Core 输出、固定轴角度；电感另选 d/q 轴 | Rs 或 Ld/Lq PU |
-| 磁链 | 电流、上一拍 Core 输出、反馈角度/速度、已知模型 | 磁链 PU |
-| 惯量 | 电流、反馈角度/速度、已知转矩模型 | 惯量 PU |
-
-惯量叶子可按需要分频后自行算 iq，避免 Motor 重复做 Park 或拿上一拍电流充当本拍值。
-`MFOC_IDENTIFICATION_SAMPLE_HZ` / `MFOC_IDENTIFICATION_SPEED_BASE_HZ` 约定
-采样与电速度基值，默认 20 kHz / 400 Hz，必须匹配实际控制和共享 PU 基值。
-叶子只接收对应采样纯数据，不接收 Motor/Feedback 对象；未来采样历史由各算法自己的
-实例状态持有。ISR 调用保持 Motor → identification → 对应叶子，未引入回调或包装层。
-
-上一拍 duty/bus 可用于重构模型电压，不等于实测端电压。公式 TODO 留在各叶子源码，
-尚未实现对齐、激励、采集和估算；当前第一次活动 Step 会报告 ERROR 并请求 Motor
-停机，不发送测试激励，也不会把原模型冒充辨识成功结果。旋转闭环调速准备、
-稳速判定及惯量辨识的负载转矩处理仍是 TODO，不代表已实现可用的辨识。
-
-`mfoc_motor_Stop/Trip` 会取消活动辨识；完成或错误状态保留供查询。
-`mfoc_identification_Stop` 只取消算法，前台直接调用它前先停止 Motor。
-`GetStatus` 查询生命周期；`GetResult` 仅在 DONE 时复制结果，否则保持目标不变。
-
-完成并停机后，由 identification 提交结果：
-
-```c
-mfoc_result_t rc = mfoc_identification_ApplyResult(
-    &motor.identification, &motor.params, &motor.feedback);
-/* 调用方处理 rc；失败时原模型和反馈系数保持不变。 */
-```
-
-此入口先调用 `mfoc_feedback_SetMotorParamModel()`，成功后才写入 Motor 参数。
-Feedback 只在启用 SMO 时保留其初始化调参，复用 `mfoc_smo_Init()` 重算离散系数
-并清空观测历史，保留编码器零位。当前 SMO 仍要求 Ld == Lq，不兼容模型会被拒绝。
-极对数和 PU 基值不在本次更新范围内；PI 增益独立配置，不自动重整定。
-
-框架用例可单独运行 `mfoc/tests/run_core_tests.ps1 -Tests identification`；
-模型更新与拒绝路径由 `run_smo_tests.ps1` 覆盖。
+正常控制保持电流采集、Clarke、Feedback、电流环、SVPWM 与 PWM 输出路径。
+已有对齐、强拖、速度环、SMO/HFI 功能保留。

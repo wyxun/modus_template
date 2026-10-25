@@ -29,7 +29,7 @@ mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
 int main(void)
 {
     mfoc_motor_params_t model = {.pole_pairs = 7U,
-        .rs = MFOC_ONE, .ld = MFOC_ONE, .lq = MFOC_ONE};
+        .rs = MFOC_ONE, .ld = MFOC_ONE, .lq = MFOC_ONE, .flux = MFOC_HALF};
     mfoc_feedback_cfg_t cfg = {
         .encoder = {.electrical_speed_base_hz = MFOC_SCALAR(400.0f),
             .speed_filter_alpha = MFOC_ONE, .sample_period_us = 1000U,
@@ -56,7 +56,8 @@ int main(void)
         .duty = {MFOC_SCALAR(0.75f), MFOC_SCALAR(0.25f), MFOC_HALF},
         .bus = MFOC_SCALAR(2.0f), .m = {MFOC_ONE, MFOC_ONE}};
     mfoc_ab_t current = {MFOC_SCALAR(0.03f), MFOC_SCALAR(-0.04f)};
-    mfoc_feedback_input_t input = {&current, &previous};
+    mfoc_feedback_input_t input = {.i_ab_k = &current,
+        .previous_core_output = &previous};
     for (unsigned j = 0U; j < 50U; ++j) {
         mfoc_ab_t voltage = {0};
         mfoc_smo_output_t expected = {0};
@@ -67,8 +68,12 @@ int main(void)
         assert(feedback.smo_status == MFOC_RESULT_OK);
 #if MFOC_FEEDBACK_ENABLE_HFI
         assert(!feedback.hfi_output.valid);
-        assert(output.u_inject_ab.qAlpha == MFOC_ZERO);
-        assert(output.u_inject_ab.qBeta == MFOC_ZERO);
+        assert(output.u_inject_ab.qAlpha ==
+            feedback.hfi_output.u_inject_ab.qAlpha);
+        assert(output.u_inject_ab.qBeta ==
+            feedback.hfi_output.u_inject_ab.qBeta);
+        assert(mfoc_abs(output.u_inject_ab.qAlpha) +
+            mfoc_abs(output.u_inject_ab.qBeta) == MFOC_HFI_VOLTAGE);
 #endif
         assert(feedback.smo_output.angle.wBam32 == expected.angle.wBam32);
         assert(feedback.smo_output.speed == expected.speed);

@@ -7,6 +7,7 @@
 #ifndef MFOC_IDENTIFICATION_ALGORITHMS_H
 #define MFOC_IDENTIFICATION_ALGORITHMS_H
 #include "mfoc_core.h"
+#include "mfoc_motor_config.h"
 #include "mfoc_motor_params.h"
 #include "perf_counter.h"
 
@@ -15,15 +16,14 @@
 #ifndef MFOC_IDENTIFICATION_SAMPLE_HZ
 #define MFOC_IDENTIFICATION_SAMPLE_HZ 20000U
 #endif
-#ifndef MFOC_IDENTIFICATION_SPEED_BASE_HZ
-#define MFOC_IDENTIFICATION_SPEED_BASE_HZ 400U
-#endif
+#define MFOC_IDENTIFICATION_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
 
 /** @brief Query before preparing feedback; inactive uses normal Motor mode. */
 typedef enum {
     MFOC_IDENTIFICATION_CONTROL_INACTIVE = 0,
     MFOC_IDENTIFICATION_CONTROL_FIXED,
     MFOC_IDENTIFICATION_CONTROL_FEEDBACK,
+    MFOC_IDENTIFICATION_CONTROL_VOLTAGE, /* Fixed alpha SVPWM, bypass PI. */
 } mfoc_identification_control_t;
 
 /** @brief Next Core command; stop takes priority over every other field. */
@@ -31,6 +31,8 @@ typedef struct {
     mfoc_dq_t i_ref;
     mfoc_angle_t angle; /* Used only by CONTROL_FIXED. */
     mfoc_ab_t u_inject_ab; /* Added to feedback injection, V/Vbase. */
+    mfoc_scalar_t modulation; /* Fixed alpha V/Vdc, CONTROL_VOLTAGE only. */
+    mfoc_scalar_t bus; /* Startup Vdc/Vbase snapshot for fixed voltage. */
     bool stop;
 } mfoc_identification_output_t;
 
@@ -64,12 +66,30 @@ typedef enum {
     MFOC_IDENTIFICATION_AXIS_Q,
 } mfoc_identification_axis_t;
 
-/** @brief Standstill resistance leaf; formula/excitation remain TODO.
- * @param input Synchronous sample. @param output Excitation/stop request.
- * @param rs Result R/Rbase, written only on cpl. @return Ongoing/cpl/error. */
+/** @brief Two fixed-voltage current windows; zero starts the low level. */
+typedef struct {
+    mfoc_scalar_t sum_i[2];
+    mfoc_scalar_t half_i[2]; /* First-half sums, not means. */
+    uint32_t count;
+    uint8_t level; /* Low, high, completed or failed; owned by Rs Step. */
+} mfoc_identification_rs_t;
+
+/** @brief Collect current under two fixed alpha voltage levels in the ISR.
+ * @param state Zeroed experiment state. @param current Synchronous sample.
+ * @param output Excitation/stop request. @return Sampling ongoing/cpl/error.
+ * @note No mean, slope or stability arithmetic is performed in this call. */
 fsm_rt_t mfoc_identification_rs_Step(
-    const mfoc_identification_fixed_input_t *input,
-    mfoc_identification_output_t *output, mfoc_scalar_t *rs);
+    mfoc_identification_rs_t *state,
+    const mfoc_ab_t *current,
+    mfoc_identification_output_t *output);
+
+/** @brief Validate both frozen windows and compute Rs in the foreground.
+ * @param state Completed samples. @param bus Startup Vdc/Vbase.
+ * @param rs Result R/Rbase, success only.
+ * @return Complete or error; failure leaves rs unchanged. */
+fsm_rt_t mfoc_identification_rs_Finish(
+    const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
+    mfoc_scalar_t *rs);
 
 /** @brief Shared d/q inductance leaf; formula/excitation remain TODO.
  * @param input Sample. @param axis Selected axis. @param output Request.

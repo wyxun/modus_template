@@ -6,6 +6,22 @@ $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c" |
     ForEach-Object { $_.FullName }) + @(
     "$library/position/src/mfoc_hfi.c", "$library/motor/src/mfoc_feedback.c")
 foreach ($numeric in @('FLOAT', 'FIXED')) {
+    foreach ($polarity in @(0, 1)) {
+        $exe = Join-Path $output "algorithm-$numeric-$polarity.exe"
+        & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
+            "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
+            "-DMFOC_HFI_ENABLE_POLARITY=$polarity" `
+            "-I$library" "-I$library/base/include" `
+            "-I$library/position/include" `
+            "$PSScriptRoot/hfi_algorithm_test.c" `
+            "$library/position/src/mfoc_hfi.c" `
+            @(Get-ChildItem "$library/base/src/*.c" | `
+                ForEach-Object { $_.FullName }) -lm -o $exe
+        if ($LASTEXITCODE -ne 0) { throw 'HFI algorithm build failed' }
+        & $exe
+        if ($LASTEXITCODE -ne 0) { throw 'HFI algorithm test failed' }
+        Write-Output "$numeric HFI algorithm polarity=$polarity passed"
+    }
     $exe = Join-Path $output "$numeric.exe"
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
@@ -23,6 +39,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         $exe = Join-Path $output "shadow-$numeric-$backend.exe"
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
+            -DMFOC_FEEDBACK_ENABLE_ENCODER=1 -DMFOC_FEEDBACK_ENABLE_SMO=1 `
             -DMFOC_FEEDBACK_ENABLE_HFI=1 "-DMFOC_FEEDBACK_BACKEND=$backend" `
             "-I$library" "-I$library/base/include" `
             "-I$library/core/include" "-I$library/motor/include" `

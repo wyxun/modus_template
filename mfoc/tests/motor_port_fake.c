@@ -82,16 +82,6 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Inject the outcome of a stopped model refresh.
- * @param feedback Instance. @param model New model. @return Injected status. */
-mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
-    const mfoc_motor_params_t *model)
-{
-    (void)feedback;
-    (void)model;
-    return motor_port_fake.model_update;
-}
-
 /** @brief Record foreground service routing. @param feedback Instance.
  * @return Injected result, or INVALID_STATE before Init. */
 mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)

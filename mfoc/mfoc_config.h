@@ -18,6 +18,23 @@
 #define MFOC_ISR_BUDGET_TICKS 8500U
 #endif
 
+/* Enable ISR timing counters and reports only in builds that need them. */
+#ifndef MFOC_ISR_MEASURE
+#define MFOC_ISR_MEASURE 0
+#endif
+
+/* Standstill Rs: fixed alpha modulation V/Vdc and measured current PU. */
+#define MFOC_IDENTIFICATION_RS_MODULATION_LOW 0.04f
+#define MFOC_IDENTIFICATION_RS_MODULATION_HIGH 0.09f
+#define MFOC_IDENTIFICATION_RS_CURRENT_MAX 0.12f
+#define MFOC_IDENTIFICATION_RS_CURRENT_MIN 0.01f
+#define MFOC_IDENTIFICATION_RS_TRANSVERSE_MAX 0.01f
+#define MFOC_IDENTIFICATION_RS_STABILITY 0.003f
+#define MFOC_IDENTIFICATION_RS_DELTA_MIN 0.02f
+#define MFOC_IDENTIFICATION_RS_ALIGN_MS 300U
+#define MFOC_IDENTIFICATION_RS_SETTLE_MS 200U
+#define MFOC_IDENTIFICATION_RS_AVERAGE_MS 100U
+
 #define MFOC_FEEDBACK_NONE 0
 #define MFOC_FEEDBACK_ENCODER 1
 #define MFOC_FEEDBACK_SMO 2
@@ -27,10 +44,10 @@
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
-#define MFOC_FEEDBACK_ENABLE_SMO 1
+#define MFOC_FEEDBACK_ENABLE_SMO 0
 #endif
-/* Framework only: no injection or valid HFI estimate until implemented. */
 #ifndef MFOC_FEEDBACK_ENABLE_HFI
+/* Enabling HFI permits real voltage injection during Feedback Step. */
 #define MFOC_FEEDBACK_ENABLE_HFI 0
 #endif
 /* Algorithms run independently of the selected control output. */

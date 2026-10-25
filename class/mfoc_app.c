@@ -7,9 +7,10 @@
 #include "mfoc_app.h"
 #include "mfoc_debug.h"
 #include "mfoc_numeric.h"
+#include "mfoc_motor_config.h"
 #include "mfoc_port.h"
 #include "mdebug/mshell.h"
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
 #include "perf_counter.h"
 #endif
 #include <math.h>
@@ -36,7 +37,7 @@ int mfoc_app_Init(uintptr_t object, uintptr_t cfg)
     s_base_cfg.wParent = object;
     int status = mbase_Init(app->ptBase, &s_base_cfg);
     app->state = status == MODUS_SUCCESS ? MFOC_APP_IDLE : MFOC_APP_ERROR;
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
     app->tIsrTiming.lReportPeriodTicks = perfc_convert_ms_to_ticks(1000U);
     app->tIsrTiming.lReportTimestamp = get_system_ticks();
 #endif
@@ -51,7 +52,7 @@ int mfoc_app_Clock(uintptr_t object)
     return object != 0U ? MODUS_SUCCESS : MODUS_EFAIL;
 }
 
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
 /** @brief Report the maximum ISR ticks in the preceding one-second window.
  * @param app Application owning the timing window. @return None.
  * @note Snapshot and reset are atomic with respect to the control IRQ. */
@@ -88,15 +89,15 @@ int mfoc_app_Run(uintptr_t object)
         return MODUS_EFAIL;
     }
     app->result = mfoc_motor_Run(&app->motor);
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
     _mfoc_app_ReportIsrTiming(app);
 #endif
     return app->result == MFOC_RESULT_OK ? MODUS_SUCCESS : MODUS_EFAIL;
 }
 
-/* Integration profile uses Ib=3.5 A, Vb=12 V, and 400 Hz base.
- * R=4 ohm, Ld=Lq=1.2 mH are carried from the previous motor profile.
- * Flux=1 PU is unmeasured; encoder zero/direction need bench validation.
+/* Motor data and PU bases come from mfoc_motor_config.h. Rs and Ld/Lq are
+ * inherited values, not bench-identified. Flux=1 PU is an unmeasured
+ * placeholder; encoder zero/direction need bench validation.
  * Inherited PI gains are starting values, not validated bench tuning. */
 #define MFOC_APP_CURRENT_PI { \
     .kp = MFOC_SCALAR(0.472810f), \
@@ -116,12 +117,12 @@ int mfoc_app_Run(uintptr_t object)
 MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
     .motor = {
         .params = {
-            .pole_pairs = 7U,
-            .rs = MFOC_SCALAR(4.0f * 3.5f / 12.0f),
-            .ld = MFOC_SCALAR(0.0012f * 2513.274123f * 3.5f / 12.0f),
-            .lq = MFOC_SCALAR(0.0012f * 2513.274123f * 3.5f / 12.0f),
-            .flux = MFOC_ONE,
-            .inertia = MFOC_ZERO,
+            .pole_pairs = MFOC_MOTOR_POLE_PAIRS,
+            .rs = MFOC_SCALAR(MFOC_MOTOR_RS_PU),
+            .ld = MFOC_SCALAR(MFOC_MOTOR_LD_PU),
+            .lq = MFOC_SCALAR(MFOC_MOTOR_LQ_PU),
+            .flux = MFOC_SCALAR(MFOC_MOTOR_FLUX_PU),
+            .inertia = MFOC_SCALAR(MFOC_MOTOR_INERTIA_PU),
         },
         .limits = {.i_max = MFOC_SCALAR(0.14f),
             .speed_max = MFOC_APP_SPEED_MAX},
@@ -130,17 +131,22 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .bus = MFOC_ONE,
         },
         .feedback = {.encoder = {
-            .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
+            .electrical_speed_base_hz = MFOC_SCALAR(
+                MFOC_MOTOR_BASE_ELECTRICAL_HZ),
             .speed_filter_alpha = MFOC_SCALAR(0.25f),
             .sample_period_us = 1000U, .timeout_ms = 20U,
         }, .smo = {
-            .sample_hz = 20000U, .speed_base_hz = MFOC_SCALAR(400.0f),
-            .cutoff_rad_s = 4000U, .h = MFOC_SCALAR(5.0f / 12.0f),
+            .sample_hz = 20000U,
+            .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
+            .cutoff_rad_s = 4000U,
+            .h = MFOC_SCALAR(5.0f / MFOC_MOTOR_BASE_VOLTAGE_VOLT),
             .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE,
         }},
         .speed = MFOC_APP_SPEED_PI,
         .speed_divider = 20U,
-        .openloop = {20000U, MFOC_SCALAR(400.0f), MFOC_SCALAR(0.2f)},
+        .openloop = {20000U,
+            MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
+            MFOC_SCALAR(0.2f)},
     },
 )
 
@@ -198,7 +204,61 @@ static mfoc_result_t _mfoc_app_Speed(float speed_ref)
     return rc;
 }
 
-/** @brief Parse Motor commands and execute current/speed/align/stop.
+/** @brief Print a consistent HFI snapshot from the foreground.
+ * @return None. No algorithm, encoder read or periodic log is added. */
+static void _mfoc_app_PrintHfi(void)
+{
+#if MFOC_FEEDBACK_ENABLE_HFI
+    mfoc_hfi_state_t state = MFOC_HFI_ACQUIRE;
+    mfoc_hfi_output_t output = {0};
+    mfoc_motor_state_t motor_state = MFOC_MOTOR_UNINITIALIZED;
+    uint32_t steps = 0U;
+    uint16_t lock = 0U;
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+    uint32_t maximum = 0U;
+    bool overrun = false;
+#endif
+    __IRQ_SAFE {
+        state = tMfocApp.motor.feedback.hfi.state;
+        output = tMfocApp.motor.feedback.hfi_output;
+        motor_state = tMfocApp.motor.state;
+        steps = tMfocApp.motor.feedback.hfi.startup_count;
+        lock = tMfocApp.motor.feedback.hfi.lock_count;
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        maximum = tMfocApp.tIsrTiming.wMaximumTicks;
+        overrun = tMfocApp.tIsrTiming.bOverrun;
+#endif
+    }
+    const char *name = "polarity";
+    if (state == MFOC_HFI_ACQUIRE) { name = "acquire"; }
+    else if (state == MFOC_HFI_TRACK) { name = "track"; }
+    else if (state == MFOC_HFI_FAILED) { name = "failed"; }
+    else { /* Polarity identification substate. */ }
+    uint32_t angle_mt = (uint32_t)(
+        ((uint64_t)output.angle.wBam32 * 1000U) >> 32U);
+    int32_t speed_mpu = (int32_t)(mfoc_to_float(output.speed) * 1000.0f);
+    MLOGF(I, "hfi state=%s motor=%u valid=%u "
+        "angle_mT=%lu speed_mpu=%ld polarity=%u steps=%lu lock=%u"
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        " isr_win_max=%lu overrun=%u budget=%lu"
+#endif
+        "\r\n",
+        name, (unsigned)motor_state,
+        (unsigned)(output.valid && motor_state == MFOC_MOTOR_RUNNING),
+        (unsigned long)angle_mt, (long)speed_mpu,
+        (unsigned)MFOC_HFI_ENABLE_POLARITY, (unsigned long)steps,
+        (unsigned)lock
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        , (unsigned long)maximum, (unsigned)overrun,
+        (unsigned long)MFOC_ISR_BUDGET_TICKS
+#endif
+        );
+#else
+    MLOGF(I, "hfi state=disabled (MFOC_FEEDBACK_ENABLE_HFI=0)\r\n");
+#endif
+}
+
+/** @brief Parse Motor commands and execute control or diagnostics.
  * @param args Arguments after motor. @return None.
  */
 static void _mfoc_app_CmdMotor(const char *args)
@@ -209,7 +269,22 @@ static void _mfoc_app_CmdMotor(const char *args)
     float q = 0.0f;
     bool valid = false;
 
-    if (mshell_ConsumeWord(&cursor, "encoder")) {
+    if (mshell_ConsumeWord(&cursor, "hfi")) {
+        if (mshell_AtEnd(cursor) || mshell_ConsumeWord(&cursor, "start")) {
+            if (!mshell_AtEnd(cursor)) {
+                MLOGF(W, "invalid motor arguments\r\n");
+                return;
+            }
+            tMfocApp.result = mfoc_motor_HfiStart(&tMfocApp.motor);
+            MLOGF(I, "motor hfi result=%d\r\n", (int)tMfocApp.result);
+        } else if (mshell_ConsumeWord(&cursor, "status") &&
+                   mshell_AtEnd(cursor)) {
+            _mfoc_app_PrintHfi();
+        } else {
+            MLOGF(W, "invalid motor arguments\r\n");
+        }
+        return;
+    } else if (mshell_ConsumeWord(&cursor, "encoder")) {
         valid = mshell_AtEnd(cursor);
         if (valid) {
             _mfoc_app_PrintEncoder();
@@ -271,6 +346,7 @@ static void _mfoc_app_CmdMotor(const char *args)
     } else {
         MLOGF(I, "usage: motor current <id> <iq> | speed <pu> | align\r\n"
             "       motor openloop <speed_pu> <id_pu>\r\n"
+            "       motor hfi [start|status]; motor stop to end\r\n"
             "       motor encoder | stop | clear | status | help\r\n"
             "       clear: parse only; execution pending\r\n");
         return;
@@ -283,5 +359,5 @@ static void _mfoc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, _mfoc_app_CmdMotor,
-    "MFOC: current/speed/openloop/encoder/align/stop/status");
+    "MFOC: current/speed/openloop/hfi/encoder/align/stop/status");
 #endif

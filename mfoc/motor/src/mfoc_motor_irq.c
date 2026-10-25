@@ -8,7 +8,7 @@
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
 #include "mfoc_debug.h"
 #endif
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
 #include "perf_counter.h"
 #endif
 
@@ -25,7 +25,7 @@
  * @note All bindings are direct calls/objects, without runtime dispatch. */
 void mfoc_motor_IRQHandler(void)
 {
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
     uint32_t start = (uint32_t)get_system_ticks();
 #endif
     if (MFOC_MOTOR_IRQ_READY()) {
@@ -35,9 +35,10 @@ void mfoc_motor_IRQHandler(void)
         MFOC_MOTOR_IRQ_END();
     }
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
+// 4通道 7us HFI=0
     mfoc_debug_WaveformStep();
 #endif
-#if !defined(__NO_USE_LOG__) && !defined(FOC_ISR_TIMING_DWT_ONLY)
+#if MFOC_ISR_MEASURE
     uint32_t elapsed = (uint32_t)get_system_ticks() - start;
     if (elapsed > tMfocApp.tIsrTiming.wMaximumTicks) {
         tMfocApp.tIsrTiming.wMaximumTicks = elapsed;

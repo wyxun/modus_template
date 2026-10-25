@@ -1,6 +1,6 @@
 /**
  * @file hfi_channel_test.c
- * @brief Injection frame, saturation, anti-windup and HFI scaffold regression.
+ * @brief Injection frame, saturation, anti-windup and HFI acquisition gate.
  * @author Codex
  * @date 2026-10-24
  */
@@ -62,7 +62,7 @@ int main(void)
     mfoc_hfi_Init(&hfi);
     mfoc_hfi_Step(&hfi, &current, NULL, &estimate);
     assert(!estimate.valid);
-    assert(estimate.u_inject_ab.qAlpha == MFOC_ZERO);
+    assert(estimate.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
     assert(estimate.u_inject_ab.qBeta == MFOC_ZERO);
 
     mfoc_feedback_t feedback = {0};
@@ -70,7 +70,7 @@ int main(void)
     mfoc_motor_params_t model = {0};
     assert(mfoc_feedback_Init(&feedback, &feedback_cfg, &model) ==
         MFOC_RESULT_OK);
-    mfoc_feedback_input_t sample = {&current, NULL};
+    mfoc_feedback_input_t sample = {.i_ab_k = &current};
     mfoc_feedback_output_t result = {.speed = MFOC_HALF};
     mfoc_feedback_output_t saved = result;
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
@@ -80,8 +80,19 @@ int main(void)
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
         MFOC_RESULT_INVALID_STATE);
     assert(!feedback.hfi_output.valid);
-    assert(feedback.hfi_output.u_inject_ab.qAlpha == MFOC_ZERO);
+    assert(feedback.hfi_output.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
     assert(feedback.hfi_output.u_inject_ab.qBeta == MFOC_ZERO);
-    puts("Injection channel and inactive HFI scaffold passed");
+    mfoc_hfi_t retained = feedback.hfi;
+    assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
+        MFOC_RESULT_OUT_OF_RANGE);
+    model = (mfoc_motor_params_t){7U, MFOC_SCALAR(1.2f), MFOC_ONE,
+        MFOC_ONE, MFOC_HALF, MFOC_ZERO};
+    assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
+        MFOC_RESULT_OK);
+    model.rs = -MFOC_ONE;
+    assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
+        MFOC_RESULT_OUT_OF_RANGE);
+    assert(memcmp(&retained, &feedback.hfi, sizeof(retained)) == 0);
+    puts("Injection and model ranges without SMO passed");
     return 0;
 }

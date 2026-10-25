@@ -10,7 +10,7 @@
 
 /** @brief Motor constants; convert physical units once before Init.
  * Use amplitude-invariant Clarke and peak phase-current base Ib.
- * Vb is phase-voltage base; wb is electrical rad/s, not Hz.
+ * Vb is the voltage-vector base used by MFOC; wb is electrical rad/s, not Hz.
  * rs=Rs*Ib/Vb; ld/lq=Ld/Lq*wb*Ib/Vb; flux=psi*wb/Vb.
  * With p=pole_pairs: tb=1/wb, wmb=wb/p, psib=Vb/wb,
  * Tb=1.5*p*psib*Ib, Jb=Tb*tb/wmb; inertia=J/Jb.

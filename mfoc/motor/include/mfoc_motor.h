@@ -10,7 +10,6 @@
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
 #include "mfoc_openloop.h"
-#include "mfoc_identification.h"
 
 /** @brief Fixed-field hold duration, serviced by Motor Run. */
 #ifndef MFOC_MOTOR_ALIGN_TIME_MS
@@ -28,6 +27,7 @@ typedef enum {
     MFOC_MOTOR_MODE_CURRENT = 0,
     MFOC_MOTOR_MODE_SPEED,
     MFOC_MOTOR_MODE_OPENLOOP,
+    MFOC_MOTOR_MODE_HFI,
 } mfoc_motor_mode_t;
 
 /** @brief Persistent current command in the selected control frame. */
@@ -89,7 +89,6 @@ typedef struct {
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
     mfoc_feedback_t feedback;
-    mfoc_identification_t identification;
     mfoc_openloop_t openloop;
     mfoc_motor_command_t command;
     volatile mfoc_motor_mode_t mode;
@@ -129,7 +128,7 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
 
 /** @brief Disable PWM, clear command/integrals and retain any fault latch.
  * @param motor Initialized instance. @return Shutdown/reset status.
- * @note Foreground or control ISR on identification stop; no waits.
+ * @note Foreground or control ISR; no waits.
  * Foreground callers serialize control changes. Idempotent in IDLE. */
 mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor);
 
@@ -173,6 +172,14 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
 mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t id_pu);
 
+/** @brief Start stationary HFI acquisition with zero fundamental current.
+ * @param motor IDLE instance with HFI compiled in. @return Startup status.
+ * @note No alignment or valid position backend is required. Uses the fixed
+ * HFI voltage settings; no torque/speed command or angle takeover. Stop
+ * cancels acquisition/tracking; HFI failure stops PWM automatically.
+ * Axis lock may retain half-turn ambiguity when polarity is disabled. */
+mfoc_result_t mfoc_motor_HfiStart(mfoc_motor_t *motor);
+
 /** @brief Select speed mode and set a bounded electrical-speed reference.
  * @param motor Instance with the speed PI configured.
  * @param ref Electrical speed PU.
@@ -186,7 +193,8 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
  * Core, and PWM submission. Idle/fault calls consume no frame. Runtime
  * failures Trip Motor; successful PWM submission publishes the prior output.
  * In OPENLOOP, observer status is diagnostic and cannot gate forced control;
- * current sampling and PWM errors retain the normal shutdown behavior. */
+ * in HFI mode, invalid estimates do not block acquisition injection and an
+ * HFI failure stops PWM. Sampling/PWM errors retain normal fault handling. */
 mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor);
 
 /** @brief Read the published bus sample and update Core coefficients.

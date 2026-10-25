@@ -44,6 +44,21 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
 mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     const mfoc_motor_params_t *model)
 {
+    if (feedback == NULL || model == NULL) { return MFOC_RESULT_NULL; }
+    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
+    if (model->pole_pairs == 0U ||
+        model->rs < MFOC_SCALAR(MFOC_MOTOR_RS_MIN_PU) ||
+        model->rs > MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU) ||
+        model->ld < MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU) ||
+        model->ld > MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU) ||
+        model->lq < MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU) ||
+        model->lq > MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU) ||
+        model->flux <= MFOC_ZERO ||
+        model->flux > MFOC_SCALAR(MFOC_MOTOR_FLUX_MAX_PU) ||
+        model->inertia < MFOC_ZERO ||
+        model->inertia > MFOC_SCALAR(MFOC_MOTOR_INERTIA_MAX_PU)) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
 #if MFOC_FEEDBACK_ENABLE_SMO
     mfoc_result_t rc = mfoc_smo_Init(&feedback->smo, &feedback->smo_cfg, model);
     if (rc != MFOC_RESULT_OK) { return rc; }
@@ -122,8 +137,10 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #if MFOC_FEEDBACK_ENABLE_HFI
     const mfoc_ab_t *u_previous = voltage_status == MFOC_RESULT_OK ?
         &voltage : NULL;
-    if (u_previous == NULL) { mfoc_hfi_Init(&feedback->hfi); }
     feedback->hfi_output = (mfoc_hfi_output_t){0};
+    if (u_previous == NULL) {
+        mfoc_hfi_Init(&feedback->hfi);
+    }
     if (has_current) {
         mfoc_hfi_Step(&feedback->hfi, input->i_ab_k, u_previous,
                        &feedback->hfi_output);
