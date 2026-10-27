@@ -33,12 +33,17 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
 #if MFOC_FEEDBACK_ENABLE_HFI
     mfoc_hfi_Init(&next.hfi);
 #endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    mfoc_result_t flux_rc = mfoc_flux_Init(&next.flux, &cfg->flux, model);
+    if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
+    next.flux_cfg = cfg->flux;
+#endif
     next.initialized = true;
     *feedback = next;
     return MFOC_RESULT_OK;
 }
 
-/** @brief Refresh SMO coefficients without resetting encoder/HFI state.
+/** @brief Refresh model-dependent observers without resetting encoder/HFI.
  * @param feedback Stopped instance. @param model New motor model.
  * @return OK or rejected model; previous coefficients survive rejection. */
 mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
@@ -60,13 +65,24 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
         return MFOC_RESULT_OUT_OF_RANGE;
     }
 #if MFOC_FEEDBACK_ENABLE_SMO
-    mfoc_result_t rc = mfoc_smo_Init(&feedback->smo, &feedback->smo_cfg, model);
+    mfoc_smo_t smo = {0};
+    mfoc_result_t rc = mfoc_smo_Init(&smo, &feedback->smo_cfg, model);
     if (rc != MFOC_RESULT_OK) { return rc; }
+#endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    mfoc_flux_t flux = {0};
+    mfoc_result_t flux_rc = mfoc_flux_Init(&flux, &feedback->flux_cfg, model);
+    if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
+#endif
+    /* Commit only after every enabled model has accepted the parameters. */
+#if MFOC_FEEDBACK_ENABLE_SMO
+    feedback->smo = smo;
     feedback->smo_output = (mfoc_smo_output_t){0};
     feedback->smo_status = MFOC_RESULT_INVALID_STATE;
-#else
-    (void)feedback;
-    (void)model;
+#endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    feedback->flux = flux;
+    feedback->flux_output = (mfoc_flux_output_t){0};
 #endif
     return MFOC_RESULT_OK;
 }
@@ -129,7 +145,8 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #else
     (void)feedback;
 #endif
-#if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI ||                     \
+    MFOC_FEEDBACK_ENABLE_FLUX
     mfoc_ab_t voltage = {0};
     mfoc_result_t voltage_status = MFOC_RESULT_INVALID_STATE;
     bool has_current = input != NULL && input->i_ab_k != NULL;
@@ -161,6 +178,15 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     }
     next.u_inject_ab = feedback->hfi_output.u_inject_ab;
 #endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    if (voltage_status == MFOC_RESULT_OK) {
+        mfoc_flux_Step(&feedback->flux, input->i_ab_k, &voltage,
+                        &feedback->flux_output);
+    } else {
+        mfoc_flux_Reset(&feedback->flux);
+        feedback->flux_output = (mfoc_flux_output_t){0};
+    }
+#endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
     if (feedback->encoder_status != MFOC_RESULT_OK) {
         return feedback->encoder_status;
@@ -179,6 +205,11 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     next.acquiring = !feedback->hfi_output.valid;
     next.angle = feedback->hfi_output.angle;
     next.speed = feedback->hfi_output.speed;
+#elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX
+    if (voltage_status != MFOC_RESULT_OK) { return voltage_status; }
+    if (!feedback->flux_output.valid) { return MFOC_RESULT_INVALID_STATE; }
+    next.angle = feedback->flux_output.angle;
+    next.speed = feedback->flux_output.speed;
 #else
     return MFOC_RESULT_INVALID_STATE;
 #endif

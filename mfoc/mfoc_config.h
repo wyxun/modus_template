@@ -23,6 +23,11 @@
 #define MFOC_ISR_MEASURE 0
 #endif
 
+/* Compile Motor's identification flow only when explicitly enabled. */
+#ifndef MFOC_IDENTIFICATION_ENABLE
+#define MFOC_IDENTIFICATION_ENABLE 0
+#endif
+
 /* Standstill Rs: fixed alpha modulation V/Vdc and measured current PU. */
 #define MFOC_IDENTIFICATION_RS_MODULATION_LOW 0.04f
 #define MFOC_IDENTIFICATION_RS_MODULATION_HIGH 0.09f
@@ -44,16 +49,32 @@
 #define MFOC_FEEDBACK_ENCODER 1
 #define MFOC_FEEDBACK_SMO 2
 #define MFOC_FEEDBACK_HFI 3
+#define MFOC_FEEDBACK_FLUX 4
 
 #ifndef MFOC_FEEDBACK_ENABLE_ENCODER
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
-#define MFOC_FEEDBACK_ENABLE_SMO 0
+#define MFOC_FEEDBACK_ENABLE_SMO 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_HFI
 /* Enabling HFI permits real voltage injection during Feedback Step. */
 #define MFOC_FEEDBACK_ENABLE_HFI 0
+#endif
+#ifndef MFOC_FEEDBACK_ENABLE_FLUX
+/* Requires confirmed motor flux and configured observer/PLL gains. */
+#define MFOC_FEEDBACK_ENABLE_FLUX 1
+#endif
+/* Initial shadow-observer tuning, not bench-validated motor parameters.
+ * gain uses normalized time; PLL ki is speed PU per error per second. */
+#ifndef MFOC_FLUX_GAIN
+#define MFOC_FLUX_GAIN 0.1f
+#endif
+#ifndef MFOC_FLUX_PLL_KP
+#define MFOC_FLUX_PLL_KP 0.5f
+#endif
+#ifndef MFOC_FLUX_PLL_KI
+#define MFOC_FLUX_PLL_KI 100.0f
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND

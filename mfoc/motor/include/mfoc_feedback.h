@@ -11,6 +11,7 @@
 #include "mfoc_encoder.h"
 #include "mfoc_smo.h"
 #include "mfoc_hfi.h"
+#include "mfoc_flux.h"
 
 #if MFOC_FEEDBACK_ENABLE_ENCODER != 0 && MFOC_FEEDBACK_ENABLE_ENCODER != 1
 #error "MFOC_FEEDBACK_ENABLE_ENCODER must be 0 or 1"
@@ -18,7 +19,8 @@
 #if MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_NONE &&                              \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_ENCODER &&                           \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO &&                             \
-    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI &&                               \
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX
 #error "MFOC_FEEDBACK_BACKEND must select an implemented position algorithm"
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER &&                           \
@@ -34,11 +36,18 @@
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI && !MFOC_FEEDBACK_ENABLE_HFI
 #error "The selected HFI output requires MFOC_FEEDBACK_ENABLE_HFI"
 #endif
+#if MFOC_FEEDBACK_ENABLE_FLUX != 0 && MFOC_FEEDBACK_ENABLE_FLUX != 1
+#error "MFOC_FEEDBACK_ENABLE_FLUX must be 0 or 1"
+#endif
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX && !MFOC_FEEDBACK_ENABLE_FLUX
+#error "The selected Flux output requires MFOC_FEEDBACK_ENABLE_FLUX"
+#endif
 
 /** @brief Independent algorithm settings; enable flags control execution. */
 typedef struct {
     mfoc_encoder_cfg_t encoder;
     mfoc_smo_cfg_t smo;
+    mfoc_flux_cfg_t flux;
 } mfoc_feedback_cfg_t;
 
 /** @brief Borrowed samples and prior interval values for one Step. */
@@ -54,7 +63,9 @@ typedef struct {
     mfoc_angle_t angle;   /**< Electrical BAM32. */
     mfoc_scalar_t speed;  /**< omega_e/omega_base. */
     mfoc_ab_t u_inject_ab; /**< Next-interval V/Vbase; zero when inactive. */
+#if MFOC_FEEDBACK_ENABLE_HFI
     bool acquiring; /**< Position acquisition owns excitation this step. */
+#endif
 } mfoc_feedback_output_t;
 
 /** @brief Instance-owned algorithm states, independent of output selection. */
@@ -72,6 +83,11 @@ typedef struct {
 #if MFOC_FEEDBACK_ENABLE_HFI
     mfoc_hfi_t hfi;
     mfoc_hfi_output_t hfi_output;
+#endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    mfoc_flux_t flux;
+    mfoc_flux_cfg_t flux_cfg; /**< Retained for stopped model updates. */
+    mfoc_flux_output_t flux_output;
 #endif
     bool initialized;
 } mfoc_feedback_t;

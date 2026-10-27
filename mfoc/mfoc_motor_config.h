@@ -44,10 +44,14 @@
     (MFOC_MOTOR_BASE_TORQUE_NM * MFOC_MOTOR_BASE_TIME_SECOND / \
      MFOC_MOTOR_BASE_MECHANICAL_RAD_S)
 
-/* Physical motor values inherited from the previous profile. */
-#define MFOC_MOTOR_RESISTANCE_OHM 4.0f
-#define MFOC_MOTOR_LD_HENRY 0.0012f
-#define MFOC_MOTOR_LQ_HENRY 0.0012f
+/* 2804 / 12N14P datasheet: use phase values, not line-to-line values.
+ * Equal-inductance starting model; individual Ld/Lq are not identified. */
+#define MFOC_MOTOR_RESISTANCE_OHM 2.55f
+#define MFOC_MOTOR_LD_HENRY 0.00086f
+#define MFOC_MOTOR_LQ_HENRY 0.00086f
+#define MFOC_MOTOR_FLUX_WEBER 0.0035f
+/* 3700 g*mm^2 = 3700 * 1e-9 kg*m^2. */
+#define MFOC_MOTOR_INERTIA_KGM2 0.0000037f
 
 #define MFOC_MOTOR_RS_PU \
     (MFOC_MOTOR_RESISTANCE_OHM / MFOC_MOTOR_BASE_RESISTANCE_OHM)
@@ -56,9 +60,10 @@
 #define MFOC_MOTOR_LQ_PU \
     (MFOC_MOTOR_LQ_HENRY / MFOC_MOTOR_BASE_INDUCTANCE_HENRY)
 
-/* Flux remains the previous unmeasured placeholder; inertia is unspecified. */
-#define MFOC_MOTOR_FLUX_PU 1.0f
-#define MFOC_MOTOR_INERTIA_PU 0.0f
+#define MFOC_MOTOR_FLUX_PU                                                      \
+    (MFOC_MOTOR_FLUX_WEBER / MFOC_MOTOR_BASE_FLUX_WEBER)
+#define MFOC_MOTOR_INERTIA_PU                                                   \
+    (MFOC_MOTOR_INERTIA_KGM2 / MFOC_MOTOR_BASE_INERTIA_KGM2)
 
 /* Accepted stopped model-update ranges for this profile, including R > 1 PU. */
 #define MFOC_MOTOR_RS_MIN_PU 0.05f

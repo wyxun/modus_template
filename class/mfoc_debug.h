@@ -10,7 +10,10 @@
 #include "mfoc_app.h"
 
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
-#if MFOC_FEEDBACK_ENABLE_HFI
+/* Angle comparison takes priority: Flux, then SMO, then HFI diagnostics. */
+#define MFOC_DEBUG_HFI_WAVEFORM (MFOC_FEEDBACK_ENABLE_HFI &&                     \
+    !MFOC_FEEDBACK_ENABLE_FLUX && !MFOC_FEEDBACK_ENABLE_SMO)
+#if MFOC_DEBUG_HFI_WAVEFORM
 /* Temporary demodulation observation: 0 selects alpha excitation, 1 beta.
  * Selection changes the observed column only, never the injection sequence. */
 #ifndef MFOC_DEBUG_HFI_AXIS
@@ -21,7 +24,7 @@
 #endif
 #endif
 
-/** @brief Register four HFI Di/Du or encoder/SMO/current channels.
+/** @brief Register four HFI Di/Du or encoder/observer/current channels.
  * @return None. @note Called once after Motor initialization. */
 void mfoc_debug_WaveformInit(void);
 
@@ -32,7 +35,7 @@ void mfoc_debug_WaveformStep(void);
 
 /** @brief Refresh bound values for one accepted MWaveform sample.
  * @return None. @note HFI Di/Du slots are maintained by WaveformStep;
- * this callback leaves them untouched. Otherwise reads cached encoder/SMO.
+ * this callback leaves them untouched. Otherwise reads cached encoder/observer.
  * HFI channels use PU at 0.0001 PU/count transport resolution;
  * -3.2 marks unavailable, +/-3.1 diagnostic clipping.
  * Di is the difference of positive/negative second-interval increments;

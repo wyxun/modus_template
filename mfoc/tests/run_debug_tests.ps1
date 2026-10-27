@@ -14,8 +14,10 @@ foreach ($case in @(@('FLOAT', 1, 0, 0, 0), @('FLOAT', 1, 0, 0, 1),
     @('FLOAT', 1, 1, 0, 0), @('FLOAT', 1, 1, 0, 1),
     @('FLOAT', 1, 0, 1, 0), @('FLOAT', 0, 0, 1, 0),
     @('FLOAT', 0, 0, 0, 0), @('FIXED', 1, 0, 0, 0),
-    @('FIXED', 1, 0, 0, 1))) {
-    $numeric, $hfi, $polarity, $smo, $axis = $case
+    @('FIXED', 1, 0, 0, 1), @('FLOAT', 0, 0, 0, 0, 1),
+    @('FLOAT', 1, 0, 1, 0, 1), @('FIXED', 0, 0, 0, 0, 1))) {
+    $numeric, $hfi, $polarity, $smo, $axis, $flux = $case
+    if ($null -eq $flux) { $flux = 0 }
     $exe = Join-Path $output "$numeric-$hfi-$polarity-$smo-$axis.exe"
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
@@ -23,6 +25,7 @@ foreach ($case in @(@('FLOAT', 1, 0, 0, 0), @('FLOAT', 1, 0, 0, 1),
         "-DMFOC_HFI_ENABLE_POLARITY=$polarity" `
         "-DMFOC_DEBUG_HFI_AXIS=$axis" `
         "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
+        "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         -DMFOC_FEEDBACK_ENABLE_ENCODER=1 -DMWAVEFORM_ENABLE=1 `
         -D__NO_USE_LOG__ -D__NO_USE_ASSERT -DMODUS_ENABLE=1 `
         -D__COMPILER_HAS_GNU_EXTENSIONS__=1 `

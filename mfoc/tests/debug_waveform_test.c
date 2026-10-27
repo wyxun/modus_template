@@ -37,7 +37,7 @@ static int init(const mwaveform_protocol_t *protocol)
 static uint8_t add(const char *name, float scale, void *value, uint8_t type)
 {
     assert(s_channels < 4U);
-#if MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_DEBUG_HFI_WAVEFORM
     assert(scale == 10000.0f);
 #else
     assert(scale == 1000.0f);
@@ -95,7 +95,7 @@ mfoc_result_t mfoc_encoder_Step(const mfoc_encoder_t *encoder,
     return s_encoder_result;
 }
 
-#if MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_DEBUG_HFI_WAVEFORM
 /** @brief Check a latched frame without depending on the encoder.
  * @param expected Four current/voltage PU values. @return None. */
 static void assert_frame(const float expected[4])
@@ -220,7 +220,7 @@ int main(void)
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
     mfoc_debug_WaveformInit();
     assert(s_started && s_channels == 4U);
-#if MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_DEBUG_HFI_WAVEFORM
     assert(strcmp(s_names[0], "DiA_pu") == 0);
     assert(strcmp(s_names[1], "DiB_pu") == 0);
     assert(strcmp(s_names[2], "DuA_pu") == 0);
@@ -229,7 +229,13 @@ int main(void)
     full_cycles(1U);
 #else
     assert(strcmp(s_names[0], "Enc_mT") == 0);
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    assert(strcmp(s_names[1], "Flux_mT") == 0);
+#elif MFOC_FEEDBACK_ENABLE_SMO
     assert(strcmp(s_names[1], "SMO_mT") == 0);
+#else
+    assert(strcmp(s_names[1], "Obs_mT") == 0);
+#endif
     assert(strcmp(s_names[2], "Err_mT") == 0);
     assert(strcmp(s_names[3], "Iq_mpu") == 0);
     tMfocApp.motor.state = MFOC_MOTOR_RUNNING;
@@ -239,12 +245,30 @@ int main(void)
     tMfocApp.motor.feedback.smo_output.valid = true;
     tMfocApp.motor.feedback.smo_output.angle.wBam32 = 0x60000000U;
 #endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    tMfocApp.motor.feedback.flux_output.valid = true;
+    tMfocApp.motor.feedback.flux_output.angle.wBam32 = 0xA0000000U;
+#endif
     mfoc_debug_WaveformStep();
     mfoc_debug_CaptureWaveform();
     assert(*s_values[0] == 0.25f && *s_values[3] == 0.02f);
-#if MFOC_FEEDBACK_ENABLE_SMO
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    assert(*s_values[1] == 0.625f && *s_values[2] == 0.375f);
+    tMfocApp.motor.feedback.flux_output.valid = false;
+    mfoc_debug_CaptureWaveform();
+    assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
+#elif MFOC_FEEDBACK_ENABLE_SMO
     assert(*s_values[1] == 0.375f && *s_values[2] == 0.125f);
 #endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    tMfocApp.motor.feedback.flux_output.valid = true;
+#endif
+    tMfocApp.motor.align_active = true;
+    mfoc_debug_CaptureWaveform();
+    assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    mfoc_debug_CaptureWaveform();
+    for (unsigned j = 0U; j < 4U; ++j) { assert(*s_values[j] == -1.0f); }
 #endif
 #endif
     puts("Waveform full-carrier latch and four-channel layout passed");

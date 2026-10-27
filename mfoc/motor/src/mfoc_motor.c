@@ -7,7 +7,9 @@
 #include "mfoc_motor.h"
 #include "mfoc_port.h"
 #include "mfoc_transform.h"
+#if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_modulation.h"
+#endif
 #include "perf_counter.h"
 #include <stddef.h>
 
@@ -64,7 +66,9 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
         return MFOC_RESULT_OUT_OF_RANGE;
     }
     mfoc_motor_t next = {0};
+#if MFOC_IDENTIFICATION_ENABLE
     mfoc_identification_Init(&next.identification);
+#endif
     mfoc_result_t rc = mfoc_core_Init(&next.core, &cfg->core);
     if (rc != MFOC_RESULT_OK) { return rc; }
     rc = mfoc_feedback_Init(&next.feedback, &cfg->feedback, p);
@@ -112,7 +116,9 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }
+#if MFOC_IDENTIFICATION_ENABLE
     motor->previous_voltage_ab = (mfoc_ab_t){0};
+#endif
     motor->state = MFOC_MOTOR_RUNNING;
     return MFOC_RESULT_OK;
 }
@@ -147,7 +153,9 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     motor->state = motor->faults != 0U ?
         MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
     mfoc_result_t rc = mfoc_port_pwm_stop();
+#if MFOC_IDENTIFICATION_ENABLE
     mfoc_identification_Stop(&motor->identification);
+#endif
     motor->command.i_ref = (mfoc_dq_t){0};
     mfoc_result_t reset = mfoc_core_Reset(&motor->core);
     if (rc != MFOC_RESULT_OK) { motor->faults |= MFOC_MOTOR_FAULT_PWM; }
@@ -169,7 +177,9 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     motor->speed_ref = MFOC_ZERO;
     motor->speed_count = 0U;
     motor->mode = MFOC_MOTOR_MODE_CURRENT;
+#if MFOC_IDENTIFICATION_ENABLE
     motor->previous_voltage_ab = (mfoc_ab_t){0};
+#endif
     return rc;
 }
 
@@ -180,7 +190,9 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
     if (motor == NULL) { return MFOC_RESULT_NULL; }
     mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
     if (motor->state == MFOC_MOTOR_FAULT) {
+#if MFOC_IDENTIFICATION_ENABLE
         mfoc_identification_Stop(&motor->identification);
+#endif
         rc = mfoc_port_pwm_stop();
         if (rc != MFOC_RESULT_OK) {
             motor->faults |= MFOC_MOTOR_FAULT_PWM;
@@ -255,6 +267,7 @@ mfoc_result_t mfoc_motor_UpdateBus(mfoc_motor_t *motor)
  * @param motor Valid initialized instance. @return Service/stop status. */
 mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
 {
+#if MFOC_IDENTIFICATION_ENABLE
     if ((motor->identification.stage &
          MFOC_IDENTIFICATION_CONTROL_MASK) !=
         MFOC_IDENTIFICATION_CONTROL_INACTIVE) {
@@ -277,6 +290,7 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
         }
         return MFOC_RESULT_OK;
     }
+#endif
     mfoc_result_t feedback_rc = mfoc_feedback_Run(&motor->feedback);
     // 执行对齐
     if (motor->align_active) {
@@ -433,10 +447,12 @@ static void _mfoc_motor_SelectReference(mfoc_motor_t *motor,
         input->angle = motor->align_angle;
         return;
     }
+#if MFOC_FEEDBACK_ENABLE_HFI
     if (feedback->acquiring) {
         input->ref = (mfoc_dq_t){0};
         return;
     }
+#endif
     if (motor->mode != MFOC_MOTOR_MODE_SPEED ||
         motor->speed_count != 0U) { return; }
     input->ref = (mfoc_dq_t){0};
@@ -464,12 +480,17 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
     mfoc_ab_t i_ab = {0};
     mfoc_clarke(phase.qU, phase.qV, phase.qW, &i_ab);
 
+#if MFOC_IDENTIFICATION_ENABLE
     const mfoc_identification_control_t control =
         (mfoc_identification_control_t)(motor->identification.stage &
             MFOC_IDENTIFICATION_CONTROL_MASK);
+#endif
     mfoc_core_output_t output = {0};
+#if MFOC_IDENTIFICATION_ENABLE
     mfoc_ab_t voltage_ab = {0};
+#endif
     bool speed_countdown = false;
+#if MFOC_IDENTIFICATION_ENABLE
     if (control != MFOC_IDENTIFICATION_CONTROL_INACTIVE) {
         mfoc_identification_output_t request = {0};
         mfoc_identification_state_t status =
@@ -508,7 +529,9 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             break;
         }
         }
-    } else {
+    } else
+#endif
+    {
         const mfoc_core_output_t *previous = motor->previous_core_output_valid ?
             &motor->previous_core_output : NULL;
         mfoc_feedback_output_t feedback = {0};
@@ -530,7 +553,10 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         _mfoc_motor_SelectReference(motor, &feedback, &core_input);
         mfoc_core_Step(&motor->core, &core_input, &output);
         phase = output.duty;
-        speed_countdown = !feedback.acquiring &&
+        speed_countdown =
+#if MFOC_FEEDBACK_ENABLE_HFI
+            !feedback.acquiring &&
+#endif
             motor->mode == MFOC_MOTOR_MODE_SPEED &&
             motor->speed_count != 0U;
     }
@@ -538,12 +564,17 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }
+#if MFOC_IDENTIFICATION_ENABLE
     motor->previous_voltage_ab = voltage_ab;
     motor->previous_core_output_valid =
         control != MFOC_IDENTIFICATION_CONTROL_VOLTAGE;
     if (motor->previous_core_output_valid) {
         motor->previous_core_output = output;
     }
+#else
+    motor->previous_core_output = output;
+    motor->previous_core_output_valid = true;
+#endif
     if (speed_countdown) { motor->speed_count--; }
     return MFOC_RESULT_OK;
 }

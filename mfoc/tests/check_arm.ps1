@@ -106,6 +106,12 @@ if ($smoUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') 
     throw "FIXED SMO must not use soft-float helpers: $smoUndefined"
 }
 Write-Output 'Cortex-M0 FIXED SMO: no soft-float helper symbols'
+$fluxUndefined = & $nm --undefined-only (Join-Path $output 'FIXED-mfoc_flux.o')
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED Flux object' }
+if ($fluxUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
+    throw "FIXED Flux must not use soft-float helpers: $fluxUndefined"
+}
+Write-Output 'Cortex-M0 FIXED Flux: no soft-float helper symbols'
 $loopUndefined = & $nm --undefined-only (
     Join-Path $output 'FIXED-mfoc_openloop.o')
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED OpenLoop object' }

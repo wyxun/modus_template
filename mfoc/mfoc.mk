@@ -25,6 +25,7 @@ MFOC_SOURCES = $(MFOC_ROOT)/base/src/mfoc_numeric.c                             
     $(MFOC_ROOT)/identification/src/mfoc_identification_inertia.c               \
     $(MFOC_ROOT)/position/src/mfoc_encoder.c                                    \
     $(MFOC_ROOT)/position/src/mfoc_smo.c                                        \
+    $(MFOC_ROOT)/position/src/mfoc_flux.c                                       \
     $(MFOC_ROOT)/position/src/mfoc_hfi.c                                        \
     $(MFOC_ROOT)/motor/src/mfoc_motor_irq.c                                     \
     $(MFOC_ROOT)/port/src/mfoc_port.c

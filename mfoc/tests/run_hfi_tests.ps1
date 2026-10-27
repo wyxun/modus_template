@@ -26,6 +26,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
         -DMFOC_FEEDBACK_ENABLE_ENCODER=0 -DMFOC_FEEDBACK_ENABLE_SMO=0 `
+        -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
         -DMFOC_FEEDBACK_ENABLE_HFI=1 -DMFOC_FEEDBACK_BACKEND=3 `
         "-I$library" "-I$library/base/include" "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/position/include" `
@@ -40,6 +41,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
             -DMFOC_FEEDBACK_ENABLE_ENCODER=1 -DMFOC_FEEDBACK_ENABLE_SMO=1 `
+            -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
             -DMFOC_FEEDBACK_ENABLE_HFI=1 "-DMFOC_FEEDBACK_BACKEND=$backend" `
             "-I$library" "-I$library/base/include" `
             "-I$library/core/include" "-I$library/motor/include" `

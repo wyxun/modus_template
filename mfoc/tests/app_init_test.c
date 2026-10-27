@@ -192,6 +192,28 @@ static void shell_commands(void)
 #endif
 #endif
     command("hfi status trailing", "invalid motor arguments");
+    unsigned starts = s_start_count;
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    tMfocApp.motor.state = MFOC_MOTOR_RUNNING;
+    tMfocApp.motor.previous_core_output_valid = true;
+    tMfocApp.motor.feedback.flux_output = (mfoc_flux_output_t){
+        .angle = {0x40000000U}, .speed = MFOC_HALF, .valid = true};
+    command("flux status", "valid=1 angle_mT=250 speed_mpu=500");
+    tMfocApp.motor.align_active = true;
+    command("flux", "valid=0");
+    tMfocApp.motor.align_active = false;
+    tMfocApp.motor.state = MFOC_MOTOR_IDLE;
+    command("flux status", "valid=0");
+#if MFOC_ISR_MEASURE
+    command("flux status", "isr_win_max=8501 overrun=1 budget=8500");
+    assert(tMfocApp.tIsrTiming.wMaximumTicks == 8501U);
+#endif
+#else
+    command("flux status", "flux state=disabled");
+#endif
+    command("flux status trailing", "invalid motor arguments");
+    command("flux start", "invalid motor arguments");
+    assert(s_start_count == starts);
     command("align", "motor align result=0");
     command("stop", "motor stop result=0");
     assert(s_align_count == 1U && s_stop_count == 1U);

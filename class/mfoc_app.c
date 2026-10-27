@@ -95,9 +95,8 @@ int mfoc_app_Run(uintptr_t object)
     return app->result == MFOC_RESULT_OK ? MODUS_SUCCESS : MODUS_EFAIL;
 }
 
-/* Motor data and PU bases come from mfoc_motor_config.h. Rs and Ld/Lq are
- * inherited values, not bench-identified. Flux=1 PU is an unmeasured
- * placeholder; encoder zero/direction need bench validation.
+/* Motor data and PU bases come from the 2804 datasheet in motor_config.
+ * Ld/Lq share its phase inductance; encoder zero/direction need validation.
  * Inherited PI gains are starting values, not validated bench tuning. */
 #define MFOC_APP_CURRENT_PI { \
     .kp = MFOC_SCALAR(0.472810f), \
@@ -141,6 +140,12 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .cutoff_rad_s = 4000U,
             .h = MFOC_SCALAR(5.0f / MFOC_MOTOR_BASE_VOLTAGE_VOLT),
             .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE,
+        }, .flux = {
+            .sample_hz = 20000U,
+            .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
+            .gain = MFOC_SCALAR(MFOC_FLUX_GAIN),
+            .pll_kp = MFOC_SCALAR(MFOC_FLUX_PLL_KP),
+            .pll_ki = MFOC_SCALAR(MFOC_FLUX_PLL_KI),
         }},
         .speed = MFOC_APP_SPEED_PI,
         .speed_divider = 20U,
@@ -258,6 +263,56 @@ static void _mfoc_app_PrintHfi(void)
 #endif
 }
 
+/** @brief Print the independent Flux estimate and its configured scales.
+ * @return None. This diagnostic does not start or reconfigure control. */
+static void _mfoc_app_PrintFlux(void)
+{
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    mfoc_flux_output_t output = {0};
+    mfoc_flux_cfg_t cfg = {0};
+    mfoc_scalar_t psi = MFOC_ZERO;
+    mfoc_motor_state_t state = MFOC_MOTOR_UNINITIALIZED;
+    bool available = false;
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+    uint32_t maximum = 0U;
+    bool overrun = false;
+#endif
+    __IRQ_SAFE {
+        const mfoc_motor_t *motor = &tMfocApp.motor;
+        output = motor->feedback.flux_output;
+        cfg = motor->feedback.flux_cfg;
+        psi = motor->params.flux;
+        state = motor->state;
+        available = state == MFOC_MOTOR_RUNNING && !motor->align_active &&
+            motor->previous_core_output_valid && output.valid;
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        maximum = tMfocApp.tIsrTiming.wMaximumTicks;
+        overrun = tMfocApp.tIsrTiming.bOverrun;
+#endif
+    }
+    uint32_t angle_mt = (uint32_t)(
+        ((uint64_t)output.angle.wBam32 * 1000U) >> 32U);
+    MLOGF(I, "flux motor=%u valid=%u angle_mT=%lu speed_mpu=%ld "
+        "psi_mpu=%ld gain_mpu=%ld kp_mpu=%ld ki_mpu=%ld"
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        " isr_win_max=%lu overrun=%u budget=%lu"
+#endif
+        "\r\n", (unsigned)state, (unsigned)available,
+        (unsigned long)angle_mt, (long)(mfoc_to_float(output.speed) * 1000.0f),
+        (long)(mfoc_to_float(psi) * 1000.0f),
+        (long)(mfoc_to_float(cfg.gain) * 1000.0f),
+        (long)(mfoc_to_float(cfg.pll_kp) * 1000.0f),
+        (long)(mfoc_to_float(cfg.pll_ki) * 1000.0f)
+#if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
+        , (unsigned long)maximum, (unsigned)overrun,
+        (unsigned long)MFOC_ISR_BUDGET_TICKS
+#endif
+        );
+#else
+    MLOGF(I, "flux state=disabled (MFOC_FEEDBACK_ENABLE_FLUX=0)\r\n");
+#endif
+}
+
 /** @brief Parse Motor commands and execute control or diagnostics.
  * @param args Arguments after motor. @return None.
  */
@@ -269,7 +324,15 @@ static void _mfoc_app_CmdMotor(const char *args)
     float q = 0.0f;
     bool valid = false;
 
-    if (mshell_ConsumeWord(&cursor, "hfi")) {
+    if (mshell_ConsumeWord(&cursor, "flux")) {
+        if ((mshell_AtEnd(cursor) ||
+             mshell_ConsumeWord(&cursor, "status")) && mshell_AtEnd(cursor)) {
+            _mfoc_app_PrintFlux();
+        } else {
+            MLOGF(W, "invalid motor arguments\r\n");
+        }
+        return;
+    } else if (mshell_ConsumeWord(&cursor, "hfi")) {
         if (mshell_AtEnd(cursor) || mshell_ConsumeWord(&cursor, "start")) {
             if (!mshell_AtEnd(cursor)) {
                 MLOGF(W, "invalid motor arguments\r\n");
@@ -347,6 +410,7 @@ static void _mfoc_app_CmdMotor(const char *args)
         MLOGF(I, "usage: motor current <id> <iq> | speed <pu> | align\r\n"
             "       motor openloop <speed_pu> <id_pu>\r\n"
             "       motor hfi [start|status]; motor stop to end\r\n"
+            "       motor flux [status]; observer only\r\n"
             "       motor encoder | stop | clear | status | help\r\n"
             "       clear: parse only; execution pending\r\n");
         return;
@@ -359,5 +423,5 @@ static void _mfoc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, _mfoc_app_CmdMotor,
-    "MFOC: current/speed/openloop/hfi/encoder/align/stop/status");
+    "MFOC: current/speed/openloop/hfi/flux/encoder/align/stop/status");
 #endif

@@ -10,7 +10,9 @@
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
 #include "mfoc_openloop.h"
+#if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_identification.h"
+#endif
 
 /** @brief Fixed-field hold duration, serviced by Motor Run. */
 #ifndef MFOC_MOTOR_ALIGN_TIME_MS
@@ -88,7 +90,9 @@ typedef struct {
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
     mfoc_feedback_t feedback;
+#if MFOC_IDENTIFICATION_ENABLE
     mfoc_identification_t identification;
+#endif
     mfoc_openloop_t openloop;
     mfoc_motor_command_t command;
     volatile mfoc_motor_mode_t mode;
@@ -97,7 +101,9 @@ typedef struct {
     volatile mfoc_result_t irq_result; /* Last IRQ Step result; diagnostics. */
     mfoc_core_output_t previous_core_output;
     bool previous_core_output_valid;
+#if MFOC_IDENTIFICATION_ENABLE
     mfoc_ab_t previous_voltage_ab; /* Prior requested voltage, V/Vbase. */
+#endif
     mfoc_pi_t speed;
     mfoc_scalar_t speed_ref;
     uint16_t speed_divider;

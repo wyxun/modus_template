@@ -1,4 +1,5 @@
-param([ValidateSet(0, 1)][int]$Hfi = 1)
+param([ValidateSet(0, 1)][int]$Hfi = 1,
+    [ValidateSet(0, 1)][int]$Flux = 0)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-app-' + [guid]::NewGuid())
@@ -20,6 +21,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_NUMERIC_$numeric=1" -DMODUS_ENABLE=1 -DFOC_APP=2 `
         "-DMFOC_ISR_MEASURE=$timing" `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
+        "-DMFOC_FEEDBACK_ENABLE_FLUX=$Flux" `
         "-DMSHELL_ENABLE=$shell" `
         @logFlags -D__NO_USE_ASSERT `
         -D__PERFC_USE_USER_CUSTOM_PORTING__=1 `

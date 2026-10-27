@@ -11,6 +11,11 @@
 #include <math.h>
 #include <stdio.h>
 
+#if !MFOC_FEEDBACK_ENABLE_HFI
+_Static_assert(sizeof(mfoc_feedback_output_t) == 4U * sizeof(mfoc_scalar_t),
+    "HFI-disabled feedback must contain only angle, speed and voltage");
+#endif
+
 /** @brief Prepare a current-controlled motor with a known inactive port.
  * @param motor Destination. @return None. */
 static void setup(mfoc_motor_t *motor)
@@ -45,6 +50,7 @@ static void check_fault(mfoc_motor_t *motor, uint32_t fault)
     assert(!motor_port_fake.enabled);
 }
 
+#if MFOC_FEEDBACK_ENABLE_HFI
 /** @brief Freeze speed PI/cadence during acquisition and resume on readiness.
  * @return None. */
 static void speed_acquisition(void)
@@ -75,6 +81,7 @@ static void speed_acquisition(void)
     assert(motor.speed_count == 1U && motor.speed.ui == integral);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
 }
+#endif
 
 /** @brief Exercise the complete port-bound current-control path.
  * @return Zero if every assertion passes. */
@@ -161,6 +168,7 @@ int main(void)
     assert(fabsf(mfoc_to_float(voltage.qAlpha) - 0.2f) < 0.0003f);
     assert(fabsf(mfoc_to_float(voltage.qBeta) + 0.1f) < 0.0003f);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+#if MFOC_FEEDBACK_ENABLE_HFI
     /* Acquisition applies excitation while deferring the stored command. */
     setup(&motor);
     assert(mfoc_motor_SetCurrent(&motor, &ref) == MFOC_RESULT_OK);
@@ -178,6 +186,7 @@ int main(void)
     assert(motor.previous_core_output.u.qQ < MFOC_ZERO);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     speed_acquisition();
+#endif
     puts("Motor control, startup rejection and fault recovery passed");
     return 0;
 }
