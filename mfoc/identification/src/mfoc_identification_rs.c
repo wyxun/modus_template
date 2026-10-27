@@ -19,8 +19,6 @@
 #error "Bounded Q15 window sums must fit in the int32 accumulator"
 #endif
 
-enum { RS_LOW = 0, RS_HIGH, RS_DONE, RS_FAILED };
-
 /** @brief Validate frozen currents and calculate delta(m)*bus/delta(i).
  * @param state Captured windows. @param bus Startup Vdc/Vbase.
  * @param rs Result, unchanged on failure. @return Complete or error.
@@ -30,7 +28,8 @@ fsm_rt_t mfoc_identification_rs_Finish(
     const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
     mfoc_scalar_t *rs)
 {
-    if (state == NULL || rs == NULL || state->level != RS_DONE ||
+    if (state == NULL || rs == NULL ||
+        state->level != MFOC_IDENTIFICATION_RS_DONE ||
         bus <= MFOC_ZERO) { return fsm_rt_err; }
     mfoc_scalar_t delta_i = MFOC_ZERO;
     for (uint32_t level = 0U; level < 2U; ++level) {
@@ -43,7 +42,8 @@ fsm_rt_t mfoc_identification_rs_Finish(
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_STABILITY * 0.5f)) {
             return fsm_rt_err;
         }
-        delta_i = level == RS_LOW ? -current : delta_i + current;
+        delta_i = level == MFOC_IDENTIFICATION_RS_LOW ?
+            -current : delta_i + current;
     }
     if (delta_i < MFOC_SCALAR(MFOC_IDENTIFICATION_RS_DELTA_MIN)) {
         return fsm_rt_err;
@@ -62,49 +62,23 @@ fsm_rt_t mfoc_identification_rs_Finish(
     return fsm_rt_cpl;
 }
 
-/** @brief Apply two fixed alpha modulation levels and collect current sums.
+/** @brief Discard settling samples, then accumulate each level's current.
  * @param state Experiment. @param current Present alpha-beta current.
- * @param output Next modulation/stop request. @return Capture progress.
- * @note ISR contains no PI, voltage accumulation, mean or ratio calculation. */
+ * @return Ongoing or complete; caller owns voltage application.
+ * @note Settling restarts at each level. Valid pointers are preconditions. */
 fsm_rt_t mfoc_identification_rs_Step(mfoc_identification_rs_t *state,
-    const mfoc_ab_t *current, mfoc_identification_output_t *output)
+    const mfoc_ab_t *current)
 {
-    if (output == NULL) { return fsm_rt_err; }
-    *output = (mfoc_identification_output_t){.stop = true};
-    if (state == NULL || current == NULL) { return fsm_rt_err; }
-    if (state->level == RS_FAILED) { return fsm_rt_err; }
-    if (state->level == RS_DONE) { output->stop = false; return fsm_rt_cpl; }
-    if (mfoc_abs(current->qAlpha) >
-            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) ||
-        mfoc_abs(current->qBeta) >
-            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) -
-                mfoc_abs(current->qAlpha)) {
-        state->level = RS_FAILED;
-        return fsm_rt_err;
-    }
-    output->stop = false;
-    output->modulation = state->level == RS_LOW ?
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW) :
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH);
+    if (state->level == MFOC_IDENTIFICATION_RS_DONE) { return fsm_rt_cpl; }
     state->count++;
     if (state->count <= RS_SETTLE) { return fsm_rt_on_going; }
-    if (mfoc_abs(current->qBeta) >
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_TRANSVERSE_MAX)) {
-        state->level = RS_FAILED;
-        output->stop = true;
-        return fsm_rt_err;
-    }
     state->sum_i[state->level] += current->qAlpha;
     if (state->count == RS_SETTLE + RS_SAMPLES / 2U) {
         state->half_i[state->level] = state->sum_i[state->level];
     }
-    if (state->count != RS_SETTLE + RS_SAMPLES) { return fsm_rt_on_going; }
+    if (state->count < RS_SETTLE + RS_SAMPLES) { return fsm_rt_on_going; }
     state->count = 0U;
     state->level++;
-    if (state->level == RS_DONE) {
-        output->modulation = MFOC_ZERO;
-        return fsm_rt_cpl;
-    }
-    output->modulation = MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH);
-    return fsm_rt_on_going;
+    return state->level == MFOC_IDENTIFICATION_RS_DONE ?
+        fsm_rt_cpl : fsm_rt_on_going;
 }

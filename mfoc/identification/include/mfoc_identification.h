@@ -31,28 +31,37 @@ typedef enum {
 /** @brief Foreground sequence, including preparation for rotating tests. */
 typedef enum {
     MFOC_IDENTIFICATION_STAGE_NONE = 0,
-    MFOC_IDENTIFICATION_STAGE_ALIGN,
-    MFOC_IDENTIFICATION_STAGE_RS,
-    MFOC_IDENTIFICATION_STAGE_LD,
-    MFOC_IDENTIFICATION_STAGE_LQ,
-    MFOC_IDENTIFICATION_STAGE_SPINUP,
-    MFOC_IDENTIFICATION_STAGE_FLUX,
-    MFOC_IDENTIFICATION_STAGE_INERTIA,
-    MFOC_IDENTIFICATION_STAGE_COMPLETE,
+    /* High control bits select the ISR path; low bits identify the stage. */
+    MFOC_IDENTIFICATION_STAGE_ALIGN =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 1U,
+    MFOC_IDENTIFICATION_STAGE_RS =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 2U,
+    MFOC_IDENTIFICATION_STAGE_LD =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 3U,
+    MFOC_IDENTIFICATION_STAGE_LQ =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 4U,
+    MFOC_IDENTIFICATION_STAGE_SPINUP =
+        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 5U,
+    MFOC_IDENTIFICATION_STAGE_FLUX =
+        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 6U,
+    MFOC_IDENTIFICATION_STAGE_INERTIA =
+        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 7U,
+    MFOC_IDENTIFICATION_STAGE_COMPLETE =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 8U,
 } mfoc_identification_stage_t;
 
-/** @brief Borrowed Motor samples; angle/speed are valid for rotating tests. */
+/** @brief Raw synchronous samples; independent of Feedback/Core structures.
+ * u_ab_previous is the previous requested stator voltage in V/Vbase. */
 typedef struct {
     const mfoc_ab_t *i_ab_k;
-    const mfoc_core_output_t *previous_core_output;
-    mfoc_angle_t angle;
-    mfoc_scalar_t speed;
+    mfoc_ab_t u_ab_previous;
 } mfoc_identification_input_t;
 
 /** @brief Mutually exclusive workspaces; unused algorithms add no state. */
 typedef union {
     uint32_t align_samples;
     mfoc_identification_rs_t rs;
+    mfoc_identification_flux_t flux;
 } mfoc_identification_work_t;
 
 /** @brief Instance-owned experiment and result; no Motor or hardware pointer.
@@ -63,7 +72,7 @@ typedef struct {
     mfoc_scalar_t bus; /* Fixed supply snapshot; not sampled by Step. */
     mfoc_identification_work_t work;
     mfoc_identification_operation_t operation;
-    mfoc_angle_t fixed_angle; /* Last submitted fixed-frame angle. */
+    mfoc_angle_t angle; /* Last identification-owned virtual angle. */
     volatile mfoc_identification_state_t state;
     volatile mfoc_identification_stage_t stage;
     volatile bool stage_done; /* ISR publishes completion after sample writes. */
@@ -78,19 +87,14 @@ void mfoc_identification_Init(mfoc_identification_t *id);
 /** @brief Arm an experiment; does not enable PWM or start Motor.
  * @param id Instance. @param model Current PU model. @param operation Test.
  * @param bus Positive startup Vdc/Vbase snapshot.
- * @return OK when armed, INVALID_STATE when already running.
- * @note Call while Motor is IDLE; hardware uses motor_IdentifyStart so its
- * current limit and bus preconditions are checked before PWM startup.
- * RESISTANCE is implemented; Ld/Lq and rotating preparation remain TODO. */
+ * @return OK when armed; INVALID_STATE for active or unsupported operations.
+ * @note Call while Motor is IDLE; the caller owns Motor startup/shutdown.
+ * RESISTANCE is implemented; Ld/Lq pulse scheduling and rotating preparation
+ * remain TODO. The independent inductance capture/Finish leaf is available;
+ * Flux has an independent estimator but cannot yet start through Motor. */
 mfoc_result_t mfoc_identification_Start(mfoc_identification_t *id,
     const mfoc_motor_params_t *model,
     mfoc_identification_operation_t operation, mfoc_scalar_t bus);
-
-/** @brief Declare current control/feedback requirements before sampling.
- * @param id Instance. @return Current/voltage/feedback requirement or inactive.
- * @note Motor evaluates once per ISR; terminal stages request fixed stop. */
-mfoc_identification_control_t mfoc_identification_GetControl(
-    const mfoc_identification_t *id);
 
 /** @brief Cancel an active experiment; preserve completed/error status.
  * @param id Instance. @return None.
@@ -118,9 +122,8 @@ mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
 /** @brief Consume i[k] and the preceding submitted PWM interval.
  * @param id Active instance. @param input Current/prior-interval samples.
  * @param output Next experiment command. @return None.
- * @note ISR only. Duty/bus describe model voltage, not measured terminal
- * voltage. Rs captures current only. Inputs are borrowed for this call.
- * Caller gates once using GetControl; FEEDBACK requires valid feedback. */
+ * @note ISR only. Inputs are raw current and prior requested voltage; no
+ * Feedback output or Core output is passed into the identification module. */
 void mfoc_identification_Step(mfoc_identification_t *id,
     const mfoc_identification_input_t *input,
     mfoc_identification_output_t *output);

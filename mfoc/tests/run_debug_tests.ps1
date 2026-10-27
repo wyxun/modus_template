@@ -6,7 +6,7 @@ $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     'modus/src/arch', 'modus/lib/plooc', 'modus/lib/perf_counter',
     'vendor/cortex-m/cmsis_core', 'class', 'mfoc', 'mfoc/base/include',
     'mfoc/core/include', 'mfoc/motor/include', 'mfoc/position/include',
-    'mfoc/port/include') |
+    'mfoc/port/include', 'mfoc/identification/include') |
     ForEach-Object { '-I' + (Join-Path $repo $_) }
 $sources = @(Get-ChildItem "$repo/mfoc/base/src/*.c" |
     ForEach-Object { $_.FullName })

@@ -108,7 +108,8 @@ static void lifecycle(void)
         MFOC_RESULT_OK);
     assert(mfoc_motor_OpenLoopStart(&motor, MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_INVALID_STATE);
-    assert(motor.align_active && motor.mode == MFOC_MOTOR_MODE_OPENLOOP);
+    assert(motor.align_active && motor.openloop_active);
+    assert(motor.mode == MFOC_MOTOR_MODE_CURRENT);
     motor_port_fake.feedback_step = MFOC_RESULT_INVALID_STATE;
     motor_port_fake.feedback_run = MFOC_RESULT_IO;
     for (unsigned i = 0U; i < 10U; ++i) {

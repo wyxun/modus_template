@@ -91,6 +91,20 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
     return motor_port_fake.feedback_run;
 }
 
+/** @brief Reset HFI state before the Motor's normal startup.
+ * @param feedback Initialized instance. @return Compiled capability status. */
+mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
+{
+#if MFOC_FEEDBACK_ENABLE_HFI
+    feedback->hfi = (mfoc_hfi_t){.state = MFOC_HFI_ACQUIRE};
+    feedback->hfi_output = (mfoc_hfi_output_t){0};
+    return MFOC_RESULT_OK;
+#else
+    (void)feedback;
+    return MFOC_RESULT_INVALID_STATE;
+#endif
+}
+
 /** @brief Require calibration to occur while the fixed field is energized.
  * @param feedback Instance. @param angle Held angle. @return Injected status. */
 mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,

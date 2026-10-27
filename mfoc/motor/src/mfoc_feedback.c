@@ -78,9 +78,24 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
     if (feedback == NULL) { return MFOC_RESULT_NULL; }
     if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
 #if MFOC_FEEDBACK_ENABLE_ENCODER
-    return mfoc_encoder_Run(&feedback->encoder);
+    mfoc_result_t rc = mfoc_encoder_Run(&feedback->encoder);
+    return rc;
 #else
     return MFOC_RESULT_OK;
+#endif
+}
+
+/** @brief Reset HFI and acquire position independently of backend selection.
+ * @param feedback Initialized, stopped instance. @return Capability status. */
+mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
+{
+#if MFOC_FEEDBACK_ENABLE_HFI
+    mfoc_hfi_Init(&feedback->hfi);
+    feedback->hfi_output = (mfoc_hfi_output_t){0};
+    return MFOC_RESULT_OK;
+#else
+    (void)feedback;
+    return MFOC_RESULT_INVALID_STATE;
 #endif
 }
 
@@ -138,12 +153,11 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     const mfoc_ab_t *u_previous = voltage_status == MFOC_RESULT_OK ?
         &voltage : NULL;
     feedback->hfi_output = (mfoc_hfi_output_t){0};
-    if (u_previous == NULL) {
-        mfoc_hfi_Init(&feedback->hfi);
-    }
     if (has_current) {
         mfoc_hfi_Step(&feedback->hfi, input->i_ab_k, u_previous,
                        &feedback->hfi_output);
+    } else {
+        mfoc_hfi_Init(&feedback->hfi);
     }
     next.u_inject_ab = feedback->hfi_output.u_inject_ab;
 #endif
@@ -159,7 +173,10 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     next.angle = feedback->smo_output.angle;
     next.speed = feedback->smo_output.speed;
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI
-    if (!feedback->hfi_output.valid) { return MFOC_RESULT_INVALID_STATE; }
+    if (!has_current || feedback->hfi.state == MFOC_HFI_FAILED) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    next.acquiring = !feedback->hfi_output.valid;
     next.angle = feedback->hfi_output.angle;
     next.speed = feedback->hfi_output.speed;
 #else

@@ -45,6 +45,37 @@ static void check_fault(mfoc_motor_t *motor, uint32_t fault)
     assert(!motor_port_fake.enabled);
 }
 
+/** @brief Freeze speed PI/cadence during acquisition and resume on readiness.
+ * @return None. */
+static void speed_acquisition(void)
+{
+    const mfoc_pi_params_t pi = {MFOC_HALF, MFOC_SCALAR(0.01f),
+        -MFOC_HALF, MFOC_HALF, -MFOC_HALF, MFOC_HALF};
+    const mfoc_motor_cfg_t cfg = {
+        .params = {7U, MFOC_HALF, MFOC_ONE, MFOC_ONE, MFOC_HALF, 0},
+        .limits = {MFOC_ONE, MFOC_ONE}, .core = {pi, pi, MFOC_ONE},
+        .speed = pi, .speed_divider = 3U};
+    mfoc_motor_t motor = {0};
+    motor_port_fake = (motor_port_fake_t){0};
+    assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_HALF) == MFOC_RESULT_OK);
+    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    motor_port_fake.feedback.acquiring = true;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == 0U && motor.speed.ui == MFOC_ZERO);
+    motor_port_fake.feedback.acquiring = false;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == 2U && motor.command.i_ref.qQ > MFOC_ZERO);
+    mfoc_scalar_t integral = motor.speed.ui;
+    motor_port_fake.feedback.acquiring = true;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == 2U && motor.speed.ui == integral);
+    motor_port_fake.feedback.acquiring = false;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == 1U && motor.speed.ui == integral);
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+}
+
 /** @brief Exercise the complete port-bound current-control path.
  * @return Zero if every assertion passes. */
 int main(void)
@@ -130,6 +161,23 @@ int main(void)
     assert(fabsf(mfoc_to_float(voltage.qAlpha) - 0.2f) < 0.0003f);
     assert(fabsf(mfoc_to_float(voltage.qBeta) + 0.1f) < 0.0003f);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    /* Acquisition applies excitation while deferring the stored command. */
+    setup(&motor);
+    assert(mfoc_motor_SetCurrent(&motor, &ref) == MFOC_RESULT_OK);
+    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    motor_port_fake.feedback.acquiring = true;
+    motor_port_fake.feedback.u_inject_ab.qAlpha = MFOC_SCALAR(0.1f);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(fabsf(mfoc_to_float(motor.previous_core_output.u.qD) -
+        0.1f) < 0.0003f);
+    assert(motor.previous_core_output.u.qQ == MFOC_ZERO);
+    assert(motor.command.i_ref.qD == ref.qD);
+    motor_port_fake.feedback.acquiring = false;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.previous_core_output.u.qD > MFOC_SCALAR(0.1f));
+    assert(motor.previous_core_output.u.qQ < MFOC_ZERO);
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    speed_acquisition();
     puts("Motor control, startup rejection and fault recovery passed");
     return 0;
 }

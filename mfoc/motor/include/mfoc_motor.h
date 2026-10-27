@@ -10,6 +10,7 @@
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
 #include "mfoc_openloop.h"
+#include "mfoc_identification.h"
 
 /** @brief Fixed-field hold duration, serviced by Motor Run. */
 #ifndef MFOC_MOTOR_ALIGN_TIME_MS
@@ -26,8 +27,6 @@ typedef struct {
 typedef enum {
     MFOC_MOTOR_MODE_CURRENT = 0,
     MFOC_MOTOR_MODE_SPEED,
-    MFOC_MOTOR_MODE_OPENLOOP,
-    MFOC_MOTOR_MODE_HFI,
 } mfoc_motor_mode_t;
 
 /** @brief Persistent current command in the selected control frame. */
@@ -89,6 +88,7 @@ typedef struct {
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
     mfoc_feedback_t feedback;
+    mfoc_identification_t identification;
     mfoc_openloop_t openloop;
     mfoc_motor_command_t command;
     volatile mfoc_motor_mode_t mode;
@@ -97,6 +97,7 @@ typedef struct {
     volatile mfoc_result_t irq_result; /* Last IRQ Step result; diagnostics. */
     mfoc_core_output_t previous_core_output;
     bool previous_core_output_valid;
+    mfoc_ab_t previous_voltage_ab; /* Prior requested voltage, V/Vbase. */
     mfoc_pi_t speed;
     mfoc_scalar_t speed_ref;
     uint16_t speed_divider;
@@ -104,6 +105,7 @@ typedef struct {
     mfoc_angle_t align_angle;
     int64_t align_deadline; /* perfc slot, owned by foreground Run. */
     volatile bool align_active;
+    bool openloop_active; /* Forced startup/rotation; independent of mode. */
 } mfoc_motor_t;
 
 /** @brief Validate/copy motor data and initialize current control in IDLE.
@@ -172,12 +174,8 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
 mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t id_pu);
 
-/** @brief Start stationary HFI acquisition with zero fundamental current.
- * @param motor IDLE instance with HFI compiled in. @return Startup status.
- * @note No alignment or valid position backend is required. Uses the fixed
- * HFI voltage settings; no torque/speed command or angle takeover. Stop
- * cancels acquisition/tracking; HFI failure stops PWM automatically.
- * Axis lock may retain half-turn ambiguity when polarity is disabled. */
+/** @brief Reset HFI and start the Motor with zero current reference.
+ * @param motor IDLE instance with HFI compiled in. @return Startup status. */
 mfoc_result_t mfoc_motor_HfiStart(mfoc_motor_t *motor);
 
 /** @brief Select speed mode and set a bounded electrical-speed reference.
@@ -192,9 +190,9 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
  * RUNNING check precedes current read, Clarke, feedback, optional speed PI,
  * Core, and PWM submission. Idle/fault calls consume no frame. Runtime
  * failures Trip Motor; successful PWM submission publishes the prior output.
- * In OPENLOOP, observer status is diagnostic and cannot gate forced control;
- * in HFI mode, invalid estimates do not block acquisition injection and an
- * HFI failure stops PWM. Sampling/PWM errors retain normal fault handling. */
+ * Forced startup treats observer status as diagnostic. Feedback acquisition
+ * holds fundamental current at zero and suspends speed control. Feedback
+ * failures in normal control/acquisition Trip, as do sampling/PWM errors. */
 mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor);
 
 /** @brief Read the published bus sample and update Core coefficients.

@@ -48,11 +48,13 @@ typedef struct {
     const mfoc_core_output_t *previous_core_output;
 } mfoc_feedback_input_t;
 
-/** @brief Electrical feedback, valid only when Step returns OK. */
+/** @brief Control feedback/request; angle and speed require !acquiring.
+ * On OK, acquiring holds fundamental current at zero while applying injection. */
 typedef struct {
     mfoc_angle_t angle;   /**< Electrical BAM32. */
     mfoc_scalar_t speed;  /**< omega_e/omega_base. */
     mfoc_ab_t u_inject_ab; /**< Next-interval V/Vbase; zero when inactive. */
+    bool acquiring; /**< Position acquisition owns excitation this step. */
 } mfoc_feedback_output_t;
 
 /** @brief Instance-owned algorithm states, independent of output selection. */
@@ -93,6 +95,11 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
  * @note Call repeatedly while idle or running; do not call from ISR. */
 mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback);
 
+/** @brief Reset the HFI observer before starting the Motor.
+ * @param feedback Initialized instance.
+ * @return OK, or INVALID_STATE when HFI is compiled out. */
+mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback);
+
 /** @brief Calibrate the selected encoder against a held electrical angle.
  * @param feedback Initialized instance. @param angle Held electrical angle.
  * @return Calibration status; NONE has no position reference to calibrate.
@@ -103,7 +110,7 @@ mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
 /** @brief Run enabled ISR algorithms, then select the configured output.
  * @param feedback Instance. @param input Current/prior Core samples; encoder
  * ignores this argument; absent prior voltage resets model histories.
- * @param output Electrical feedback, unchanged on failure.
+ * @param output Feedback/excitation, unchanged on failure.
  * @return Backend status; NONE returns INVALID_STATE. No I2C access here.
  * @note Valid initialized feedback and output pointers are preconditions. */
 mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,

@@ -1,6 +1,6 @@
 /**
  * @file hfi_channel_test.c
- * @brief Injection frame, saturation, anti-windup and HFI acquisition gate.
+ * @brief Injection frame, saturation, anti-windup and HFI backend gate.
  * @author Codex
  * @date 2026-10-24
  */
@@ -72,13 +72,14 @@ int main(void)
         MFOC_RESULT_OK);
     mfoc_feedback_input_t sample = {.i_ab_k = &current};
     mfoc_feedback_output_t result = {.speed = MFOC_HALF};
-    mfoc_feedback_output_t saved = result;
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
-        MFOC_RESULT_INVALID_STATE);
-    assert(memcmp(&result, &saved, sizeof(result)) == 0);
+        MFOC_RESULT_OK);
+    assert(result.acquiring);
+    assert(result.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
     sample.previous_core_output = &output;
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
-        MFOC_RESULT_INVALID_STATE);
+        MFOC_RESULT_OK);
+    assert(result.acquiring);
     assert(!feedback.hfi_output.valid);
     assert(feedback.hfi_output.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
     assert(feedback.hfi_output.u_inject_ab.qBeta == MFOC_ZERO);
@@ -93,6 +94,12 @@ int main(void)
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
         MFOC_RESULT_OUT_OF_RANGE);
     assert(memcmp(&retained, &feedback.hfi, sizeof(retained)) == 0);
+    /* A failed HFI backend reports its state through Feedback. */
+    assert(mfoc_feedback_HfiStart(&feedback) == MFOC_RESULT_OK);
+    feedback.hfi.state = MFOC_HFI_FAILED;
+    assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
+        MFOC_RESULT_INVALID_STATE);
+    assert(feedback.hfi.state == MFOC_HFI_FAILED);
     puts("Injection and model ranges without SMO passed");
     return 0;
 }

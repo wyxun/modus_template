@@ -198,8 +198,9 @@ HFI 使用正交方波注入、同步解调和位置跟踪，参数位于
 `position/include/mfoc_hfi.h`。启用后 Feedback 也会在普通电流、速度和
 强拖模式提交真实注入电压。默认不启用磁极极性辨识，轴线锁定仍可能存在
 半个电角周期的歧义，不能仅凭 valid 将它作为转矩控制角度。
-`MFOC_FEEDBACK_HFI` 的反馈选择门槛仍要求估计有效；HFI 专用辨识模式
-允许未锁定时先持续注入以获得估计，不经过该有效角度门槛启动。
+选择 `MFOC_FEEDBACK_HFI` 时，未锁定阶段通过 Feedback 输出的
+`acquiring` 暂停普通电流请求和速度环，继续注入；估计有效后恢复普通控制。
+独立 HFI 辨识也由 Feedback 管理，锁定后仍保持零基波请求，直到 Stop。
 
 当前对照版本让 +alpha、-alpha、+beta、-beta 各保持两拍，仅使用第二拍
 的 `i[k]-i[k-1]` 及对应上一拍模型电压解调。电流历史仍每个 50 us 更新，
@@ -216,8 +217,10 @@ Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Moto
 注入为零时跳过附加 Park；HFI Step 不重复检查调用方提供的采样指针。
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
 `MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
-当前普通电流/速度模式使用所选反馈；强拖和 HFI 辨识通过独立模式启动，
-不包含无感接管。
+Motor 的 `mode` 只包含 CURRENT、SPEED 两种控制目标。强拖由
+`openloop_active` 管理，HFI 独立辨识由 Feedback 管理，不占用控制模式。
+ISR 按采样、反馈、启动/获取位置请求、Core、PWM 的顺序执行，成功提交后
+保存前拍输出。Rs 辨识时改用固定轴电压，跳过反馈及 Core 电流环。
 
 `position/include/mfoc_smo.h` 和 `position/src/mfoc_smo.c` 是独立 SMO 算法。
 公共 `motor/include/mfoc_motor_params.h` 保存原有电机参数类型；
@@ -321,12 +324,13 @@ Align 使用固定角度电流环，前台 Run 在 1500 ms 到期时采集编码
 固定为零角度；HFI 的注入电压经 Core 叠加、限幅和 SVPWM 输出。
 注入幅值 `MFOC_HFI_VOLTAGE=0.04 PU`，当前 Vbase=12 V 时为 0.48 V；
 零基波给定仍会产生高频电流，实际幅值须在台架验证。
-未锁定时继续注入，默认 500 ms 启动超时或 HFI FAILED 时自动 Stop；
+未锁定时继续注入，默认 500 ms 启动超时或 HFI FAILED 时锁存反馈故障并停机；
 成功锁定后持续注入，用统一的 `motor stop` 停机，无单独的 HFI off 命令。
-再次启动会清除旧 HFI 历史，运行中拒绝重复启动或切换到 current/speed。
+再次启动会清除旧 HFI 历史，运行中拒绝重复启动或切换到 speed。
+current 命令可更新保存的参考，独立辨识期间仍保持零基波请求。
 ADC/PWM 错误仍锁存正常 Motor 故障。编译关闭 HFI 时启动返回 INVALID_STATE。
-本模式不依赖编码器校准/有效标志来控制；编码器仅作角度对照，需有有效零位
-才能比较电角度，必要时先单独 align。HFI 角度不参与本模式转矩控制。
+此过程不依赖编码器校准/有效标志来控制；编码器仅作角度对照，需有有效零位
+才能比较电角度，必要时先单独 align。HFI 角度不参与独立辨识的转矩控制。
 
 `motor hfi status` 仅按需打印 state（acquire/track/failed/polarity）、
 Motor 状态、valid、angle_mT（千分之一电角周）、speed_mpu（千分之一
@@ -563,12 +567,37 @@ powershell -ExecutionPolicy Bypass -File mfoc/tests/run_tests.ps1
 
 公式审核、已修正问题和暂缓优化见 [迁移审核](MIGRATION_REVIEW.md)。本轮仅有主机及目标编译证据，没有电机台架性能结论。
 
-## 参数辨识（暂未接入）
+## 参数辨识
 
-`identification/` 保留独立辨识源码及 Rs 算法测试，暂不加入默认固件构建。
-Motor 不持有辨识对象，不调度辨识，不负责激励或自动应用辨识结果。
-Feedback 已移除辨识专用的 HFI 抑制标志；Shell 已移除 `motor identify`
-命令。辨识独立运行流程待后续确定，本轮不新增替代入口。
+Motor 持有 Identification；当前只接入 Rs 的 ISR 采样和前台流程。
+在 Motor 空闲且 PWM 关闭时，先调用 `mfoc_identification_Start`，传入
+`MFOC_IDENTIFICATION_RESISTANCE`、电机参数和母线 PU，再调用
+`mfoc_motor_Start`。持续调用 Motor Run，ISR 自动执行 Motor Step；
+采样完成后停止 PWM，通过 `mfoc_identification_GetResult` 读取结果。
+启动传入的母线值必须与辨识期间实际母线电压一致。
+Rs Step 只按档位等待、累计电流和推进 level；每档默认先等待 200 ms，
+再采集 100 ms。调度层在消费本拍电流后按新 level 选择下一档电压，
+采满后撤除激励；前台 Finish 统一计算均值、稳定性和电阻。
+
+辨识运行时，Motor ISR 和 Run 不调用 Feedback 的 Step/Run。每拍输入只有 αβ 电流
+和上一拍请求的 αβ 电压（V/Vbase）；辨识输出为直接 αβ 调制（V/Vdc），
+或由算法提供的虚拟角度及 dq 电流参考。Feedback 继续只服务普通 Motor 控制。
+
+电感 Step 首次保存脉冲前电流，随后采集默认 8 个控制区间的瞬态
+（20 kHz 时为 400 us），累加上一拍实际施加电压及相邻电流端点之和。
+脉冲施加后立即采集，不等待电流稳定；完成时由调用方撤除激励。
+Finish 在前台按 `L = Ts * sum(u - Rs * i_mean) / (i_end - i_start)`
+计算；PU 时间系数为 `omega_base / sample_hz`，电流采用梯形积分。
+调用方提供同一轴的电流、电压和已知 Rs，转子及 dq 坐标系需保持静止；
+d/q 轴共用这一叶子算法，每次脉冲将采集对象清零。
+Ld/Lq 的脉冲调度尚未连接，也未接入 Motor ISR。
+
+现有独立 Flux 叶子仍是转子 dq 估算，输入需要调用者提供角度和速度；它
+尚未接入上述 Feedback 解耦后的辨识调度。后续 Flux 阶段应由算法内部建立
+虚拟 dq 轴或实现自己的估算，并完成 SPINUP 与稳定判定后再接入 Motor。
+
+Motor 不自动应用辨识结果。Shell 暂无 `motor identify` 命令；电感和
+Flux 的阶段尚未接入，Identification Start 会拒绝未完成的辨识操作。
 
 正常控制保持电流采集、Clarke、Feedback、电流环、SVPWM 与 PWM 输出路径。
 已有对齐、强拖、速度环、SMO/HFI 功能保留。

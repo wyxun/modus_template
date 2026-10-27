@@ -18,8 +18,8 @@ fsm_rt_t mfoc_identification_inertia_Step(
 {
     (void)input;
     (void)model;
+    (void)output;
     (void)inertia;
-    *output = (mfoc_identification_output_t){.stop = true};
     /* TODO: torque/acceleration estimation and load-torque handling. */
     return fsm_rt_err;
 }

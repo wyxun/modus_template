@@ -1,5 +1,6 @@
 param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
-    'motor_control', 'motor_irq', 'identification_rs',
+    'motor_control', 'motor_irq', 'motor_identification', 'identification_rs',
+    'identification_inductance',
     'hfi_motor'),
     [ValidateSet(0, 1)][int]$Hfi = 1)
 $ErrorActionPreference = 'Stop'
