@@ -199,9 +199,9 @@ static void shell_commands(void)
     tMfocApp.motor.feedback.flux_output = (mfoc_flux_output_t){
         .angle = {0x40000000U}, .speed = MFOC_HALF, .valid = true};
     command("flux status", "valid=1 angle_mT=250 speed_mpu=500");
-    tMfocApp.motor.align_active = true;
+    tMfocApp.motor.hold_active = true;
     command("flux", "valid=0");
-    tMfocApp.motor.align_active = false;
+    tMfocApp.motor.hold_active = false;
     tMfocApp.motor.state = MFOC_MOTOR_IDLE;
     command("flux status", "valid=0");
 #if MFOC_ISR_MEASURE

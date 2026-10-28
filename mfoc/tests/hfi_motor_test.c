@@ -40,7 +40,7 @@ int main(void)
     motor.previous_core_output_valid = true;
     assert(mfoc_motor_HfiStart(&motor) == MFOC_RESULT_OK);
     assert(motor.state == MFOC_MOTOR_RUNNING);
-    assert(motor.mode == MFOC_MOTOR_MODE_CURRENT && !motor.align_active);
+    assert(motor.mode == MFOC_MOTOR_MODE_CURRENT && !motor.hold_active);
     assert(!motor.previous_core_output_valid);
     assert(motor.feedback.hfi.state == MFOC_HFI_ACQUIRE);
     assert(!motor.feedback.hfi_output.valid);

@@ -55,7 +55,7 @@
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
-#define MFOC_FEEDBACK_ENABLE_SMO 1
+#define MFOC_FEEDBACK_ENABLE_SMO 0
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_HFI
 /* Enabling HFI permits real voltage injection during Feedback Step. */
@@ -78,7 +78,7 @@
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_ENCODER
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_ENABLE_FLUX
 #endif
 
 #endif

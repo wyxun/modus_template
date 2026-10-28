@@ -63,11 +63,21 @@ int main(void)
         for (unsigned j = 0U; j <= 20U; ++j) {
             float phase = (0.99f + (float)(direction * (int)j) * 0.001f) *
                           6.28318530718f;
-            smo.axis[0].e_hat = mfoc_from_float(-0.2f * sinf(phase));
-            smo.axis[1].e_hat = mfoc_from_float(0.2f * cosf(phase));
+            float lag = atanf((float)direction * 0.05f *
+                              400.0f * 6.28318530718f / 4000.0f);
+            smo.axis[0].e_hat = mfoc_from_float(
+                -(float)direction * 0.2f * sinf(phase - lag));
+            smo.axis[1].e_hat = mfoc_from_float(
+                (float)direction * 0.2f * cosf(phase - lag));
             mfoc_smo_Step(&smo, &zero, &zero, &output);
-            assert(output.valid);
             near(output.speed, j == 20U ? (float)direction * 0.05f : 0.0f);
+            if (j == 20U) {
+                mfoc_angle_t expected = mfoc_angle_from_turns(
+                    phase / 6.28318530718f);
+                assert(output.valid);
+                assert(mfoc_abs(mfoc_angle_diff(output.angle, expected)) <
+                    MFOC_SCALAR(0.0005f));
+            }
         }
     }
     mfoc_smo_Reset(&smo);

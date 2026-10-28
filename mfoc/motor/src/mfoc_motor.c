@@ -7,6 +7,7 @@
 #include "mfoc_motor.h"
 #include "mfoc_port.h"
 #include "mfoc_transform.h"
+#include "mfoc_motor_config.h"
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_modulation.h"
 #endif
@@ -89,6 +90,17 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
         }
         rc = mfoc_openloop_Init(&next.openloop, &cfg->openloop);
         if (rc != MFOC_RESULT_OK) { return rc; }
+        uint32_t fs = cfg->openloop.sample_hz;
+        next.start.timeout_ticks =
+            (uint32_t)((uint64_t)fs * MFOC_START_TIMEOUT_MS / 1000U);
+        next.start.stable_ticks =
+            (uint32_t)(((uint64_t)fs * MFOC_START_STABLE_MS + 999U) / 1000U);
+        next.start.reduce_period = (fs + 999U) / 1000U;
+        next.start.offset_step = (int32_t)(UINT64_C(4294967296) *
+            MFOC_START_BLEND_TURNS_S / fs);
+        next.start.current_step = mfoc_from_float(
+            MFOC_START_CURRENT_SLEW_PU_S *
+            (float)next.start.reduce_period / (float)fs);
     }
     next.params = cfg->params;
     next.limits = cfg->limits;
@@ -132,7 +144,7 @@ mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults)
     motor->faults |= faults;
     motor->state = MFOC_MOTOR_FAULT;
     motor->command.i_ref = (mfoc_dq_t){0};
-    motor->openloop_active = false;
+    motor->start_state = MFOC_START_NONE;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
     mfoc_result_t rc = mfoc_port_pwm_stop();
     if (rc != MFOC_RESULT_OK) {
@@ -165,9 +177,9 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     }
     motor->state = motor->faults != 0U ?
         MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
-    motor->align_active = false;
-    motor->align_deadline = 0;
-    motor->openloop_active = false;
+    motor->hold_active = false;
+    motor->hold_deadline = 0;
+    motor->start_state = MFOC_START_NONE;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
     motor->previous_core_output_valid = false;
     if (motor->speed_divider != 0U) {
@@ -204,9 +216,9 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
         if (rc == MFOC_RESULT_OK) {
             motor->command.i_ref = (mfoc_dq_t){0};
             mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
-            motor->align_active = false;
-            motor->align_deadline = 0;
-            motor->openloop_active = false;
+            motor->hold_active = false;
+            motor->hold_deadline = 0;
+            motor->start_state = MFOC_START_NONE;
             motor->speed_ref = MFOC_ZERO;
             motor->speed_count = 0U;
             motor->mode = MFOC_MOTOR_MODE_CURRENT;
@@ -226,7 +238,7 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
     if (motor == NULL || ref == NULL) { return MFOC_RESULT_NULL; }
 
     // 允许在空闲或者电流模式下进行控制
-    if (motor->align_active || motor->openloop_active ||
+    if (motor->hold_active || motor->start_state != MFOC_START_NONE ||
         (motor->state != MFOC_MOTOR_IDLE &&
         (motor->state == MFOC_MOTOR_RUNNING &&
          motor->mode != MFOC_MOTOR_MODE_CURRENT))) {
@@ -292,16 +304,19 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
     }
 #endif
     mfoc_result_t feedback_rc = mfoc_feedback_Run(&motor->feedback);
-    // 执行对齐
-    if (motor->align_active) {
+    /* Run ends the fixed-angle hold; ISR startup budget remains paused. */
+    if (motor->hold_active) {
         mfoc_motor_state_t state = motor->state;
         if (state == MFOC_MOTOR_RUNNING &&
             !perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                                  &motor->align_deadline, false)) {
+                                  &motor->hold_deadline, false)) {
             return MFOC_RESULT_OK;
         }
-        if (state == MFOC_MOTOR_RUNNING && motor->openloop_active) {
-            motor->align_active = false;
+        if (state == MFOC_MOTOR_RUNNING &&
+            (motor->start_state == MFOC_START_FORCED ||
+             motor->start_state == MFOC_START_WAIT)) {
+            /* Release forced rotation; automatic startup now consumes budget. */
+            motor->hold_active = false;
             return MFOC_RESULT_OK;
         }
         /* Capture encoder zero before releasing a calibration hold. */
@@ -318,7 +333,8 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
             MFOC_RESULT_SAFETY : MFOC_RESULT_OK;
     }
     return motor->state == MFOC_MOTOR_RUNNING &&
-        motor->openloop_active ?
+        (motor->start_state == MFOC_START_FORCED ||
+         motor->start_state == MFOC_START_WAIT) ?
         MFOC_RESULT_OK : feedback_rc;
 }
 
@@ -328,7 +344,7 @@ mfoc_result_t mfoc_motor_HfiStart(mfoc_motor_t *motor)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
     if (motor->state != MFOC_MOTOR_IDLE || motor->faults != 0U ||
-        motor->align_active) {
+        motor->hold_active) {
         return MFOC_RESULT_INVALID_STATE;
     }
     mfoc_result_t rc = mfoc_feedback_HfiStart(&motor->feedback);
@@ -347,7 +363,7 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t id_pu)
 {
     if (motor == NULL) { return MFOC_RESULT_NULL; }
-    if (motor->state != MFOC_MOTOR_IDLE || motor->align_active) {
+    if (motor->state != MFOC_MOTOR_IDLE || motor->hold_active) {
         return MFOC_RESULT_INVALID_STATE;
     }
     const mfoc_dq_t ref = {.qD = id_pu, .qQ = MFOC_ZERO};
@@ -360,20 +376,84 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     if (rc != MFOC_RESULT_OK) { return rc; }
     motor->command.i_ref = ref;
     motor->mode = MFOC_MOTOR_MODE_CURRENT;
-    motor->openloop_active = true;
+    motor->start_state = MFOC_START_FORCED;
     motor->align_angle = (mfoc_angle_t){0U};
-    motor->align_active = true;
+    motor->hold_active = true;
     motor->previous_core_output_valid = false;
     rc = mfoc_motor_Start(motor);
     if (rc != MFOC_RESULT_OK) {
-        motor->align_active = false;
-        motor->openloop_active = false;
+        motor->hold_active = false;
+        motor->start_state = MFOC_START_NONE;
         return rc;
     }
-    motor->align_deadline = 0;
+    motor->hold_deadline = 0;
     (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                              &motor->align_deadline, false);
+                              &motor->hold_deadline, false);
     return MFOC_RESULT_OK;
+}
+
+/** @brief Prepare one signed q-current startup while stopped.
+ * @param motor Instance. @param speed Electrical PU. @param current Amplitude.
+ * @return Rejection without PWM changes, or the normal Start result. */
+mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
+    mfoc_scalar_t speed, mfoc_scalar_t current)
+{
+#if MFOC_FEEDBACK_ENABLE_HFI || \
+    (MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO && \
+     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX)
+    (void)motor;
+    (void)speed;
+    (void)current;
+    return MFOC_RESULT_INVALID_STATE;
+#else
+    if (motor == NULL) { return MFOC_RESULT_NULL; }
+    if (motor->state != MFOC_MOTOR_IDLE || motor->hold_active ||
+        motor->faults != 0U || motor->speed_divider == 0U ||
+        motor->openloop.gain == 0) { return MFOC_RESULT_INVALID_STATE; }
+    if (mfoc_abs(speed) < MFOC_SCALAR(MFOC_START_MIN_SPEED_PU) ||
+        mfoc_abs(speed) > motor->limits.speed_max ||
+        current < MFOC_SCALAR(MFOC_START_CURRENT_MIN_PU) ||
+        current > motor->limits.i_max) { return MFOC_RESULT_OUT_OF_RANGE; }
+    mfoc_scalar_t iq = speed > MFOC_ZERO ? current : -current;
+    const mfoc_pi_params_t *pi = &motor->speed.cfg;
+    if (iq < pi->out_min || iq > pi->out_max ||
+        motor->start.current_step <= MFOC_ZERO) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    mfoc_openloop_t loop = motor->openloop;
+    mfoc_angle_t angle = {speed > MFOC_ZERO ?
+        UINT32_C(0xc0000000) : UINT32_C(0x40000000)};
+    mfoc_openloop_Reset(&loop, angle);
+    mfoc_result_t rc = mfoc_openloop_SetSpeed(&loop, speed);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    int64_t target = loop.target < 0 ? -(int64_t)loop.target : loop.target;
+    uint32_t ramp = (uint32_t)((target +
+        loop.delta_step - 1) / loop.delta_step);
+    if (ramp + 2U * motor->start.stable_ticks >= motor->start.timeout_ticks) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    motor->openloop = loop;
+    motor->command.i_ref = (mfoc_dq_t){MFOC_ZERO, iq};
+    motor->speed_ref = speed;
+    motor->speed_count = 0U;
+    motor->mode = MFOC_MOTOR_MODE_CURRENT;
+    motor->start.speed_window = mfoc_mul_wide(mfoc_abs(speed),
+        MFOC_SCALAR(MFOC_START_SPEED_WINDOW));
+    motor->start.remaining = motor->start.timeout_ticks;
+    motor->start.stable = 0U;
+    motor->start.reduce_count = 0U;
+    motor->start.offset = 0;
+    motor->start_state = MFOC_START_WAIT;
+    motor->align_angle = angle;
+    motor->hold_active = true;
+    motor->previous_core_output_valid = false;
+    motor->hold_deadline = 0;
+    (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
+                              &motor->hold_deadline, false);
+    rc = mfoc_motor_Start(motor);
+    if (rc != MFOC_RESULT_OK) { motor->hold_active = false; }
+    return rc;
+#endif
 }
 
 /** @brief Start fixed-angle d-axis current alignment from IDLE.
@@ -382,7 +462,7 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
 mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     mfoc_scalar_t id_pu, mfoc_scalar_t angle_pu)
 {
-    if (motor->state != MFOC_MOTOR_IDLE || motor->align_active) {
+    if (motor->state != MFOC_MOTOR_IDLE || motor->hold_active) {
         return MFOC_RESULT_INVALID_STATE;
     }
     if (angle_pu < MFOC_ZERO || angle_pu >= MFOC_ONE) {
@@ -396,15 +476,15 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     motor->command.i_ref = ref;
     motor->previous_core_output_valid = false;
     motor->align_angle = mfoc_angle_from_scalar(angle_pu);
-    motor->align_active = true;
+    motor->hold_active = true;
     mfoc_result_t rc = mfoc_motor_Start(motor);
     if (rc != MFOC_RESULT_OK) {
-        motor->align_active = false;
+        motor->hold_active = false;
         return rc;
     }
-    motor->align_deadline = 0;
+    motor->hold_deadline = 0;
     (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                              &motor->align_deadline, false);
+                              &motor->hold_deadline, false);
     return MFOC_RESULT_OK;
 }
 
@@ -414,7 +494,7 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
 mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
                                   mfoc_scalar_t ref)
 {
-    if (motor->align_active || motor->openloop_active ||
+    if (motor->hold_active || motor->start_state != MFOC_START_NONE ||
         (motor->state == MFOC_MOTOR_RUNNING &&
          motor->mode != MFOC_MOTOR_MODE_SPEED)) {
         return MFOC_RESULT_INVALID_STATE;
@@ -422,6 +502,14 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
     if (ref < -motor->limits.speed_max || ref > motor->limits.speed_max) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO || \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX
+    if (motor->state == MFOC_MOTOR_RUNNING &&
+        (mfoc_abs(ref) < MFOC_SCALAR(MFOC_START_MIN_SPEED_PU) ||
+         (ref > MFOC_ZERO) != (motor->speed_ref > MFOC_ZERO))) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+#endif
     if (motor->state == MFOC_MOTOR_IDLE) {
         mfoc_result_t rc = mfoc_pi_Reset(&motor->speed);
         if (rc != MFOC_RESULT_OK) { return rc; }
@@ -432,34 +520,157 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
     return MFOC_RESULT_OK;
 }
 
+/** @brief Remove the captured residual phase and track the first speed output.
+ * @param motor Instance. @param feedback Selected observer output.
+ * @param feedback_rc Observer status. @param input Next Core command.
+ * @return OK or failure; no Core reset or second Core execution. */
+static mfoc_result_t _mfoc_motor_BlendStep(mfoc_motor_t *motor,
+    const mfoc_feedback_output_t *feedback, mfoc_result_t feedback_rc,
+    mfoc_core_input_t *input)
+{
+    mfoc_motor_start_t *s = &motor->start;
+    if (feedback_rc != MFOC_RESULT_OK ||
+        mfoc_abs(feedback->speed - motor->speed_ref) > s->speed_window) {
+        return MFOC_RESULT_SAFETY;
+    }
+    if (s->offset > s->offset_step) { s->offset -= s->offset_step; }
+    else if (s->offset < -s->offset_step) { s->offset += s->offset_step; }
+    else { s->offset = 0; }
+    input->angle.wBam32 = feedback->angle.wBam32 + (uint32_t)s->offset;
+    if (s->offset != 0) { return MFOC_RESULT_OK; }
+    /* Verify the actual first PI output, including integral clipping. */
+    mfoc_pi_t tracked = motor->speed;
+    mfoc_result_t rc = mfoc_pi_Track(&tracked, input->ref.qQ,
+        motor->speed_ref, feedback->speed);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    mfoc_scalar_t iq = MFOC_ZERO;
+    mfoc_pi_Step(&tracked, motor->speed_ref, feedback->speed, &iq);
+    if (mfoc_abs(iq - input->ref.qQ) > MFOC_SCALAR(0.0001f)) {
+        return MFOC_RESULT_SAFETY;
+    }
+    motor->speed = tracked;
+    input->ref.qQ = iq;
+    motor->command.i_ref = input->ref;
+    motor->speed_count = motor->speed_divider;
+    motor->mode = MFOC_MOTOR_MODE_SPEED;
+    motor->start_state = MFOC_START_NONE;
+    return MFOC_RESULT_OK;
+}
+
+/** @brief After fixed-angle hold, ramp and reduce the qualified angle gap.
+ * @param motor Instance. @param feedback Selected observer output.
+ * @param feedback_rc Observer status. @param input Next current/angle command.
+ * @return OK or a startup failure; never submits PWM or executes Core. */
+static mfoc_result_t _mfoc_motor_HandoverStep(mfoc_motor_t *motor,
+    const mfoc_feedback_output_t *feedback, mfoc_result_t feedback_rc,
+    mfoc_core_input_t *input)
+{
+    mfoc_motor_start_t *s = &motor->start;
+    if (motor->hold_active) {
+        input->angle = motor->openloop.angle;
+        return MFOC_RESULT_OK;
+    }
+    bool speed_ready = feedback_rc == MFOC_RESULT_OK &&
+        mfoc_abs(feedback->speed - motor->speed_ref) <= s->speed_window;
+    mfoc_openloop_Step(&motor->openloop);
+    input->angle = motor->openloop.angle;
+    if (motor->start_state == MFOC_START_WAIT &&
+        (motor->openloop.delta != motor->openloop.target || !speed_ready)) {
+        s->stable = 0U;
+        return MFOC_RESULT_OK;
+    }
+    if (feedback_rc != MFOC_RESULT_OK) { return feedback_rc; }
+    bool forward = motor->speed_ref > MFOC_ZERO;
+    mfoc_angle_t current_angle = {input->angle.wBam32 +
+        (forward ? UINT32_C(0x40000000) : UINT32_C(0xc0000000))};
+    mfoc_scalar_t load = mfoc_angle_diff(current_angle, feedback->angle);
+    if (!forward) { load = -load; }
+    /* REDUCE deliberately moves the current vector toward the rotor q axis. */
+    mfoc_scalar_t load_max = motor->start_state == MFOC_START_WAIT ?
+        MFOC_SCALAR(MFOC_START_LOAD_MAX_TURNS) :
+        MFOC_SCALAR(0.25f + MFOC_START_CAPTURE_TURNS);
+    bool load_ready = load >= MFOC_SCALAR(MFOC_START_LOAD_MIN_TURNS) &&
+        load <= load_max;
+    uint32_t raw = input->angle.wBam32 - feedback->angle.wBam32;
+    int32_t gap = raw <= INT32_MAX ? (int32_t)raw :
+        -1 - (int32_t)(UINT32_MAX - raw);
+    const int32_t capture =
+        (int32_t)(MFOC_START_CAPTURE_TURNS * 4294967296.0);
+    bool ready = speed_ready && load_ready &&
+        (motor->start_state == MFOC_START_WAIT ||
+         (gap >= -capture && gap <= capture));
+    s->stable = ready ? s->stable + 1U : 0U;
+    if (s->stable >= s->stable_ticks) {
+        s->stable = 0U;
+        if (motor->start_state == MFOC_START_WAIT) {
+            motor->start_state = MFOC_START_REDUCE;
+        } else {
+            s->offset = gap;
+            motor->start_state = MFOC_START_BLEND;
+        }
+        return MFOC_RESULT_OK; /* Capture keeps the exact forced angle. */
+    }
+    if (motor->start_state != MFOC_START_REDUCE) { return MFOC_RESULT_OK; }
+    if (!load_ready) { return MFOC_RESULT_SAFETY; }
+    if (!speed_ready || ready) { return MFOC_RESULT_OK; }
+    if (s->reduce_count != 0U) { --s->reduce_count; return MFOC_RESULT_OK; }
+    mfoc_scalar_t amplitude = mfoc_abs(input->ref.qQ) - s->current_step;
+    if (amplitude < MFOC_SCALAR(MFOC_START_CURRENT_MIN_PU)) {
+        amplitude = MFOC_SCALAR(MFOC_START_CURRENT_MIN_PU);
+    }
+    input->ref.qQ = forward ? amplitude : -amplitude;
+    motor->command.i_ref = input->ref;
+    s->reduce_count = s->reduce_period - 1U;
+    return MFOC_RESULT_OK;
+}
+
 /** @brief Select forced angle or the normal current/speed reference.
  * @param motor Instance. @param feedback Current feedback.
- * @param input Core input to update. @return None. */
-static void _mfoc_motor_SelectReference(mfoc_motor_t *motor,
-    const mfoc_feedback_output_t *feedback, mfoc_core_input_t *input)
+ * @param feedback_rc Observer status. @param input Core input to update.
+ * @return OK or the error handled by Motor's existing fault path. */
+static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
+    const mfoc_feedback_output_t *feedback, mfoc_result_t feedback_rc,
+    mfoc_core_input_t *input)
 {
-    if (motor->openloop_active) {
-        if (!motor->align_active) { mfoc_openloop_Step(&motor->openloop); }
-        input->angle = motor->openloop.angle;
-        return;
+    /* Covers ramp, reduction and blend; Run times the preceding hold. */
+    if (motor->start_state >= MFOC_START_WAIT && !motor->hold_active) {
+        if (motor->start.remaining == 0U) { return MFOC_RESULT_SAFETY; }
+        --motor->start.remaining;
     }
-    if (motor->align_active) {
+    switch (motor->start_state) {
+    case MFOC_START_FORCED:
+        if (!motor->hold_active) { mfoc_openloop_Step(&motor->openloop); }
+        input->angle = motor->openloop.angle;
+        return MFOC_RESULT_OK;
+    case MFOC_START_WAIT:
+    case MFOC_START_REDUCE:
+        return _mfoc_motor_HandoverStep(motor, feedback, feedback_rc, input);
+    case MFOC_START_BLEND:
+        return _mfoc_motor_BlendStep(motor, feedback, feedback_rc, input);
+    case MFOC_START_NONE:
+        break;
+    default:
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (feedback_rc != MFOC_RESULT_OK) { return feedback_rc; }
+    if (motor->hold_active) {
         input->angle = motor->align_angle;
-        return;
+        return MFOC_RESULT_OK;
     }
 #if MFOC_FEEDBACK_ENABLE_HFI
     if (feedback->acquiring) {
         input->ref = (mfoc_dq_t){0};
-        return;
+        return MFOC_RESULT_OK;
     }
 #endif
     if (motor->mode != MFOC_MOTOR_MODE_SPEED ||
-        motor->speed_count != 0U) { return; }
+        motor->speed_count != 0U) { return MFOC_RESULT_OK; }
     input->ref = (mfoc_dq_t){0};
     mfoc_pi_Step(&motor->speed, motor->speed_ref, feedback->speed,
                   &input->ref.qQ);
     motor->command.i_ref = input->ref;
     motor->speed_count = motor->speed_divider;
+    return MFOC_RESULT_OK;
 }
 
 /** @brief Sample current, execute control, and submit the resulting PWM.
@@ -538,22 +749,22 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         mfoc_core_input_t core_input = {
             .i = i_ab, .ref = motor->command.i_ref,
             .angle = motor->align_angle};
-        if (!motor->align_active || motor->openloop_active) {
+        if (!motor->hold_active || motor->start_state != MFOC_START_NONE) {
             mfoc_feedback_input_t feedback_input = {
                 .i_ab_k = &i_ab, .previous_core_output = previous};
             rc = mfoc_feedback_Step(&motor->feedback, &feedback_input,
                                     &feedback);
-            /* Open-loop control keeps feedback running in shadow. */
-            if (rc != MFOC_RESULT_OK && !motor->openloop_active) {
-                return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK, rc);
-            }
             core_input.angle = feedback.angle;
             core_input.u_inject_ab = feedback.u_inject_ab;
         }
-        _mfoc_motor_SelectReference(motor, &feedback, &core_input);
+        rc = _mfoc_motor_SelectReference(motor, &feedback, rc, &core_input);
+        if (rc != MFOC_RESULT_OK) {
+            return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK, rc);
+        }
         mfoc_core_Step(&motor->core, &core_input, &output);
         phase = output.duty;
         speed_countdown =
+            motor->start_state == MFOC_START_NONE &&
 #if MFOC_FEEDBACK_ENABLE_HFI
             !feedback.acquiring &&
 #endif

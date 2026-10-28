@@ -28,6 +28,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
             "-DMFOC_FEEDBACK_BACKEND=$backend" `
             "-DMFOC_FEEDBACK_ENABLE_ENCODER=$encoder" `
+            -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
             "-I$library" "-I$library/base/include" `
             "-I$library/core/include" "-I$library/motor/include" `
             "-I$library/position/include" "-I$library/port/include" `

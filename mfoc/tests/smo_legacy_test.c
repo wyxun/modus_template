@@ -68,11 +68,12 @@ int main(void)
             frozen |= now.axis[axis].frozen;
         }
         mfoc_angle_t old_angle = {before.tElectricalAngle.wBam32};
-        assert(fabsf(mfoc_to_float(mfoc_angle_diff(after.angle,
+        /* Recurrence/raw phase stay identical; published phase is corrected. */
+        assert(fabsf(mfoc_to_float(mfoc_angle_diff(now.previous_angle,
             old_angle))) < 0.0004f);
         assert(fabsf(mfoc_to_float(after.speed) -
                      foc_to_float(before.qElectricalSpeedPu)) < 0.003f);
-        assert(after.valid == before.bValid);
+        assert(after.valid == (before.bValid && after.speed != MFOC_ZERO));
     }
     assert(frozen);
     puts("12000 legacy SMO steps matched, including freeze and reversal");

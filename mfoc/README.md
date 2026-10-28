@@ -218,9 +218,33 @@ Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Moto
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
 `MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
 Motor 的 `mode` 只包含 CURRENT、SPEED 两种控制目标。强拖由
-`openloop_active` 管理，HFI 独立辨识由 Feedback 管理，不占用控制模式。
+`start_state == MFOC_START_FORCED` 管理，HFI 独立辨识由 Feedback 管理，不占用控制模式。
 ISR 按采样、反馈、启动/获取位置请求、Core、PWM 的顺序执行，成功提交后
 保存前拍输出。Rs 辨识时改用固定轴电压，跳过反馈及 Core 电流环。
+
+`motor sensorless <speed_pu> <current_pu>` 从 shell 调用
+`mfoc_motor_SensorlessStart(motor, speed, current)`，启动自动接管，例如
+`motor sensorless 0.5 0.04`。
+要求选择 SMO/FLUX 后端、关闭 HFI、配置速度 PI 和 OpenLoop。当前默认后端
+仍为编码器，因此默认构建会返回状态错误。
+启动采用 `Id=0, Iq=sign(speed)*current`，初角为 `-sign(speed)*90°`。
+Run 完成固定磁场保持后，ISR 按 WAIT（爬坡及连续资格确认）、REDUCE
+（固定强拖频率、降流）、BLEND（捕获剩余角差并归零）进入 SPEED。
+`hold_active` 统一表示独立对齐或启动时的定角保持，`hold_deadline` 只由
+Run 管理这段保持时间；`start.remaining` 在保持解除后才由 ISR 递减，
+覆盖爬坡、降流和角差过渡，不包含前面的保持时间。
+功角判据使用电流矢量角；捕获偏差使用控制 d 轴角减观察器转子角，两者不混用。
+Core 每拍只执行一次；接管不复位电流 PI 或观察器。
+
+参数位于 `mfoc_motor_config.h`：最低速度 0.4 PU、速度窗口 ±10%、稳定
+20 ms、对齐后总超时 6 s、电流下限 0.005 PU、降流 0.05 PU/s、剩余角差
+10° 内捕获、以 1 电周/s 消除偏差。降流约 1 kHz 更新，FIXED 步长有量化。
+这些是未经过台架整定的初值，轻载降至下限仍不满足接管时会超时停机。
+BLEND 失去有效反馈/速度窗口，或速度 PI 无法复现接管电流时故障停机。
+运行中速度更新只允许同向且不低于接管下限，停止使用 Stop。
+主机编排检查：`mfoc/tests/run_core_tests.ps1 -Tests motor_handover -Hfi 0
+-Backend 2`（SMO）或 `-Backend 4`（FLUX），分别覆盖 FLOAT/FIXED；注入反馈
+只验证编排，不等于验证电机的机械动态或真实观察器锁定。
 
 `position/include/mfoc_smo.h` 和 `position/src/mfoc_smo.c` 是独立 SMO 算法。
 公共 `motor/include/mfoc_motor_params.h` 保存原有电机参数类型；
@@ -233,8 +257,10 @@ Feedback 的 SMO 启用分支用 `previous_core_output.duty` 和 `.bus`
 应用参数沿用旧 FOC：采样 20 kHz，电速度基值 400 Hz，滤波截止 4000 rad/s，
 滑模电压 5/12 PU，电流误差边界半宽 0.1 PU，估计电流限制 1 PU。
 Init 预计算 ku、kr、b0、a1、边界层斜率和速度系数；Step 使用原梯形电流递推、
-边界层饱和切换、反电势滤波和约 1 ms 窗口速度，不加入 PLL 或角度补偿。
-SMO 输出 `valid` 只表示反电势非零，不能作为接管判据。
+边界层饱和切换、反电势滤波和约 1 ms 窗口速度，不加入 PLL。
+速度由原始角度差求得；按速度窗口更新并缓存 `atan(omega/cutoff)` 相位
+补偿，反转时修正反电势的半周偏移。该低频近似不包含采样/逆变器延时。
+SMO 输出 `valid` 要求反电势及窗口速度非零，仍不能单独作为接管判据。
 复位保留系数、清空历史；停止后首次 Step 因上一拍输出失效而复位 SMO。
 算法入口要求调用方提供有效指针及有限、可表示的输入，不新增有限数检查。
 
@@ -242,7 +268,8 @@ SMO 输出 `valid` 只表示反电势非零，不能作为接管判据。
 死区和器件压降。`bus` 是控制使用的快照，固定母线时是模型近似；
 实际 PWM 生效时刻与 ADC 采样区间仍需台架确认。代码接入不代表接管已验证。
 `MFOC_FEEDBACK_SMO` 启动需要已有电压区间和可观测转速；当前 Motor
-首次运行还没有上一拍输出，直接选择它启动会返回反馈无效，不做自动回退。
+首次运行还没有上一拍输出，普通 Start 会返回反馈无效，不做自动回退；
+SensorlessStart 的 WAIT 阶段允许观察器无效，等爬坡及连续资格确认完成。
 
 `position/include/mfoc_encoder.h` 与 `position/src/mfoc_encoder.c` 实现编码器算法。
 Motor 的 `cfg.feedback.encoder` 配置读取周期、超时、滤波、电角度零偏、方向和

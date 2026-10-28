@@ -31,6 +31,7 @@ typedef struct {
     mfoc_scalar_t boundary_gain; /* h / boundary. */
     mfoc_scalar_t i_limit;
     mfoc_scalar_t speed_scale; /* sample_hz / (span * base_hz). */
+    mfoc_scalar_t phase_scale; /* 2*pi*base_hz / cutoff_rad_s. */
     uint8_t speed_span;
 } mfoc_smo_coeff_t;
 
@@ -43,7 +44,7 @@ typedef struct {
     bool frozen;
 } mfoc_smo_axis_t;
 
-/** @brief Estimates; valid indicates nonzero EMF, not takeover quality. */
+/** @brief Estimates; valid needs nonzero EMF/speed, not proof of lock. */
 typedef struct {
     mfoc_angle_t angle;
     mfoc_scalar_t speed;
@@ -58,6 +59,7 @@ typedef struct {
     mfoc_angle_t previous_angle;
     mfoc_scalar_t angle_sum;
     mfoc_scalar_t held_speed;
+    mfoc_angle_t phase_advance;
     uint8_t speed_count;
     bool has_angle;
 } mfoc_smo_t;
@@ -76,8 +78,10 @@ void mfoc_smo_Reset(mfoc_smo_t *smo);
  * @param smo Initialized instance. @param i Current alpha-beta I/Ibase.
  * @param u Prior-interval alpha-beta V/Vbase. @param out Estimates.
  * @return None. Valid pointers and finite bounded inputs are preconditions.
- * @note One angle extraction per Step; speed updates about every 1 ms.
- * No sampling, voltage reconstruction, compensation or takeover logic. */
+ * @note Raw angle drives speed estimation. At the speed-window cadence,
+ * cache atan(omega/cutoff) compensation; negative speed corrects the EMF's
+ * half-turn ambiguity. This low-frequency LPF approximation does not
+ * compensate inverter or sample delays. No Motor takeover policy. */
 void mfoc_smo_Step(mfoc_smo_t *smo, const mfoc_ab_t *i,
                    const mfoc_ab_t *u, mfoc_smo_output_t *out);
 #endif

@@ -108,7 +108,7 @@ static void lifecycle(void)
         MFOC_RESULT_OK);
     assert(mfoc_motor_OpenLoopStart(&motor, MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_INVALID_STATE);
-    assert(motor.align_active && motor.openloop_active);
+    assert(motor.hold_active && motor.start_state == MFOC_START_FORCED);
     assert(motor.mode == MFOC_MOTOR_MODE_CURRENT);
     motor_port_fake.feedback_step = MFOC_RESULT_INVALID_STATE;
     motor_port_fake.feedback_run = MFOC_RESULT_IO;
@@ -118,7 +118,7 @@ static void lifecycle(void)
     }
     motor_port_fake.time_ms = MFOC_MOTOR_ALIGN_TIME_MS + 1U;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
-    assert(!motor.align_active && motor_port_fake.calibrations == 0U);
+    assert(!motor.hold_active && motor_port_fake.calibrations == 0U);
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.openloop.angle.wBam32 > 0U);
     assert(motor_port_fake.feedback_reads == 11U);
@@ -144,12 +144,12 @@ static void lifecycle(void)
     assert(motor.previous_core_output.i.qQ == expected.qQ);
     assert(mfoc_motor_SetSpeed(&motor, MFOC_HALF) != MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
-    assert(!motor.align_active && motor.openloop.delta == 0);
+    assert(!motor.hold_active && motor.openloop.delta == 0);
     assert(motor.mode == MFOC_MOTOR_MODE_CURRENT);
     assert(mfoc_motor_OpenLoopStart(&motor, -MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
-    assert(!motor.align_active && motor.openloop.target == 0);
+    assert(!motor.hold_active && motor.openloop.target == 0);
     assert(mfoc_motor_OpenLoopStart(&motor, -MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_OK);
     motor_port_fake.sample = MFOC_RESULT_IO;
@@ -161,7 +161,7 @@ static void lifecycle(void)
     motor_port_fake.write = MFOC_RESULT_IO;
     assert(mfoc_motor_OpenLoopStart(&motor, MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_IO);
-    assert(motor.state == MFOC_MOTOR_FAULT && !motor.align_active);
+    assert(motor.state == MFOC_MOTOR_FAULT && !motor.hold_active);
     assert(!motor_port_fake.enabled && motor.openloop.target == 0);
 }
 

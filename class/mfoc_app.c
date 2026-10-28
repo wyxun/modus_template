@@ -283,7 +283,7 @@ static void _mfoc_app_PrintFlux(void)
         cfg = motor->feedback.flux_cfg;
         psi = motor->params.flux;
         state = motor->state;
-        available = state == MFOC_MOTOR_RUNNING && !motor->align_active &&
+        available = state == MFOC_MOTOR_RUNNING && !motor->hold_active &&
             motor->previous_core_output_valid && output.valid;
 #if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
         maximum = tMfocApp.tIsrTiming.wMaximumTicks;
@@ -380,6 +380,17 @@ static void _mfoc_app_CmdMotor(const char *args)
             MLOGF(I, "motor openloop result=%d\r\n", (int)tMfocApp.result);
             return;
         }
+    } else if (mshell_ConsumeWord(&cursor, "sensorless")) {
+        valid = mshell_Parse(&cursor, &q) == MSHELL_PARSE_OK &&
+            mshell_Parse(&cursor, &d) == MSHELL_PARSE_OK &&
+            mshell_AtEnd(cursor) && isfinite(q) && isfinite(d);
+        if (valid) {
+            tMfocApp.result = mfoc_motor_SensorlessStart(&tMfocApp.motor,
+                mfoc_from_float(q), mfoc_from_float(d));
+            MLOGF(I, "motor sensorless result=%d\r\n",
+                  (int)tMfocApp.result);
+            return;
+        }
     } else if (mshell_ConsumeWord(&cursor, "align")) {
         valid = mshell_AtEnd(cursor);
         if (valid) {
@@ -409,6 +420,7 @@ static void _mfoc_app_CmdMotor(const char *args)
     } else {
         MLOGF(I, "usage: motor current <id> <iq> | speed <pu> | align\r\n"
             "       motor openloop <speed_pu> <id_pu>\r\n"
+            "       motor sensorless <speed_pu> <current_pu>\r\n"
             "       motor hfi [start|status]; motor stop to end\r\n"
             "       motor flux [status]; observer only\r\n"
             "       motor encoder | stop | clear | status | help\r\n"
@@ -423,5 +435,5 @@ static void _mfoc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, _mfoc_app_CmdMotor,
-    "MFOC: current/speed/openloop/hfi/flux/encoder/align/stop/status");
+    "MFOC: current/speed/openloop/sensorless/hfi/flux/encoder/align/stop/status");
 #endif

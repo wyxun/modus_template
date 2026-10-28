@@ -73,4 +73,17 @@
 #define MFOC_MOTOR_FLUX_MAX_PU 16.0f
 #define MFOC_MOTOR_INERTIA_MAX_PU 1024.0f
 
+/* Sensorless handover starting values; validate on the selected motor.
+ * Timeout starts after alignment and covers ramp, reduction and blend. */
+#define MFOC_START_MIN_SPEED_PU 0.4f
+#define MFOC_START_SPEED_WINDOW 0.1f
+#define MFOC_START_STABLE_MS 20U
+#define MFOC_START_TIMEOUT_MS 6000U
+#define MFOC_START_CURRENT_MIN_PU 0.005f
+#define MFOC_START_CURRENT_SLEW_PU_S 0.05f
+#define MFOC_START_LOAD_MIN_TURNS (-10.0f / 360.0f)
+#define MFOC_START_LOAD_MAX_TURNS (80.0f / 360.0f)
+#define MFOC_START_CAPTURE_TURNS (10.0f / 360.0f)
+#define MFOC_START_BLEND_TURNS_S 1U
+
 #endif

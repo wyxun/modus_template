@@ -273,7 +273,7 @@ static void alignment(void)
     assert(motor_port_fake.enabled && motor_port_fake.feedback_runs == 1U);
     motor_port_fake.time_ms++;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
-    assert(!motor_port_fake.enabled && !motor.align_active);
+    assert(!motor_port_fake.enabled && !motor.hold_active);
     assert(motor_port_fake.feedback_runs == 2U);
     assert(motor_port_fake.calibrations == 1U);
     assert(motor_port_fake.held_angle.wBam32 == motor.align_angle.wBam32);
@@ -293,7 +293,7 @@ static void alignment_stop(void)
     motor_port_fake.write = MFOC_RESULT_IO;
     assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, MFOC_ZERO) ==
            MFOC_RESULT_IO);
-    assert(!motor.align_active && !motor_port_fake.enabled);
+    assert(!motor.hold_active && !motor_port_fake.enabled);
     motor_port_fake.write = MFOC_RESULT_OK;
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, MFOC_ZERO) ==
@@ -308,14 +308,14 @@ static void alignment_stop(void)
     assert(motor_port_fake.step_during_disable == NULL);
     assert(motor_port_fake.samples == samples);
     assert(motor_port_fake.writes == writes);
-    assert(!motor.align_active && !motor_port_fake.enabled);
+    assert(!motor.hold_active && !motor_port_fake.enabled);
     assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, MFOC_ZERO) ==
            MFOC_RESULT_OK);
     motor_port_fake.sample = MFOC_RESULT_IO;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_IO);
     assert(!motor_port_fake.enabled);
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_SAFETY);
-    assert(!motor.align_active && motor.state == MFOC_MOTOR_FAULT);
+    assert(!motor.hold_active && motor.state == MFOC_MOTOR_FAULT);
     assert(motor_port_fake.calibrations == 0U);
     assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_AlignStart(&motor, MFOC_HALF, MFOC_ZERO) ==

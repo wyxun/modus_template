@@ -56,11 +56,11 @@ void mfoc_debug_CaptureWaveform(void)
 #if MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_SMO
 #if MFOC_FEEDBACK_ENABLE_FLUX
     mfoc_angle_t observer_angle = motor->feedback.flux_output.angle;
-    bool observer_available = !motor->align_active &&
+    bool observer_available = !motor->hold_active &&
         motor->previous_core_output_valid && motor->feedback.flux_output.valid;
 #else
     mfoc_angle_t observer_angle = motor->feedback.smo_output.angle;
-    bool observer_available = !motor->align_active &&
+    bool observer_available = !motor->hold_active &&
         motor->feedback.smo_status == MFOC_RESULT_OK &&
         motor->feedback.smo_output.valid;
 #endif
@@ -139,7 +139,7 @@ void mfoc_debug_WaveformStep(void)
 #if MFOC_DEBUG_HFI_WAVEFORM
     const mfoc_motor_t *motor = &tMfocApp.motor;
     const mfoc_hfi_t *hfi = &motor->feedback.hfi;
-    if (motor->state != MFOC_MOTOR_RUNNING || motor->align_active ||
+    if (motor->state != MFOC_MOTOR_RUNNING || motor->hold_active ||
         !hfi->has_current ||
         hfi->startup_count <= MFOC_HFI_CARRIER_SAMPLES ||
         hfi->state == MFOC_HFI_FAILED) {

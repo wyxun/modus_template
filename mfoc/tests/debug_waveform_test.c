@@ -113,10 +113,10 @@ static void invalid_states(const mfoc_hfi_t *saved, const float expected[4])
     mfoc_hfi_t *hfi = &tMfocApp.motor.feedback.hfi;
     const float invalid[4] = {-3.2f, -3.2f, -3.2f, -3.2f};
     *hfi = *saved;
-    tMfocApp.motor.align_active = true;
+    tMfocApp.motor.hold_active = true;
     mfoc_debug_WaveformStep();
     assert_frame(invalid);
-    tMfocApp.motor.align_active = false;
+    tMfocApp.motor.hold_active = false;
     hfi->state = MFOC_HFI_FAILED;
     mfoc_debug_WaveformStep();
     assert_frame(invalid);
@@ -263,7 +263,7 @@ int main(void)
 #if MFOC_FEEDBACK_ENABLE_FLUX
     tMfocApp.motor.feedback.flux_output.valid = true;
 #endif
-    tMfocApp.motor.align_active = true;
+    tMfocApp.motor.hold_active = true;
     mfoc_debug_CaptureWaveform();
     assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
     tMfocApp.motor.state = MFOC_MOTOR_IDLE;

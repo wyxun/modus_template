@@ -94,11 +94,12 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
     if (feedback == NULL) { return MFOC_RESULT_NULL; }
     if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
 #if MFOC_FEEDBACK_ENABLE_ENCODER
-    mfoc_result_t rc = mfoc_encoder_Run(&feedback->encoder);
-    return rc;
-#else
-    return MFOC_RESULT_OK;
+    feedback->encoder_status = mfoc_encoder_Run(&feedback->encoder);
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+    return feedback->encoder_status;
 #endif
+#endif
+    return MFOC_RESULT_OK;
 }
 
 /** @brief Reset HFI and acquire position independently of backend selection.

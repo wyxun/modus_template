@@ -12,6 +12,7 @@
 #include <string.h>
 
 static uint32_t tick;
+static mfoc_result_t encoder_result;
 /** @brief Supply the test clock. @return Microseconds. */
 uint32_t mfoc_port_tick(void) { return tick; }
 /** @brief Supply the test clock scale. @return Ticks per second. */
@@ -21,7 +22,7 @@ uint32_t mfoc_port_tick_frequency(void) { return 1000000U; }
 mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
 {
     *angle = (mfoc_angle_t){0x10000000U};
-    return MFOC_RESULT_OK;
+    return encoder_result;
 }
 
 /** @brief Check shadow execution, output selection and missing-frame reset.
@@ -83,8 +84,11 @@ int main(void)
         assert(rc == MFOC_RESULT_OK);
         assert(output.angle.wBam32 == 0x70000000U);
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
-        assert(rc == MFOC_RESULT_OK);
-        assert(output.angle.wBam32 == expected.angle.wBam32);
+        assert(rc == (expected.valid ? MFOC_RESULT_OK :
+                      MFOC_RESULT_INVALID_STATE));
+        if (expected.valid) {
+            assert(output.angle.wBam32 == expected.angle.wBam32);
+        }
 #else
         assert(rc == MFOC_RESULT_INVALID_STATE);
 #endif
@@ -125,6 +129,13 @@ int main(void)
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
         MFOC_RESULT_INVALID_ARGUMENT);
     assert(memcmp(&retained, &feedback.smo, sizeof(retained)) == 0);
+    encoder_result = MFOC_RESULT_IO;
+    tick += 20000U;
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_IO);
+#else
+    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
+#endif
     puts("Feedback preparation, selection and model refresh passed");
     return 0;
 }

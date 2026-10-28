@@ -31,6 +31,29 @@ typedef enum {
     MFOC_MOTOR_MODE_SPEED,
 } mfoc_motor_mode_t;
 
+/** @brief Angle handover stages, independent of current/speed mode. */
+typedef enum {
+    MFOC_START_NONE = 0, /* Normal feedback control. */
+    MFOC_START_FORCED,   /* Existing open-loop command; no handover. */
+    MFOC_START_WAIT,     /* Hold, ramp and qualify the observer. */
+    MFOC_START_REDUCE,   /* Hold forced speed and reduce startup current. */
+    MFOC_START_BLEND,    /* Remove residual angle offset, then speed control. */
+} mfoc_start_state_t;
+
+/** @brief Startup coefficients and ISR-owned handover history. */
+typedef struct {
+    uint32_t timeout_ticks;
+    uint32_t stable_ticks;
+    uint32_t reduce_period;
+    int32_t offset_step; /* Positive BAM32 ticks per control sample. */
+    mfoc_scalar_t current_step; /* Current reduction per reduce_period. */
+    mfoc_scalar_t speed_window;
+    uint32_t remaining; /* ISR timeout budget; paused during fixed-angle hold. */
+    uint32_t stable;
+    uint32_t reduce_count;
+    int32_t offset; /* Control d-axis minus estimated rotor d-axis. */
+} mfoc_motor_start_t;
+
 /** @brief Persistent current command in the selected control frame. */
 typedef struct {
     mfoc_dq_t i_ref; /* dq current reference, I/Ib. */
@@ -109,9 +132,10 @@ typedef struct {
     uint16_t speed_divider;
     uint16_t speed_count;
     mfoc_angle_t align_angle;
-    int64_t align_deadline; /* perfc slot, owned by foreground Run. */
-    volatile bool align_active;
-    bool openloop_active; /* Forced startup/rotation; independent of mode. */
+    int64_t hold_deadline; /* Run deadline for fixed-angle hold only. */
+    volatile bool hold_active; /* Freeze angle for align or startup hold. */
+    mfoc_start_state_t start_state;
+    mfoc_motor_start_t start;
 } mfoc_motor_t;
 
 /** @brief Validate/copy motor data and initialize current control in IDLE.
@@ -179,6 +203,16 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
  * The initial hold lasts MFOC_MOTOR_ALIGN_TIME_MS, serviced by Run. */
 mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t id_pu);
+
+/** @brief Align, force rotation, reduce current and hand over to speed FOC.
+ * @param motor IDLE instance. @param speed Signed electrical speed PU.
+ * @param current Positive startup current amplitude, I/Ibase.
+ * @return Command/PWM status. Requires configured speed PI and OpenLoop.
+ * @note Requires SMO/FLUX selected and HFI disabled. Run services alignment;
+ * Step owns qualification, bounded current reduction and angle blending.
+ * Thresholds are profile settings, not proof of observer lock. */
+mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
+    mfoc_scalar_t speed, mfoc_scalar_t current);
 
 /** @brief Reset HFI and start the Motor with zero current reference.
  * @param motor IDLE instance with HFI compiled in. @return Startup status. */

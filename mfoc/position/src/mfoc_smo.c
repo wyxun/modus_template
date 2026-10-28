@@ -62,7 +62,10 @@ mfoc_result_t mfoc_smo_Init(mfoc_smo_t *smo, const mfoc_smo_cfg_t *cfg,
         !_mfoc_smo_Ratio((int64_t)cfg->h * MFOC_Q_SCALE,
             cfg->boundary, &next.c.boundary_gain) ||
         !_mfoc_smo_Ratio(fs * MFOC_Q_SCALE * MFOC_Q_SCALE,
-            (int64_t)span * cfg->speed_base_hz, &next.c.speed_scale)) {
+            (int64_t)span * cfg->speed_base_hz, &next.c.speed_scale) ||
+        !_mfoc_smo_Ratio((int64_t)cfg->speed_base_hz *
+            MFOC_SCALAR(6.28318530718f), wc * MFOC_Q_SCALE,
+            &next.c.phase_scale)) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
 #else
@@ -74,6 +77,7 @@ mfoc_result_t mfoc_smo_Init(mfoc_smo_t *smo, const mfoc_smo_cfg_t *cfg,
     next.c.a1 = (wc - 2.0f * fs) / (2.0f * fs + wc);
     next.c.boundary_gain = cfg->h / cfg->boundary;
     next.c.speed_scale = fs / ((float)span * cfg->speed_base_hz);
+    next.c.phase_scale = 6.28318530718f * cfg->speed_base_hz / wc;
 #endif
     if (next.c.ku <= MFOC_ZERO || next.c.kr <= MFOC_ZERO ||
         next.c.b0 <= MFOC_ZERO || next.c.speed_scale <= MFOC_ZERO ||
@@ -127,6 +131,7 @@ void mfoc_smo_Reset(mfoc_smo_t *smo)
     smo->previous_angle = (mfoc_angle_t){0U};
     smo->angle_sum = MFOC_ZERO;
     smo->held_speed = MFOC_ZERO;
+    smo->phase_advance = (mfoc_angle_t){0U};
     smo->speed_count = 0U;
     smo->has_angle = false;
 }
@@ -134,7 +139,7 @@ void mfoc_smo_Reset(mfoc_smo_t *smo)
 /** @brief Advance both axes, extract electrical angle and windowed speed.
  * @param smo Initialized instance. @param i Current I/Ibase.
  * @param u Voltage V/Vbase. @param out Electrical estimates.
- * @return None; valid indicates nonzero EMF only. */
+ * @return None; valid requires a nonzero speed estimate, not verified lock. */
 void mfoc_smo_Step(mfoc_smo_t *smo, const mfoc_ab_t *i,
                    const mfoc_ab_t *u, mfoc_smo_output_t *out)
 {
@@ -146,6 +151,7 @@ void mfoc_smo_Step(mfoc_smo_t *smo, const mfoc_ab_t *i,
         smo->has_angle = false;
         smo->angle_sum = MFOC_ZERO;
         smo->held_speed = MFOC_ZERO;
+        smo->phase_advance = (mfoc_angle_t){0U};
         smo->speed_count = 0U;
         return;
     }
@@ -158,14 +164,20 @@ void mfoc_smo_Step(mfoc_smo_t *smo, const mfoc_ab_t *i,
         if (smo->speed_count >= smo->c.speed_span) {
             smo->held_speed = mfoc_mul_wide(smo->angle_sum,
                                             smo->c.speed_scale);
+            smo->phase_advance = mfoc_angle_atan2(
+                mfoc_mul_wide(smo->held_speed, smo->c.phase_scale), MFOC_ONE);
             smo->angle_sum = MFOC_ZERO;
             smo->speed_count = 0U;
         }
     }
     smo->previous_angle = out->angle;
     smo->has_angle = true;
+    out->angle.wBam32 += smo->phase_advance.wBam32;
+    if (smo->held_speed < MFOC_ZERO) {
+        out->angle.wBam32 += UINT32_C(0x80000000);
+    }
     out->speed = smo->held_speed;
     out->bemf = mfoc_add_sat(mfoc_abs(smo->axis[0].e_hat),
                              mfoc_abs(smo->axis[1].e_hat));
-    out->valid = true;
+    out->valid = smo->held_speed != MFOC_ZERO;
 }
