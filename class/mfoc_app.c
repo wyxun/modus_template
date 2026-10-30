@@ -408,7 +408,11 @@ static void _mfoc_app_CmdMotor(const char *args)
         }
     } else if (mshell_ConsumeWord(&cursor, "clear")) {
         valid = mshell_AtEnd(cursor);
-        /* TODO: mfoc_motor_ClearFault(). */
+        if (valid) {
+            tMfocApp.result = mfoc_motor_ClearFault(&tMfocApp.motor);
+            MLOGF(I, "motor clear result=%d\r\n", (int)tMfocApp.result);
+            return;
+        }
     } else if (mshell_ConsumeWord(&cursor, "status")) {
         valid = mshell_AtEnd(cursor);
         if (valid) {
@@ -423,8 +427,7 @@ static void _mfoc_app_CmdMotor(const char *args)
             "       motor sensorless <speed_pu> <current_pu>\r\n"
             "       motor hfi [start|status]; motor stop to end\r\n"
             "       motor flux [status]; observer only\r\n"
-            "       motor encoder | stop | clear | status | help\r\n"
-            "       clear: parse only; execution pending\r\n");
+            "       motor encoder | stop | clear | status | help\r\n");
         return;
     }
     if (valid) {

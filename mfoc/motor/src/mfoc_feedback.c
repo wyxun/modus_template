@@ -116,7 +116,7 @@ mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
 #endif
 }
 
-/** @brief Commit the selected encoder zero while the rotor is held.
+/** @brief Commit an enabled encoder zero while the rotor is held.
  * @param feedback Instance. @param angle Held electrical angle.
  * @return Sampling/configuration status. No ISR work is added. */
 mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
@@ -124,7 +124,7 @@ mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
 {
     if (feedback == NULL) { return MFOC_RESULT_NULL; }
     if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_ENABLE_ENCODER
     return mfoc_encoder_CalibrateZero(&feedback->encoder, angle);
 #else
     (void)angle;

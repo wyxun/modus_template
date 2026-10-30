@@ -83,6 +83,61 @@ static void speed_acquisition(void)
 }
 #endif
 
+/** @brief Regulate speed before qualification, without a current step.
+ * @return None. */
+static void sensorless_speed_acquisition(void)
+{
+    for (int direction = -1; direction <= 1; direction += 2) {
+        mfoc_motor_t motor = {0};
+        setup(&motor);
+        assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+        motor.speed.cfg = (mfoc_pi_params_t){MFOC_HALF,
+            MFOC_SCALAR(0.01f), -MFOC_HALF, MFOC_HALF,
+            -MFOC_HALF, MFOC_HALF};
+        motor.speed_divider = 3U;
+        motor.speed_ref = mfoc_from_float(0.4f * (float)direction);
+        motor.i_ref.qQ = mfoc_from_float(0.05f * (float)direction);
+        motor.sensorless_start.state = MFOC_SENSORLESS_START_ACQUIRE;
+        motor.sensorless_start.captured = true;
+        motor.sensorless_start.offset = 10;
+        motor.sensorless_start.offset_step = 10;
+        motor.sensorless_start.remaining = 1000U;
+        motor.sensorless_start.stable_ticks = 4U;
+        motor.sensorless_start.speed_window = MFOC_SCALAR(0.04f);
+        motor_port_fake.feedback.speed = motor.speed_ref;
+        mfoc_scalar_t initial = motor.i_ref.qQ;
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        assert(motor.sensorless_start.state ==
+            MFOC_SENSORLESS_START_ACQUIRE);
+        assert(motor.mode == MFOC_MOTOR_MODE_SPEED);
+        assert(motor.i_ref.qQ == initial && motor.speed_count == 2U);
+        motor_port_fake.feedback.speed =
+            mfoc_from_float(0.5f * (float)direction);
+        for (unsigned n = 0; n < 3U; ++n) {
+            assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        }
+        assert(mfoc_to_float(motor.i_ref.qQ) * (float)direction <
+               mfoc_to_float(initial) * (float)direction);
+        assert(motor.sensorless_start.stable == 0U);
+        motor_port_fake.feedback.speed = motor.speed_ref;
+        for (unsigned n = 0; n < 4U; ++n) {
+            assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        }
+        assert(motor.sensorless_start.state == MFOC_SENSORLESS_START_NONE);
+        motor.sensorless_start.state = MFOC_SENSORLESS_START_ACQUIRE;
+        motor.sensorless_start.remaining = 0U;
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_SAFETY);
+        check_fault(&motor, MFOC_MOTOR_FAULT_FEEDBACK);
+        assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+        motor.sensorless_start.state = MFOC_SENSORLESS_START_ACQUIRE;
+        motor.sensorless_start.captured = true;
+        motor.sensorless_start.remaining = 10U;
+        motor_port_fake.feedback_step = MFOC_RESULT_IO;
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_IO);
+        check_fault(&motor, MFOC_MOTOR_FAULT_FEEDBACK);
+    }
+}
+
 /** @brief Align without ramp coefficients; calibrate before Stop resets phase.
  * @return None. */
 static void fixed_angle(void)
@@ -111,6 +166,7 @@ int main(void)
 {
     mfoc_motor_t motor = {0};
     fixed_angle();
+    sensorless_speed_acquisition();
     mfoc_dq_t ref = {MFOC_SCALAR(0.2f), MFOC_SCALAR(-0.1f)};
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_INVALID_STATE);
     setup(&motor);

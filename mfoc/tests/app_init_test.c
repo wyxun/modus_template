@@ -234,7 +234,10 @@ static void shell_commands(void)
     unsigned reads = s_encoder_reads;
     command("encoder trailing", "invalid motor arguments");
     assert(s_encoder_reads == reads);
-    command("clear", "clear: parsed only");
+    tMfocApp.motor.state = MFOC_MOTOR_FAULT;
+    command("clear", "motor clear result=0");
+    assert(tMfocApp.motor.state == MFOC_MOTOR_IDLE);
+    command("clear", "motor clear result=5");
     command("status", "mfoc app state=");
     command("", "usage: motor");
     command("help", "usage: motor");
@@ -320,6 +323,17 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
     return s_align_result;
 }
 
+/** @brief Simulate fault recovery. @param motor App instance.
+ * @return Recovery status. */
+mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
+{
+    if (motor->state != MFOC_MOTOR_FAULT) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    motor->state = MFOC_MOTOR_IDLE;
+    return MFOC_RESULT_OK;
+}
+
 /** @brief Record explicit cancellation. @param motor App instance.
  * @return OK. */
 mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
@@ -327,6 +341,18 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     assert(motor == &tMfocApp.motor);
     ++s_stop_count;
     return MFOC_RESULT_OK;
+}
+
+/** @brief Stub sensorless startup for the Shell test link.
+ * @param motor App instance. @param speed Target. @param current Current.
+ * @return Invalid state. */
+mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
+    mfoc_scalar_t speed, mfoc_scalar_t current)
+{
+    (void)motor;
+    (void)speed;
+    (void)current;
+    return MFOC_RESULT_INVALID_STATE;
 }
 
 /** @brief Verify the forced startup Shell argument order.

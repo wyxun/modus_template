@@ -116,9 +116,9 @@ mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback);
  * @return OK, or INVALID_STATE when HFI is compiled out. */
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback);
 
-/** @brief Calibrate the selected encoder against a held electrical angle.
+/** @brief Calibrate an enabled encoder against a held electrical angle.
  * @param feedback Initialized instance. @param angle Held electrical angle.
- * @return Calibration status; NONE has no position reference to calibrate.
+ * @return Calibration status; OK without work when encoder is disabled.
  * @note Foreground only while Motor uses fixed-angle alignment. */
 mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
     mfoc_angle_t angle);

@@ -10,3 +10,5 @@ reference
 tests/foc/*.exe
 docs/superpowers/*
 artifacts
+*.csv
+docs/reports/*

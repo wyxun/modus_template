@@ -78,7 +78,7 @@
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_ENABLE_FLUX
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_FLUX
 #endif
 
 #endif

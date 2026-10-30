@@ -533,15 +533,19 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
             &motor->sensorless_start, &motor->openloop, &ctx, input);
         if (rc != MFOC_RESULT_OK) { return rc; }
         motor->i_ref = input->ref;
-        if (ctx.complete) {
+        if (!motor->sensorless_start.captured ||
+            motor->sensorless_start.offset != 0) { return MFOC_RESULT_OK; }
+        /* Regulate captured speed before requiring it to remain stable. */
+        if (motor->mode != MFOC_MOTOR_MODE_SPEED) {
             rc = mfoc_pi_Track(&motor->speed, input->ref.qQ,
                                motor->speed_ref, feedback->speed);
             if (rc != MFOC_RESULT_OK) { return rc; }
             motor->speed_count = motor->speed_divider;
             motor->mode = MFOC_MOTOR_MODE_SPEED;
+        }
+        if (ctx.complete) {
             motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
         }
-        return MFOC_RESULT_OK;
     }
     if (feedback_rc != MFOC_RESULT_OK) { return feedback_rc; }
     if (motor->hold_active) {
@@ -657,7 +661,6 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         phase = output.duty;
         speed_countdown =
             !motor->openloop_active &&
-            motor->sensorless_start.state == MFOC_SENSORLESS_START_NONE &&
 #if MFOC_FEEDBACK_ENABLE_HFI
             !feedback.acquiring &&
 #endif
