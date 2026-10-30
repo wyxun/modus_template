@@ -48,9 +48,17 @@ mfoc_result_t mfoc_openloop_Init(mfoc_openloop_t *loop,
  * @param loop Valid instance. @param angle Electrical phase. @return None. */
 void mfoc_openloop_Reset(mfoc_openloop_t *loop, mfoc_angle_t angle)
 {
+    loop->mode = MFOC_OPENLOOP_ALIGN;
     loop->angle = angle;
     loop->delta = 0;
     loop->target = 0;
+}
+
+/** @brief Release fixed-angle mode and run the configured speed ramp.
+ * @param loop Initialized instance with a valid speed target. @return None. */
+void mfoc_openloop_Start(mfoc_openloop_t *loop)
+{
+    loop->mode = MFOC_OPENLOOP_ROTATE;
 }
 
 /** @brief Convert a bounded signed PU command to a phase increment.
@@ -79,12 +87,14 @@ mfoc_result_t mfoc_openloop_SetSpeed(mfoc_openloop_t *loop,
  * @param loop Initialized instance. @return None. */
 void mfoc_openloop_Step(mfoc_openloop_t *loop)
 {
+    if (loop->mode == MFOC_OPENLOOP_ALIGN) { return; }
     if (loop->delta < loop->target) {
         loop->delta += loop->delta_step;
         if (loop->delta > loop->target) { loop->delta = loop->target; }
     } else if (loop->delta > loop->target) {
         loop->delta -= loop->delta_step;
-        if (loop->delta < loop->target) { loop->delta = loop->target; }
+        if (loop->mode == MFOC_OPENLOOP_ALIGN) { return; }
+    if (loop->delta < loop->target) { loop->delta = loop->target; }
     } else { /* Target reached; hold the phase increment. */ }
     loop->angle.wBam32 += (uint32_t)loop->delta;
 }

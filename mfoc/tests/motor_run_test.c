@@ -71,7 +71,7 @@ static void speed_acquisition(void)
     assert(motor.speed_count == 0U && motor.speed.ui == MFOC_ZERO);
     motor_port_fake.feedback.acquiring = false;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
-    assert(motor.speed_count == 2U && motor.command.i_ref.qQ > MFOC_ZERO);
+    assert(motor.speed_count == 2U && motor.i_ref.qQ > MFOC_ZERO);
     mfoc_scalar_t integral = motor.speed.ui;
     motor_port_fake.feedback.acquiring = true;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
@@ -83,11 +83,34 @@ static void speed_acquisition(void)
 }
 #endif
 
+/** @brief Align without ramp coefficients; calibrate before Stop resets phase.
+ * @return None. */
+static void fixed_angle(void)
+{
+    mfoc_motor_t motor = {0};
+    setup(&motor);
+    assert(motor.openloop.gain == 0);
+    assert(mfoc_motor_AlignStart(&motor, MFOC_SCALAR(0.2f),
+        MFOC_SCALAR(0.25f)) == MFOC_RESULT_OK);
+    assert(motor.openloop.mode == MFOC_OPENLOOP_ALIGN);
+    for (unsigned n = 0; n < 10U; ++n) {
+        mfoc_openloop_Step(&motor.openloop);
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        assert(motor.openloop.angle.wBam32 == UINT32_C(0x40000000));
+    }
+    assert(motor_port_fake.feedback_reads == 0U);
+    motor_port_fake.time_ms = MFOC_MOTOR_ALIGN_TIME_MS + 1U;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor_port_fake.held_angle.wBam32 == UINT32_C(0x40000000));
+    assert(motor.state == MFOC_MOTOR_IDLE && !motor_port_fake.enabled);
+}
+
 /** @brief Exercise the complete port-bound current-control path.
  * @return Zero if every assertion passes. */
 int main(void)
 {
     mfoc_motor_t motor = {0};
+    fixed_angle();
     mfoc_dq_t ref = {MFOC_SCALAR(0.2f), MFOC_SCALAR(-0.1f)};
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_INVALID_STATE);
     setup(&motor);
@@ -96,8 +119,8 @@ int main(void)
     mfoc_dq_t excessive = {MFOC_SCALAR(0.7f), MFOC_SCALAR(0.7f)};
     assert(mfoc_motor_SetCurrent(&motor, &excessive) ==
            MFOC_RESULT_OUT_OF_RANGE);
-    assert(motor.command.i_ref.qD == ref.qD);
-    assert(motor.command.i_ref.qQ == ref.qQ);
+    assert(motor.i_ref.qD == ref.qD);
+    assert(motor.i_ref.qQ == ref.qQ);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.duty.qU == MFOC_HALF);
     assert(motor_port_fake.enabled);
@@ -112,7 +135,7 @@ int main(void)
     assert(mfoc_motor_SetBus(&motor, MFOC_ZERO) != MFOC_RESULT_OK);
     assert(motor.state == MFOC_MOTOR_RUNNING);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
-    assert(motor.command.i_ref.qD == MFOC_ZERO);
+    assert(motor.i_ref.qD == MFOC_ZERO);
     assert(motor.core.d.ui == MFOC_ZERO && motor.core.q.ui == MFOC_ZERO);
     assert(!motor_port_fake.enabled);
 
@@ -179,7 +202,7 @@ int main(void)
     assert(fabsf(mfoc_to_float(motor.previous_core_output.u.qD) -
         0.1f) < 0.0003f);
     assert(motor.previous_core_output.u.qQ == MFOC_ZERO);
-    assert(motor.command.i_ref.qD == ref.qD);
+    assert(motor.i_ref.qD == ref.qD);
     motor_port_fake.feedback.acquiring = false;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.previous_core_output.u.qD > MFOC_SCALAR(0.1f));

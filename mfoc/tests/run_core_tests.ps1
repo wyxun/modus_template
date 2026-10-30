@@ -6,6 +6,8 @@ param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
     [ValidateSet(0, 1)][int]$Identify = 0,
     [ValidateSet(1, 2, 4)][int]$Backend = 1)
 $ErrorActionPreference = 'Stop'
+$smo = if ($Backend -eq 2) { 1 } else { 0 }
+$flux = if ($Backend -eq 4) { 1 } else { 0 }
 $library = Split-Path -Parent $PSScriptRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-core-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
@@ -27,6 +29,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
         "-DMFOC_FEEDBACK_BACKEND=$Backend" `
+        "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
+        "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_IDENTIFICATION_ENABLE=$identify" `
         -D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1 `
         @irqArguments `

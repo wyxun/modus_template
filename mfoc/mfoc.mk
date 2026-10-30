@@ -16,6 +16,7 @@ MFOC_SOURCES = $(MFOC_ROOT)/base/src/mfoc_numeric.c                             
     $(MFOC_ROOT)/base/src/mfoc_pi.c                                             \
     $(MFOC_ROOT)/core/src/mfoc_core.c                                           \
     $(MFOC_ROOT)/motor/src/mfoc_motor.c                                         \
+    $(MFOC_ROOT)/motor/src/mfoc_sensorless_start.c                              \
     $(MFOC_ROOT)/motor/src/mfoc_openloop.c                                      \
     $(MFOC_ROOT)/motor/src/mfoc_feedback.c                                      \
     $(MFOC_ROOT)/identification/src/mfoc_identification.c                       \

@@ -34,8 +34,8 @@ int main(void)
     assert(motor.params.inertia == MFOC_ZERO);
     assert(motor.limits.i_max == cfg.limits.i_max);
     assert(motor.state == MFOC_MOTOR_IDLE && motor.faults == 0U);
-    assert(motor.command.i_ref.qD == MFOC_ZERO);
-    assert(motor.command.i_ref.qQ == MFOC_ZERO);
+    assert(motor.i_ref.qD == MFOC_ZERO);
+    assert(motor.i_ref.qQ == MFOC_ZERO);
     mfoc_motor_t saved = motor;
     mfoc_motor_cfg_t bad = cfg;
     bad.params.pole_pairs = 0U;

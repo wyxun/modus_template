@@ -26,6 +26,11 @@ static void phase_ramp(void)
     assert(loop.delta_step >= 858 && loop.delta_step <= 860);
     assert(mfoc_openloop_SetSpeed(&loop, MFOC_HALF) == MFOC_RESULT_OK);
     int32_t goal = loop.target;
+    assert(loop.mode == MFOC_OPENLOOP_ALIGN);
+    mfoc_openloop_Step(&loop);
+    assert(loop.angle.wBam32 == 0U && loop.delta == 0);
+    mfoc_openloop_Start(&loop);
+    assert(loop.mode == MFOC_OPENLOOP_ROTATE);
     for (unsigned i = 0U; i < 60000U; ++i) {
         int32_t before = loop.delta;
         uint32_t angle = loop.angle.wBam32;
@@ -45,6 +50,9 @@ static void phase_ramp(void)
     assert(loop.delta == -goal);
     mfoc_openloop_Reset(&loop, (mfoc_angle_t){UINT32_MAX});
     assert(loop.delta == 0 && loop.target == 0);
+    assert(loop.angle.wBam32 == UINT32_MAX);
+    assert(loop.mode == MFOC_OPENLOOP_ALIGN);
+    mfoc_openloop_Step(&loop);
     assert(loop.angle.wBam32 == UINT32_MAX);
     mfoc_openloop_t saved = loop;
     mfoc_openloop_cfg_t bad = cfg;
@@ -108,7 +116,8 @@ static void lifecycle(void)
         MFOC_RESULT_OK);
     assert(mfoc_motor_OpenLoopStart(&motor, MFOC_HALF, MFOC_HALF) ==
         MFOC_RESULT_INVALID_STATE);
-    assert(motor.hold_active && motor.start_state == MFOC_START_FORCED);
+    assert(motor.hold_active && motor.openloop_active);
+    assert(motor.openloop.mode == MFOC_OPENLOOP_ALIGN);
     assert(motor.mode == MFOC_MOTOR_MODE_CURRENT);
     motor_port_fake.feedback_step = MFOC_RESULT_INVALID_STATE;
     motor_port_fake.feedback_run = MFOC_RESULT_IO;
@@ -119,11 +128,12 @@ static void lifecycle(void)
     motor_port_fake.time_ms = MFOC_MOTOR_ALIGN_TIME_MS + 1U;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
     assert(!motor.hold_active && motor_port_fake.calibrations == 0U);
+    assert(motor.openloop.mode == MFOC_OPENLOOP_ROTATE);
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.openloop.angle.wBam32 > 0U);
     assert(motor_port_fake.feedback_reads == 11U);
-    assert(motor.command.i_ref.qD == MFOC_HALF);
-    assert(motor.command.i_ref.qQ == MFOC_ZERO);
+    assert(motor.i_ref.qD == MFOC_HALF);
+    assert(motor.i_ref.qQ == MFOC_ZERO);
     /* A different observer phase must not enter the forced current frame. */
     motor_port_fake.feedback_step = MFOC_RESULT_OK;
     motor_port_fake.feedback.angle = (mfoc_angle_t){UINT32_C(0x40000000)};

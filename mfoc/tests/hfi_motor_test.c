@@ -54,7 +54,7 @@ int main(void)
         .u_inject_ab = {.qAlpha = MFOC_HFI_VOLTAGE}};
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.previous_core_output.m.qAlpha > MFOC_ZERO);
-    assert(motor.command.i_ref.qD == 0 && motor.command.i_ref.qQ == 0);
+    assert(motor.i_ref.qD == 0 && motor.i_ref.qQ == 0);
     assert(motor.state == MFOC_MOTOR_RUNNING && motor_port_fake.enabled);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_IDLE);

@@ -218,33 +218,30 @@ Feedback 输出 `u_inject_ab`（下一拍静止坐标系电压 V/Vbase），Moto
 `MFOC_FEEDBACK_NONE` 不提供控制反馈，Step 返回 INVALID_STATE；此时仍可启用编码器。
 `MFOC_FEEDBACK_SMO` 可选择 SMO 输出；SMO 的更新独立于编码器状态。
 Motor 的 `mode` 只包含 CURRENT、SPEED 两种控制目标。强拖由
-`start_state == MFOC_START_FORCED` 管理，HFI 独立辨识由 Feedback 管理，不占用控制模式。
+`openloop_active` 管理，HFI 独立辨识由 Feedback 管理，不占用控制模式。
+无感强拖切换的状态和计数集中在 `sensorless_start`；普通强拖不使用该状态。
 ISR 按采样、反馈、启动/获取位置请求、Core、PWM 的顺序执行，成功提交后
 保存前拍输出。Rs 辨识时改用固定轴电压，跳过反馈及 Core 电流环。
 
-`motor sensorless <speed_pu> <current_pu>` 从 shell 调用
-`mfoc_motor_SensorlessStart(motor, speed, current)`，启动自动接管，例如
-`motor sensorless 0.5 0.04`。
-要求选择 SMO/FLUX 后端、关闭 HFI、配置速度 PI 和 OpenLoop。当前默认后端
-仍为编码器，因此默认构建会返回状态错误。
-启动采用 `Id=0, Iq=sign(speed)*current`，初角为 `-sign(speed)*90°`。
-Run 完成固定磁场保持后，ISR 按 WAIT（爬坡及连续资格确认）、REDUCE
-（固定强拖频率、降流）、BLEND（捕获剩余角差并归零）进入 SPEED。
-`hold_active` 统一表示独立对齐或启动时的定角保持，`hold_deadline` 只由
-Run 管理这段保持时间；`start.remaining` 在保持解除后才由 ISR 递减，
-覆盖爬坡、降流和角差过渡，不包含前面的保持时间。
-功角判据使用电流矢量角；捕获偏差使用控制 d 轴角减观察器转子角，两者不混用。
-Core 每拍只执行一次；接管不复位电流 PI 或观察器。
+`mfoc_motor_SensorlessStart(motor, speed, current)` 已接入启动骨架，shell
+命令仍为 `motor sensorless <speed_pu> <current_pu>`。要求选择 SMO/FLUX、
+关闭 HFI，并配置 OpenLoop 和速度 PI。以启动电流定角保持 1.5 s 后，
+RAMP 按开环斜坡达到目标频率，不比较观测反馈控制爬坡；随后 ACQUIRE
+等待有效反馈，速度与角差合格后立即捕获角差，在 ACQUIRE 内逐拍归零。
+ACQUIRE 使用从爬坡完成开始的 2 s 预算，超时走现有故障停机。
+参数由 `mfoc_motor_config.h` 配置。每拍仍只执行一次 Core。
 
-参数位于 `mfoc_motor_config.h`：最低速度 0.4 PU、速度窗口 ±10%、稳定
-20 ms、对齐后总超时 6 s、电流下限 0.005 PU、降流 0.05 PU/s、剩余角差
-10° 内捕获、以 1 电周/s 消除偏差。降流约 1 kHz 更新，FIXED 步长有量化。
-这些是未经过台架整定的初值，轻载降至下限仍不满足接管时会超时停机。
-BLEND 失去有效反馈/速度窗口，或速度 PI 无法复现接管电流时故障停机。
-运行中速度更新只允许同向且不低于接管下限，停止使用 Stop。
-主机编排检查：`mfoc/tests/run_core_tests.ps1 -Tests motor_handover -Hfi 0
--Backend 2`（SMO）或 `-Backend 4`（FLUX），分别覆盖 FLOAT/FIXED；注入反馈
-只验证编排，不等于验证电机的机械动态或真实观察器锁定。
+`_mfoc_sensorless_AdjustIq` 在捕获前每 5 ms 更新电流幅值：慢积分项为
+`bias += Kangle * dt * (load_turns - 0.25)`，速度阻尼项为
+`Kspeed * (forced_speed - rotor_speed)`，负载角与速度差先按旋转方向归一化。
+两项合成后限制幅值和变化率，最后恢复 Iq 符号。默认角度增益为
+0.5 PU/(turn·s)，速度增益为 0.05 电流 PU/速度 PU，变化率为 0.2 PU/s。
+电流幅值在 `min(0.001 PU, 启动电流)` 到本次启动电流之间；慢积分项也限幅，
+不积累超出边界的状态。更新周期换算、积分与变化率系数在 Init 完成。
+捕获后保持 Iq，角差归零且速度连续合格 20 ms 后衔接速度 PI。
+这些增益是待台架整定的初值；主机测试验证符号、边界与状态流程，不能证明
+实际抑振效果。90° 附近同步恢复能力弱，观测延迟和噪声也会影响阻尼。
+Motor 直接持有 `i_ref`，原单字段 command 包装已移除。
 
 `position/include/mfoc_smo.h` 和 `position/src/mfoc_smo.c` 是独立 SMO 算法。
 公共 `motor/include/mfoc_motor_params.h` 保存原有电机参数类型；
@@ -269,7 +266,7 @@ SMO 输出 `valid` 要求反电势及窗口速度非零，仍不能单独作为�
 实际 PWM 生效时刻与 ADC 采样区间仍需台架确认。代码接入不代表接管已验证。
 `MFOC_FEEDBACK_SMO` 启动需要已有电压区间和可观测转速；当前 Motor
 首次运行还没有上一拍输出，普通 Start 会返回反馈无效，不做自动回退；
-SensorlessStart 的 WAIT 阶段允许观察器无效，等爬坡及连续资格确认完成。
+SensorlessStart 的 RAMP 与 ACQUIRE 捕获前允许暂时无效的反馈；捕获后需要有效反馈。
 
 `position/include/mfoc_encoder.h` 与 `position/src/mfoc_encoder.c` 实现编码器算法。
 Motor 的 `cfg.feedback.encoder` 配置读取周期、超时、滤波、电角度零偏、方向和
@@ -384,7 +381,19 @@ Motor 状态、valid、angle_mT（千分之一电角周）、speed_mpu（千分�
 
 `mfoc_motor_cfg_t.openloop.sample_hz=0` 禁用强拖；否则配置正的
 `speed_base_hz`、`accel`，且 `limits.speed_max` 在 (0,1]。
-独立 `mfoc_openloop_Init/Reset/SetSpeed/Step` 只负责角度发生，不访问硬件。
+OpenLoop 统一持有固定角和旋转角，Motor 不再另存 `align_angle`。
+内部模式为 `MFOC_OPENLOOP_ALIGN` 与 `MFOC_OPENLOOP_ROTATE`：
+
+- `Reset(angle)`：进入 ALIGN，设置固定角，清除当前速度和目标速度。
+- `SetSpeed(speed)`：预置或更新目标速度，不改变当前模式。
+- `Start()`：进入 ROTATE，随后 `Step()` 按斜坡推进角度。
+- `Step()`：ALIGN 保持角度，ROTATE 更新速度和角度。
+
+单独调用 OpenLoop 时，设置目标速度后需调用 `Start()` 才会旋转。
+固定角模式可使用零初始化对象；旋转需要先 `Init()` 配置采样率等系数。
+Motor 持有电流参考、`hold_deadline` 和 `hold_active`，管理保持时间：
+普通 Align 到时校零并停机；强拖/无感启动到时调用 OpenLoop Start 继续旋转。
+OpenLoop 不持有电流、计时、PWM 或无感接管策略。
 初始化将斜坡换成整数 BAM32 tick；小于每拍一个 tick 的斜坡会被拒绝，
 有效斜坡向下量化，实际加速度略低于设定值。Step 无乘除、三角或浮点运算。
 Motor 在 Feedback 后、Core 前调用它；实际采样、前拍 PWM 电压模型保持原关系。

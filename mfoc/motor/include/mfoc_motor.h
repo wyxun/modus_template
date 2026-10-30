@@ -10,6 +10,7 @@
 #include "mfoc_core.h"
 #include "mfoc_feedback.h"
 #include "mfoc_openloop.h"
+#include "mfoc_sensorless_start.h"
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_identification.h"
 #endif
@@ -30,34 +31,6 @@ typedef enum {
     MFOC_MOTOR_MODE_CURRENT = 0,
     MFOC_MOTOR_MODE_SPEED,
 } mfoc_motor_mode_t;
-
-/** @brief Angle handover stages, independent of current/speed mode. */
-typedef enum {
-    MFOC_START_NONE = 0, /* Normal feedback control. */
-    MFOC_START_FORCED,   /* Existing open-loop command; no handover. */
-    MFOC_START_WAIT,     /* Hold, ramp and qualify the observer. */
-    MFOC_START_REDUCE,   /* Hold forced speed and reduce startup current. */
-    MFOC_START_BLEND,    /* Remove residual angle offset, then speed control. */
-} mfoc_start_state_t;
-
-/** @brief Startup coefficients and ISR-owned handover history. */
-typedef struct {
-    uint32_t timeout_ticks;
-    uint32_t stable_ticks;
-    uint32_t reduce_period;
-    int32_t offset_step; /* Positive BAM32 ticks per control sample. */
-    mfoc_scalar_t current_step; /* Current reduction per reduce_period. */
-    mfoc_scalar_t speed_window;
-    uint32_t remaining; /* ISR timeout budget; paused during fixed-angle hold. */
-    uint32_t stable;
-    uint32_t reduce_count;
-    int32_t offset; /* Control d-axis minus estimated rotor d-axis. */
-} mfoc_motor_start_t;
-
-/** @brief Persistent current command in the selected control frame. */
-typedef struct {
-    mfoc_dq_t i_ref; /* dq current reference, I/Ib. */
-} mfoc_motor_command_t;
 
 /** @brief Motor lifecycle; zero-initialized storage cannot start PWM. */
 typedef enum {
@@ -117,7 +90,7 @@ typedef struct {
     mfoc_identification_t identification;
 #endif
     mfoc_openloop_t openloop;
-    mfoc_motor_command_t command;
+    mfoc_dq_t i_ref; /* dq current reference, I/Ibase. */
     volatile mfoc_motor_mode_t mode;
     volatile mfoc_motor_state_t state;
     volatile uint32_t faults; /* ISR fault latch. */
@@ -131,11 +104,10 @@ typedef struct {
     mfoc_scalar_t speed_ref;
     uint16_t speed_divider;
     uint16_t speed_count;
-    mfoc_angle_t align_angle;
     int64_t hold_deadline; /* Run deadline for fixed-angle hold only. */
-    volatile bool hold_active; /* Freeze angle for align or startup hold. */
-    mfoc_start_state_t start_state;
-    mfoc_motor_start_t start;
+    volatile bool hold_active; /* Motor owns the timed ALIGN lifecycle. */
+    bool openloop_active; /* Ordinary forced rotation, without handover. */
+    mfoc_sensorless_start_t sensorless_start;
 } mfoc_motor_t;
 
 /** @brief Validate/copy motor data and initialize current control in IDLE.
@@ -204,13 +176,12 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
 mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t id_pu);
 
-/** @brief Align, force rotation, reduce current and hand over to speed FOC.
- * @param motor IDLE instance. @param speed Signed electrical speed PU.
- * @param current Positive startup current amplitude, I/Ibase.
- * @return Command/PWM status. Requires configured speed PI and OpenLoop.
- * @note Requires SMO/FLUX selected and HFI disabled. Run services alignment;
- * Step owns qualification, bounded current reduction and angle blending.
- * Thresholds are profile settings, not proof of observer lock. */
+/** @brief Hold a fixed field, ramp, acquire feedback and blend to speed FOC.
+ * @param motor IDLE instance with OpenLoop and speed PI configured.
+ * @param speed Signed electrical speed PU. @param current Current amplitude PU.
+ * @return Command/start status. Requires SMO/FLUX and HFI disabled.
+ * @note Current adjustment is a TODO; the skeleton holds startup current.
+ * Run ends the initial hold. Step owns acquisition and blending. */
 mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t current);
 
