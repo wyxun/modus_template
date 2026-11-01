@@ -50,6 +50,7 @@
 #define MFOC_FEEDBACK_SMO 2
 #define MFOC_FEEDBACK_HFI 3
 #define MFOC_FEEDBACK_FLUX 4
+#define MFOC_FEEDBACK_EKF 5
 
 #ifndef MFOC_FEEDBACK_ENABLE_ENCODER
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
@@ -65,6 +66,32 @@
 /* Requires confirmed motor flux and configured observer/PLL gains. */
 #define MFOC_FEEDBACK_ENABLE_FLUX 1
 #endif
+#ifndef MFOC_FEEDBACK_ENABLE_EKF
+/* FLOAT only; start with encoder control and EKF shadow observation. */
+#define MFOC_FEEDBACK_ENABLE_EKF 0
+#endif
+/* Experimental initial values, NOT measured board noise or validated tuning.
+ * Q: per-step variances [ia, ib, speed PU, angle turns] at 20 kHz.
+ * R: current PU squared [aa, ab, bb]. P0: initial diagonal covariance.
+ * Re-estimate R from raw current data before accepting sensorless control. */
+#ifndef MFOC_EKF_Q
+#define MFOC_EKF_Q {1e-6f, 1e-6f, 1e-7f, 1e-8f}
+#endif
+#ifndef MFOC_EKF_R
+#define MFOC_EKF_R {1e-6f, 0.0f, 1e-6f}
+#endif
+#ifndef MFOC_EKF_P0
+#define MFOC_EKF_P0 {0.01f, 0.01f, 0.25f, 0.08333333f}
+#endif
+#ifndef MFOC_EKF_MIN_SPEED
+#define MFOC_EKF_MIN_SPEED 0.05f
+#endif
+#ifndef MFOC_EKF_MAX_ANGLE_VAR
+#define MFOC_EKF_MAX_ANGLE_VAR 0.000625f /* turns squared */
+#endif
+#ifndef MFOC_EKF_MAX_SPEED_VAR
+#define MFOC_EKF_MAX_SPEED_VAR 0.0025f /* speed PU squared */
+#endif
 /* Initial shadow-observer tuning, not bench-validated motor parameters.
  * gain uses normalized time; PLL ki is speed PU per error per second. */
 #ifndef MFOC_FLUX_GAIN
@@ -78,7 +105,7 @@
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_FLUX
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_ENCODER
 #endif
 
 #endif

@@ -1,5 +1,6 @@
 param([ValidateSet(0, 1)][int]$Hfi = 1,
-    [ValidateSet(0, 1)][int]$Flux = 0)
+    [ValidateSet(0, 1)][int]$Flux = 0,
+    [ValidateSet(0, 1)][int]$Ekf = 0)
 $ErrorActionPreference = 'Stop'
 $repo = (Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-app-' + [guid]::NewGuid())
@@ -11,7 +12,8 @@ $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     'mfoc/motor/include', 'mfoc/identification/include',
     'mfoc/position/include', 'mfoc/port/include') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
-foreach ($numeric in @('FLOAT', 'FIXED')) {
+$numerics = if ($Ekf) { @('FLOAT') } else { @('FLOAT', 'FIXED') }
+foreach ($numeric in $numerics) {
   foreach ($case in @(@(0, 0), @(1, 0), @(1, 1))) {
     $shell, $timing = $case
     $exe = Join-Path $output "app-$numeric-shell-$shell-timing-$timing.exe"
@@ -22,6 +24,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_ISR_MEASURE=$timing" `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$Flux" `
+        "-DMFOC_FEEDBACK_ENABLE_EKF=$Ekf" `
         "-DMSHELL_ENABLE=$shell" `
         @logFlags -D__NO_USE_ASSERT `
         -D__PERFC_USE_USER_CUSTOM_PORTING__=1 `

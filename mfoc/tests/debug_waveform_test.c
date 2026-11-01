@@ -229,7 +229,9 @@ int main(void)
     full_cycles(1U);
 #else
     assert(strcmp(s_names[0], "Enc_mT") == 0);
-#if MFOC_FEEDBACK_ENABLE_FLUX
+#if MFOC_FEEDBACK_ENABLE_EKF
+    assert(strcmp(s_names[1], "EKF_mT") == 0);
+#elif MFOC_FEEDBACK_ENABLE_FLUX
     assert(strcmp(s_names[1], "Flux_mT") == 0);
 #elif MFOC_FEEDBACK_ENABLE_SMO
     assert(strcmp(s_names[1], "SMO_mT") == 0);
@@ -249,10 +251,20 @@ int main(void)
     tMfocApp.motor.feedback.flux_output.valid = true;
     tMfocApp.motor.feedback.flux_output.angle.wBam32 = 0xA0000000U;
 #endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    tMfocApp.motor.feedback.ekf_output.valid = true;
+    tMfocApp.motor.feedback.ekf_output.angle.wBam32 = 0x50000000U;
+#endif
     mfoc_debug_WaveformStep();
     mfoc_debug_CaptureWaveform();
     assert(*s_values[0] == 0.25f && *s_values[3] == 0.02f);
-#if MFOC_FEEDBACK_ENABLE_FLUX
+#if MFOC_FEEDBACK_ENABLE_EKF
+    assert(*s_values[1] == 0.3125f && *s_values[2] == 0.0625f);
+    tMfocApp.motor.feedback.ekf_output.valid = false;
+    mfoc_debug_CaptureWaveform();
+    assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
+    tMfocApp.motor.feedback.ekf_output.valid = true;
+#elif MFOC_FEEDBACK_ENABLE_FLUX
     assert(*s_values[1] == 0.625f && *s_values[2] == 0.375f);
     tMfocApp.motor.feedback.flux_output.valid = false;
     mfoc_debug_CaptureWaveform();

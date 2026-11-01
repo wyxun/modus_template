@@ -12,6 +12,7 @@
 #include "mfoc_smo.h"
 #include "mfoc_hfi.h"
 #include "mfoc_flux.h"
+#include "mfoc_ekf.h"
 
 #if MFOC_FEEDBACK_ENABLE_ENCODER != 0 && MFOC_FEEDBACK_ENABLE_ENCODER != 1
 #error "MFOC_FEEDBACK_ENABLE_ENCODER must be 0 or 1"
@@ -20,7 +21,8 @@
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_ENCODER &&                           \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO &&                             \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI &&                               \
-    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX &&                              \
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_EKF
 #error "MFOC_FEEDBACK_BACKEND must select an implemented position algorithm"
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER &&                           \
@@ -42,12 +44,21 @@
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX && !MFOC_FEEDBACK_ENABLE_FLUX
 #error "The selected Flux output requires MFOC_FEEDBACK_ENABLE_FLUX"
 #endif
+#if MFOC_FEEDBACK_ENABLE_EKF != 0 && MFOC_FEEDBACK_ENABLE_EKF != 1
+#error "MFOC_FEEDBACK_ENABLE_EKF must be 0 or 1"
+#endif
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_EKF && !MFOC_FEEDBACK_ENABLE_EKF
+#error "The selected EKF output requires MFOC_FEEDBACK_ENABLE_EKF"
+#endif
 
 /** @brief Independent algorithm settings; enable flags control execution. */
 typedef struct {
     mfoc_encoder_cfg_t encoder;
     mfoc_smo_cfg_t smo;
     mfoc_flux_cfg_t flux;
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_ekf_cfg_t ekf;
+#endif
 } mfoc_feedback_cfg_t;
 
 /** @brief Borrowed samples and prior interval values for one Step. */
@@ -88,6 +99,11 @@ typedef struct {
     mfoc_flux_t flux;
     mfoc_flux_cfg_t flux_cfg; /**< Retained for stopped model updates. */
     mfoc_flux_output_t flux_output;
+#endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_ekf_t ekf;
+    mfoc_ekf_cfg_t ekf_cfg; /**< Retained for stopped model updates. */
+    mfoc_ekf_output_t ekf_output;
 #endif
     bool initialized;
 } mfoc_feedback_t;

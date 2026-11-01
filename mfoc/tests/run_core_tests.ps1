@@ -4,10 +4,11 @@ param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
     'hfi_motor'),
     [ValidateSet(0, 1)][int]$Hfi = 1,
     [ValidateSet(0, 1)][int]$Identify = 0,
-    [ValidateSet(1, 2, 4)][int]$Backend = 1)
+    [ValidateSet(1, 2, 4, 5)][int]$Backend = 1)
 $ErrorActionPreference = 'Stop'
 $smo = if ($Backend -eq 2) { 1 } else { 0 }
 $flux = if ($Backend -eq 4) { 1 } else { 0 }
+$ekf = if ($Backend -eq 5) { 1 } else { 0 }
 $library = Split-Path -Parent $PSScriptRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-core-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
@@ -15,7 +16,11 @@ $sources = @(Get-ChildItem "$library/base/src/*.c", "$library/core/src/*.c",
     "$library/motor/src/*.c", "$library/identification/src/*.c" |
     Where-Object { $_.Name -notin @('mfoc_feedback.c', 'mfoc_motor_irq.c') } |
     ForEach-Object { $_.FullName }) + @("$library/position/src/mfoc_hfi.c")
-foreach ($numeric in @('FLOAT', 'FIXED')) {
+$numerics = if ($Backend -eq 5) { @('FLOAT') } else { @('FLOAT', 'FIXED') }
+if ($Backend -eq 5) {
+    Write-Output 'EKF backend is FLOAT only; rejection tested by run_ekf_tests.ps1'
+}
+foreach ($numeric in $numerics) {
   foreach ($test in $Tests) {
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
@@ -31,6 +36,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_FEEDBACK_BACKEND=$Backend" `
         "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
+        "-DMFOC_FEEDBACK_ENABLE_EKF=$ekf" `
         "-DMFOC_IDENTIFICATION_ENABLE=$identify" `
         -D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1 `
         @irqArguments `

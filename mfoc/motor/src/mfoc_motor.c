@@ -400,7 +400,8 @@ mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
 {
 #if MFOC_FEEDBACK_ENABLE_HFI || \
     (MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO && \
-     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX)
+     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX &&                             \
+     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_EKF)
     (void)motor;
     (void)speed;
     (void)current;
@@ -495,7 +496,8 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor,
         return MFOC_RESULT_OUT_OF_RANGE;
     }
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO || \
-    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX ||                              \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_EKF
     if (motor->state == MFOC_MOTOR_RUNNING &&
         (mfoc_abs(ref) < MFOC_SCALAR(MFOC_START_MIN_SPEED_PU) ||
          (ref > MFOC_ZERO) != (motor->speed_ref > MFOC_ZERO))) {

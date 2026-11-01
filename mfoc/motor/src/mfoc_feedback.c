@@ -38,6 +38,11 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
     next.flux_cfg = cfg->flux;
 #endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_result_t ekf_rc = mfoc_ekf_Init(&next.ekf, &cfg->ekf, model);
+    if (ekf_rc != MFOC_RESULT_OK) { return ekf_rc; }
+    next.ekf_cfg = cfg->ekf;
+#endif
     next.initialized = true;
     *feedback = next;
     return MFOC_RESULT_OK;
@@ -74,6 +79,11 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     mfoc_result_t flux_rc = mfoc_flux_Init(&flux, &feedback->flux_cfg, model);
     if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
 #endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_ekf_t ekf = {0};
+    mfoc_result_t ekf_rc = mfoc_ekf_Init(&ekf, &feedback->ekf_cfg, model);
+    if (ekf_rc != MFOC_RESULT_OK) { return ekf_rc; }
+#endif
     /* Commit only after every enabled model has accepted the parameters. */
 #if MFOC_FEEDBACK_ENABLE_SMO
     feedback->smo = smo;
@@ -83,6 +93,10 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
 #if MFOC_FEEDBACK_ENABLE_FLUX
     feedback->flux = flux;
     feedback->flux_output = (mfoc_flux_output_t){0};
+#endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    feedback->ekf = ekf;
+    feedback->ekf_output = (mfoc_ekf_output_t){0};
 #endif
     return MFOC_RESULT_OK;
 }
@@ -147,7 +161,7 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     (void)feedback;
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI ||                     \
-    MFOC_FEEDBACK_ENABLE_FLUX
+    MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_EKF
     mfoc_ab_t voltage = {0};
     mfoc_result_t voltage_status = MFOC_RESULT_INVALID_STATE;
     bool has_current = input != NULL && input->i_ab_k != NULL;
@@ -188,6 +202,15 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
         feedback->flux_output = (mfoc_flux_output_t){0};
     }
 #endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    if (voltage_status == MFOC_RESULT_OK) {
+        mfoc_ekf_Step(&feedback->ekf, input->i_ab_k, &voltage,
+                       &feedback->ekf_output);
+    } else {
+        mfoc_ekf_Reset(&feedback->ekf);
+        feedback->ekf_output = (mfoc_ekf_output_t){0};
+    }
+#endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
     if (feedback->encoder_status != MFOC_RESULT_OK) {
         return feedback->encoder_status;
@@ -211,6 +234,11 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     if (!feedback->flux_output.valid) { return MFOC_RESULT_INVALID_STATE; }
     next.angle = feedback->flux_output.angle;
     next.speed = feedback->flux_output.speed;
+#elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_EKF
+    if (voltage_status != MFOC_RESULT_OK) { return voltage_status; }
+    if (!feedback->ekf_output.valid) { return MFOC_RESULT_INVALID_STATE; }
+    next.angle = feedback->ekf_output.angle;
+    next.speed = feedback->ekf_output.speed;
 #else
     return MFOC_RESULT_INVALID_STATE;
 #endif

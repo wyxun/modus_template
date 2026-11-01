@@ -419,6 +419,16 @@ int mbase_Init(modus_base_t *base, modus_base_cfg_t *cfg)
  * @return Zero on success. */
 int main(void)
 {
+#if MFOC_FEEDBACK_ENABLE_EKF
+    assert(tMfocAppCfg.motor.feedback.ekf.sample_hz == 20000U);
+    assert(tMfocAppCfg.motor.feedback.ekf.speed_base_hz ==
+        MFOC_MOTOR_BASE_ELECTRICAL_HZ);
+    const mfoc_ekf_cfg_t *ekf = &tMfocAppCfg.motor.feedback.ekf;
+    assert(ekf->r[0] > 0.0f && ekf->r[0] * ekf->r[2] >
+        ekf->r[1] * ekf->r[1]);
+    assert(ekf->min_speed > 0.0f && ekf->max_angle_var > 0.0f);
+#endif
+
     mfoc_app_t app = {0};
     mfoc_app_cfg_t cfg = {0};
     assert(mfoc_app_Init(0U, (uintptr_t)&cfg) == MODUS_EFAIL);

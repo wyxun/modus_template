@@ -53,8 +53,13 @@ void mfoc_debug_CaptureWaveform(void)
         s_waveform[MFOC_DEBUG_IQ] =
             mfoc_to_float(motor->previous_core_output.i.qQ);
     }
-#if MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_SMO
-#if MFOC_FEEDBACK_ENABLE_FLUX
+#if MFOC_FEEDBACK_ENABLE_EKF || MFOC_FEEDBACK_ENABLE_FLUX || \
+    MFOC_FEEDBACK_ENABLE_SMO
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_angle_t observer_angle = motor->feedback.ekf_output.angle;
+    bool observer_available = !motor->hold_active &&
+        motor->previous_core_output_valid && motor->feedback.ekf_output.valid;
+#elif MFOC_FEEDBACK_ENABLE_FLUX
     mfoc_angle_t observer_angle = motor->feedback.flux_output.angle;
     bool observer_available = !motor->hold_active &&
         motor->previous_core_output_valid && motor->feedback.flux_output.valid;
@@ -77,7 +82,8 @@ void mfoc_debug_CaptureWaveform(void)
     if (rc != MFOC_RESULT_OK) { return; }
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] =
         mfoc_angle_to_turns(encoder_angle);
-#if MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_SMO
+#if MFOC_FEEDBACK_ENABLE_EKF || MFOC_FEEDBACK_ENABLE_FLUX || \
+    MFOC_FEEDBACK_ENABLE_SMO
     if (observer_available) {
         s_waveform[MFOC_DEBUG_ANGLE_ERROR] = mfoc_to_float(
             mfoc_angle_diff(observer_angle, encoder_angle));
@@ -92,6 +98,8 @@ void mfoc_debug_WaveformInit(void)
     static const char *const names[MFOC_DEBUG_CHANNEL_COUNT] = {
 #if MFOC_DEBUG_HFI_WAVEFORM
         "DiA_pu", "DiB_pu", "DuA_pu", "DuB_pu"};
+#elif MFOC_FEEDBACK_ENABLE_EKF
+        "Enc_mT", "EKF_mT", "Err_mT", "Iq_mpu"};
 #elif MFOC_FEEDBACK_ENABLE_FLUX
         "Enc_mT", "Flux_mT", "Err_mT", "Iq_mpu"};
 #elif MFOC_FEEDBACK_ENABLE_SMO

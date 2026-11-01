@@ -71,6 +71,13 @@ static void handover(int sign)
     assert(motor.sensorless_start.state == MFOC_SENSORLESS_START_NONE);
     assert(motor.mode == MFOC_MOTOR_MODE_SPEED);
     assert(motor.openloop.angle.wBam32 == forced.wBam32);
+    mfoc_scalar_t saved_speed = motor.speed_ref;
+    assert(mfoc_motor_SetSpeed(&motor, MFOC_ZERO) ==
+        MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_motor_SetSpeed(&motor, -saved_speed) ==
+        MFOC_RESULT_OUT_OF_RANGE);
+    assert(motor.speed_ref == saved_speed);
+    assert(mfoc_motor_SetSpeed(&motor, saved_speed) == MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
 }
 
