@@ -1,7 +1,7 @@
 /**
  * @file mfoc_openloop.h
  * @brief Fixed or ramped electrical angle without current or timer ownership.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #ifndef MFOC_OPENLOOP_H

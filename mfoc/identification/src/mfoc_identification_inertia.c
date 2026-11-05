@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification_inertia.c
  * @brief inertia identification leaf; algorithm remains TODO.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #include "mfoc_identification_algorithms.h"

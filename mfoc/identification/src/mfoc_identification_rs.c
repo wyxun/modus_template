@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification_rs.c
  * @brief Fixed-voltage current capture and foreground resistance slope.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-25
  */
 #include "mfoc_identification_algorithms.h"

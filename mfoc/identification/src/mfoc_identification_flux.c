@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification_flux.c
  * @brief Steady rotor-dq flux capture and foreground voltage-model estimate.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-27
  */
 #include "mfoc_identification_algorithms.h"

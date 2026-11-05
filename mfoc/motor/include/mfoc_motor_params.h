@@ -1,7 +1,7 @@
 /**
  * @file mfoc_motor_params.h
  * @brief Shared motor constants on fixed per-unit bases.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #ifndef MFOC_MOTOR_PARAMS_H

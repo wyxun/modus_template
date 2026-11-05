@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification_inductance.c
  * @brief Standstill pulse capture and foreground inductance integration.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-26
  */
 #include "mfoc_identification_algorithms.h"

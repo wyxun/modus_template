@@ -1,7 +1,7 @@
 /**
  * @file mfoc_core.c
  * @brief Current control in fixed voltage/current base units.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-20
  */
 #include "mfoc_core.h"
@@ -132,7 +132,7 @@ void mfoc_core_Step(mfoc_core_t *c,
     mfoc_park_cached(&in->i, sin_theta, cos_theta, &out->i);
     mfoc_pi_Step(&c->d, in->ref.qD, out->i.qD, &u.qD);
     mfoc_pi_Step(&c->q, in->ref.qQ, out->i.qQ, &u.qQ);
-    // 仅在HFI状态不为零情况下有用
+    // The injection vector is zero when HFI is inactive.
     if (in->u_inject_ab.qAlpha != MFOC_ZERO ||
         in->u_inject_ab.qBeta != MFOC_ZERO) {
         mfoc_dq_t injection = {0};

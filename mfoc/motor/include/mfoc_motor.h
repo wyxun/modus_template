@@ -1,7 +1,7 @@
 /**
  * @file mfoc_motor.h
  * @brief Motor-owned per-unit parameters and current-control state.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-20
  */
 #ifndef MFOC_MOTOR_H
@@ -58,8 +58,9 @@ typedef struct {
 
 /** @brief Initialization input; not retained as a second runtime copy.
  * Motor and Core must share the same fixed Ib/Vb bases.
- * speed_divider=0 disables speed mode; N>0 enables it, with
- * ki_ts=Ki*N*current_period and output bounds inside +/-i_max.
+ * speed_divider=0 disables speed mode; otherwise pass MFOC_SPEED_LOOP_DIVIDER
+ * (MFOC_MOTOR_RUN_FREQ_HZ / MFOC_SPEED_RUN_FREQ_HZ). ki_ts is Ki times the
+ * speed period, and output bounds must stay inside +/-i_max.
  * speed_max is required when speed PI or OpenLoop is enabled. */
 typedef struct {
     mfoc_motor_params_t params;
@@ -67,7 +68,7 @@ typedef struct {
     mfoc_core_params_t core;
     mfoc_feedback_cfg_t feedback;
     mfoc_pi_params_t speed;
-    uint16_t speed_divider; /* 0: current mode; N: speed PI every N Steps. */
+    uint16_t speed_divider; /* 0: current mode; MFOC_SPEED_LOOP_DIVIDER: speed. */
     mfoc_openloop_cfg_t openloop; /* sample_hz=0 disables forced startup. */
 } mfoc_motor_cfg_t;
 

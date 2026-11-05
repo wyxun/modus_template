@@ -1,7 +1,7 @@
 /**
  * @file mfoc_openloop.c
  * @brief Init-time conversion and integer-only forced-angle stepping.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #include "mfoc_openloop.h"
@@ -24,7 +24,7 @@ mfoc_result_t mfoc_openloop_Init(mfoc_openloop_t *loop,
     if (gain == 0U || gain > (uint64_t)(INT32_MAX / 2)) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    int64_t step = (int64_t)cfg->accel * (int64_t)gain /
+    int64_t step = (int64_t)cfg->accel * (int64_t)gain/
         (int64_t)cfg->sample_hz / MFOC_Q_SCALE;
     if (step <= 0 || step > (int64_t)gain) {
         return MFOC_RESULT_OUT_OF_RANGE;

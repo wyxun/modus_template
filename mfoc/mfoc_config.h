@@ -1,7 +1,7 @@
 /**
  * @file mfoc_config.h
  * @brief User-configurable compile-time settings shared by mfoc modules.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #ifndef MFOC_CONFIG_H
@@ -13,9 +13,52 @@
 #define MFOC_CORE_M_MAX 0.55f
 #endif
 
-/* G431 perfc clock: 170 MHz; 50 us = 8500 ticks. Adjust with timer clock. */
+/** @brief Control-interrupt rate in Hz: current loop, sampling and dq control.
+ * Every module that converts time into sample counts derives it from here.
+ * It must match the target's PWM/ADC trigger setup. */
+#ifndef MFOC_MOTOR_RUN_FREQ_HZ
+#define MFOC_MOTOR_RUN_FREQ_HZ 20000U
+#endif
+
+/** @brief Speed-loop rate in Hz; 0 compiles the speed mode out.
+ * Independent of the control rate: the framework derives how many control
+ * steps make one speed update, the ratio itself is the user's choice. */
+#ifndef MFOC_SPEED_RUN_FREQ_HZ
+#define MFOC_SPEED_RUN_FREQ_HZ 1000U
+#endif
+
+#if MFOC_MOTOR_RUN_FREQ_HZ == 0U
+#error "MFOC_MOTOR_RUN_FREQ_HZ must be positive"
+#endif
+#if MFOC_SPEED_RUN_FREQ_HZ > MFOC_MOTOR_RUN_FREQ_HZ
+#error "The speed loop cannot run faster than the current loop"
+#endif
+#if MFOC_SPEED_RUN_FREQ_HZ != 0U &&                                        \
+    (MFOC_MOTOR_RUN_FREQ_HZ % MFOC_SPEED_RUN_FREQ_HZ) != 0U
+#error "MFOC_MOTOR_RUN_FREQ_HZ must be an integer multiple of the speed rate"
+#endif
+
+/** @brief One control period, truncated microseconds. */
+#define MFOC_MOTOR_RUN_PERIOD_US (1000000U / MFOC_MOTOR_RUN_FREQ_HZ)
+#if MFOC_SPEED_RUN_FREQ_HZ == 0U
+/** @brief Control steps per speed update; 0 disables the speed mode. */
+#define MFOC_SPEED_LOOP_DIVIDER 0U
+/** @brief Speed-loop period; zero when the speed mode is compiled out. */
+#define MFOC_SPEED_RUN_PERIOD_US 0U
+#else
+#define MFOC_SPEED_LOOP_DIVIDER \
+    (MFOC_MOTOR_RUN_FREQ_HZ / MFOC_SPEED_RUN_FREQ_HZ)
+/** @brief One speed-loop period, truncated microseconds. */
+#define MFOC_SPEED_RUN_PERIOD_US (1000000U / MFOC_SPEED_RUN_FREQ_HZ)
+#endif
+
+/* perfc source clock; keep it equal to the port's tick source. The ISR
+ * budget defaults to one full control period in these ticks. */
+#ifndef MFOC_PERFC_HZ
+#define MFOC_PERFC_HZ 170000000U
+#endif
 #ifndef MFOC_ISR_BUDGET_TICKS
-#define MFOC_ISR_BUDGET_TICKS 8500U
+#define MFOC_ISR_BUDGET_TICKS (MFOC_PERFC_HZ / MFOC_MOTOR_RUN_FREQ_HZ)
 #endif
 
 /* Enable ISR timing counters and reports only in builds that need them. */
@@ -23,7 +66,7 @@
 #define MFOC_ISR_MEASURE 0
 #endif
 
-/* Compile Motor's identification flow only when explicitly enabled. */
+/* Compile Motor's identification float w only when explicitly enabled. */
 #ifndef MFOC_IDENTIFICATION_ENABLE
 #define MFOC_IDENTIFICATION_ENABLE 0
 #endif
@@ -56,7 +99,7 @@
 #define MFOC_FEEDBACK_ENABLE_ENCODER 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
-#define MFOC_FEEDBACK_ENABLE_SMO 0
+#define MFOC_FEEDBACK_ENABLE_SMO 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_HFI
 /* Enabling HFI permits real voltage injection during Feedback Step. */
@@ -64,15 +107,16 @@
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_FLUX
 /* Requires confirmed motor flux and configured observer/PLL gains. */
-#define MFOC_FEEDBACK_ENABLE_FLUX 1
+#define MFOC_FEEDBACK_ENABLE_FLUX 0
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_EKF
 /* FLOAT only; start with encoder control and EKF shadow observation. */
 #define MFOC_FEEDBACK_ENABLE_EKF 0
 #endif
 /* Experimental initial values, NOT measured board noise or validated tuning.
- * Q: per-step variances [ia, ib, speed PU, angle turns] at 20 kHz.
- * R: current PU squared [aa, ab, bb]. P0: initial diagonal covariance.
+ * Q: per-control-step variances [ia, ib, speed PU, angle turns]; a per-step
+ * variance scales with 1/MFOC_MOTOR_RUN_FREQ_HZ, so re-derive it after a rate
+ * change. R: current PU squared [aa, ab, bb]. P0: initial diagonal covariance.
  * Re-estimate R from raw current data before accepting sensorless control. */
 #ifndef MFOC_EKF_Q
 #define MFOC_EKF_Q {1e-6f, 1e-6f, 1e-7f, 1e-8f}
@@ -105,7 +149,7 @@
 #endif
 /* Algorithms run independently of the selected control output. */
 #ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_ENCODER
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_SMO
 #endif
 
 #endif

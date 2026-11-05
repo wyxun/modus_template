@@ -1,7 +1,7 @@
 /**
  * @file mfoc_smo.h
  * @brief Equal-inductance SMO with a current-error boundary layer.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #ifndef MFOC_SMO_H

@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification_algorithms.h
  * @brief Typed leaf inputs and control requests for motor identification.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #ifndef MFOC_IDENTIFICATION_ALGORITHMS_H
@@ -12,10 +12,9 @@
 #include "perf_counter.h"
 
 /* Must match control sampling and the shared electrical speed PU base.
- * Timing stays constant across a run; no period is copied in every sample. */
-#ifndef MFOC_IDENTIFICATION_SAMPLE_HZ
-#define MFOC_IDENTIFICATION_SAMPLE_HZ 20000U
-#endif
+ * Identification consumes one sample per control interrupt, so the rate is
+ * the current-loop rate and is not an independent setting. */
+#define MFOC_IDENTIFICATION_SAMPLE_HZ MFOC_MOTOR_RUN_FREQ_HZ
 #define MFOC_IDENTIFICATION_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
 
 /** @brief Stage control flags; inactive uses normal Motor control. */

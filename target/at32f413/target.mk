@@ -7,9 +7,8 @@
 CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 
 # Chip preprocessor defines
-C_DEFS += -DAT32F413RCT7 -DUSE_STDPERIPH_DRIVER -DFOC_SUPPORT=1                 \
-    -DAT_MOTOR_EVB_V1 -DCORE_DEBUG_OVERRIDE_FAULT_HANDLER                       \
-    -DFOC_CURRENT_COUNTS_PER_BASE=2048U -DFOC_CURRENT_SAMPLE_INVERTED=0
+C_DEFS += -DAT32F413RCT7 -DUSE_STDPERIPH_DRIVER                                \
+    -DAT_MOTOR_EVB_V1 -DCORE_DEBUG_OVERRIDE_FAULT_HANDLER
 
 # CMSIS / peripheral library paths
 CHIPLIB_ROOT = vendor/cortex-m/AT32F413_Firmware_Library/libraries
@@ -105,9 +104,6 @@ ifeq ($(USE_DRV_PWC),1)
 endif
 
 CHIP_SOURCES = $(DRV_SOURCES)
-
-# FOC framework — AT32F413 supports FOC
-include foc/foc.mk
 
 # OpenOCD (AT32 custom v0.11 — same as at32f421)
 OPENOCD_BIN     = $(SW_ROOT)/msys64/mingw64/bin/openocd-at32.exe

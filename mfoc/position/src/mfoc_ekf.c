@@ -1,7 +1,7 @@
 /**
  * @file mfoc_ekf.c
  * @brief Sparse PMSM EKF prediction and whitened scalar Joseph updates.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-31
  */
 #include "mfoc_ekf.h"
@@ -109,9 +109,9 @@ static void _mfoc_ekf_Predict(mfoc_ekf_t *ekf, const mfoc_ab_t *u)
         p[7] + c->q[2], c->kt * p[7] + p[8],
         c->kt * (c->kt * p[7] + p[8]) + c->kt * p[8] + p[9] + c->q[3],
     };
-    ekf->i_hat.qAlpha = c->ki * ekf->i_hat.qAlpha + c->ku * u->qAlpha +
+    ekf->i_hat.qAlpha = c->ki * ekf->i_hat.qAlpha + c->ku * u->qAlpha+
         c->ke * ekf->speed * sine;
-    ekf->i_hat.qBeta = c->ki * ekf->i_hat.qBeta + c->ku * u->qBeta -
+    ekf->i_hat.qBeta = c->ki * ekf->i_hat.qBeta + c->ku * u->qBeta-
         c->ke * ekf->speed * cosine;
     ekf->angle = mfoc_angle_add_scalar(ekf->angle, c->kt * ekf->speed);
     for (unsigned n = 0U; n < 10U; ++n) { ekf->p[n] = predicted[n]; }
@@ -127,7 +127,7 @@ static bool _mfoc_ekf_Correct(mfoc_ekf_t *ekf, const mfoc_ab_t *i, bool beta)
     float h0 = beta ? -ekf->c.rho : 1.0f;
     float h1 = beta ? 1.0f : 0.0f;
     float r = beta ? ekf->c.r2 : ekf->c.r1;
-    float z = beta ? i->qBeta - ekf->c.rho * i->qAlpha : i->qAlpha;
+    float z = beta ? i->qBeta - ekf->c.rho * i->qAlpha: i->qAlpha;
     float residual = z - (h0 * ekf->i_hat.qAlpha + h1 * ekf->i_hat.qBeta);
     float k[4] = {0};
     float b[4][2] = {{0}};

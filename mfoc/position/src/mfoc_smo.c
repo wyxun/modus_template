@@ -1,7 +1,7 @@
 /**
  * @file mfoc_smo.c
  * @brief PU SMO recurrence retained from foc_smo, with init-only conversion.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-23
  */
 #include "mfoc_smo.h"
@@ -47,7 +47,9 @@ mfoc_result_t mfoc_smo_Init(mfoc_smo_t *smo, const mfoc_smo_cfg_t *cfg,
     mfoc_smo_t next = {0};
     uint32_t span = (cfg->sample_hz + 500U) / 1000U;
     if (span == 0U) { span = 1U; }
-    if (span > 32U) { span = 32U; }
+    /* Keep the speed window at its intended 1 ms up to 127 kHz instead of
+     * truncating it above 32 kHz; the angle sum still fits the Q15 carrier. */
+    if (span > 127U) { span = 127U; }
     next.c.speed_span = (uint8_t)span;
 #if defined(MFOC_NUMERIC_FIXED)
     int64_t fs = (int64_t)cfg->sample_hz;

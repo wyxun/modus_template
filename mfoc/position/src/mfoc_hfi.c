@@ -1,7 +1,7 @@
 /**
  * @file mfoc_hfi.c
  * @brief Two-interval vector holds and second-increment HFI demodulation.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #include "mfoc_hfi.h"
@@ -70,19 +70,19 @@ static bool _mfoc_hfi_Axis(const mfoc_hfi_t *hfi, mfoc_angle_t *axis)
 {
     const mfoc_ab_t *i = hfi->delta_i;
     const mfoc_ab_t *u = hfi->delta_u;
-    mfoc_hfi_product_t det = (mfoc_hfi_product_t)u[0].qAlpha * u[1].qBeta -
+    mfoc_hfi_product_t det = (mfoc_hfi_product_t)u[0].qAlpha * u[1].qBeta-
         (mfoc_hfi_product_t)u[1].qAlpha * u[0].qBeta;
     mfoc_scalar_t response = mfoc_abs(i[0].qAlpha) + mfoc_abs(i[0].qBeta) +
         mfoc_abs(i[1].qAlpha) + mfoc_abs(i[1].qBeta);
     if (det < (mfoc_hfi_product_t)MFOC_HFI_VOLTAGE * MFOC_HFI_VOLTAGE ||
         response < MFOC_HFI_RESPONSE_MIN) { return false; }
-    mfoc_hfi_product_t aa = (mfoc_hfi_product_t)i[0].qAlpha * u[1].qBeta -
+    mfoc_hfi_product_t aa = (mfoc_hfi_product_t)i[0].qAlpha * u[1].qBeta-
         (mfoc_hfi_product_t)i[1].qAlpha * u[0].qBeta;
-    mfoc_hfi_product_t bb = (mfoc_hfi_product_t)i[1].qBeta * u[0].qAlpha -
+    mfoc_hfi_product_t bb = (mfoc_hfi_product_t)i[1].qBeta * u[0].qAlpha-
         (mfoc_hfi_product_t)i[0].qBeta * u[1].qAlpha;
-    mfoc_hfi_product_t ab = (mfoc_hfi_product_t)i[1].qAlpha * u[0].qAlpha -
+    mfoc_hfi_product_t ab = (mfoc_hfi_product_t)i[1].qAlpha * u[0].qAlpha-
         (mfoc_hfi_product_t)i[0].qAlpha * u[1].qAlpha;
-    mfoc_hfi_product_t ba = (mfoc_hfi_product_t)i[0].qBeta * u[1].qBeta -
+    mfoc_hfi_product_t ba = (mfoc_hfi_product_t)i[0].qBeta * u[1].qBeta-
         (mfoc_hfi_product_t)i[1].qBeta * u[0].qBeta;
     mfoc_hfi_product_t x = (aa - bb) * MFOC_HFI_SALIENCY_SIGN;
     mfoc_hfi_product_t y = (ab + ba) * MFOC_HFI_SALIENCY_SIGN;

@@ -15,7 +15,6 @@
 #include "halcomp.h"
 #include "haltim1.h"
 #include "halledgpio.h"
-#include "halcordic.h"
 
 #define G431_BOARD_UART_BAUDRATE 115200U
 
@@ -152,14 +151,13 @@ void SystemClock_Config(void)
 
 /* --------------------------------------------------------------------------
  *  peripheral_Init — main() 最先调用的底层初始化入口
- *  初始化顺序：GPIO → CORDIC → DAC → OPAMP → COMP → TIM1 → ADC
+ *  初始化顺序：GPIO → DAC → OPAMP → COMP → TIM1 → ADC
  * -------------------------------------------------------------------------- */
 void peripheral_Init(void)
 {
     HAL_Init();
     SystemClock_Config();
     halledgpio_Init();
-    hal_cordic_Init();
 
     haldac_Init();
     halopamp_Init();

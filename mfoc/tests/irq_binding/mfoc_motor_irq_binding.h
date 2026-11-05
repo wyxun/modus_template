@@ -1,7 +1,7 @@
 /**
  * @file mfoc_motor_irq_binding.h
  * @brief Test-only direct IRQ bindings, without MCU registers.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-21
  */
 #ifndef MFOC_TEST_MOTOR_IRQ_BINDING_H

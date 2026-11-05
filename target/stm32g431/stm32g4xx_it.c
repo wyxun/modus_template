@@ -3,7 +3,7 @@
  * @brief  Interrupt handlers (STM32G431)
  *
  * SysTick_Handler → perf_counter + MODUS/MDI 1 ms clock.
- * ADC1_2: MFOC polling build leaves IRQ unused; legacy uses FOC Step.
+ * ADC1_2 is unused by the MFOC polling build.
  * USART / FDCAN / TIM1 break handlers active; other peripherals are stubs.
  */
 
@@ -11,9 +11,6 @@
 #include "perf_counter.h"
 #include "halfdcan.h"
 #include "mdebug_cm.h"
-#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
-#include "foc_app.h"
-#endif
 #include "haltim1.h"
 #include "mdi/instance.h"
 #include "mdi/service.h"
@@ -75,25 +72,6 @@ void TIM1_TRG_COM_TIM17_IRQHandler(void)    {}
 void TIM1_CC_IRQHandler(void)               {}
 
 /* ---- ADC1_2 (current sensing end-of-conversion) ---- */
-#if !defined(MFOC_APP_ENABLED) || !MFOC_APP_ENABLED
-void ADC1_2_IRQHandler(void)
-{
-    if (MDI_Sample_IsReady(phase_current_completed)) {
-        g_bG431JeosConsumed = false;
-        /*
-         * MDI's completed-frame provider owns the JEOS acknowledgement when
-         * the FOC cycle consumes the frame.  Calling FOC before clearing the
-         * flag is required: MDI_Sample_ReadCompleted() uses JEOS as the
-         * completion boundary and returns MDI_BUSY after an early clear.
-         * If the application is not ready yet, the cleanup below still
-         * acknowledges the pending conversion.
-         */
-        foc_app_HighFrequencyISR();
-
-        mdi_g431_ack_unconsumed_current_frame();
-    }
-}
-#endif
 
 /* ---- Stubs ---- */
 void WWDG_IRQHandler(void)                  {}
@@ -157,5 +135,4 @@ void I2C3_EV_IRQHandler(void)               {}
 void I2C3_ER_IRQHandler(void)               {}
 void DMAMUX_OVR_IRQHandler(void)            {}
 void DMA2_Channel6_IRQHandler(void)         {}
-void CORDIC_IRQHandler(void)                {}
 void FMAC_IRQHandler(void)                  {}

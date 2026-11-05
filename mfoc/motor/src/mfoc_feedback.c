@@ -1,7 +1,7 @@
 /**
  * @file mfoc_feedback.c
  * @brief Compile-time position selection and foreground/ISR dispatch.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-21
  */
 #include "mfoc_feedback.h"

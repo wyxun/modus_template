@@ -1,7 +1,7 @@
 /**
  * @file mfoc_motor.c
  * @brief Motor lifecycle and current-loop control.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-20
  */
 #include "mfoc_motor.h"
@@ -231,7 +231,7 @@ mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
 {
     if (motor == NULL || ref == NULL) { return MFOC_RESULT_NULL; }
 
-    // 允许在空闲或者电流模式下进行控制
+    // Control is allowed while idle or in current mode.
     if (motor->hold_active || motor->openloop_active ||
         motor->sensorless_start.state != MFOC_SENSORLESS_START_NONE ||
         (motor->state != MFOC_MOTOR_IDLE &&

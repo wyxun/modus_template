@@ -7,6 +7,7 @@
 #include "mfoc_app.h"
 #include "mfoc_debug.h"
 #include "mfoc_numeric.h"
+#include "mfoc_config.h"
 #include "mfoc_motor_config.h"
 #include "mfoc_port.h"
 #include "mdebug/mshell.h"
@@ -97,14 +98,16 @@ int mfoc_app_Run(uintptr_t object)
 
 /* Motor data and PU bases come from the 2804 datasheet in motor_config.
  * Ld/Lq share its phase inductance; encoder zero/direction need validation.
- * Inherited PI gains are starting values, not validated bench tuning. */
+ * Inherited PI gains are starting values, not validated bench tuning.
+ * ki_ts is Ki * T: re-derive it whenever MFOC_MOTOR_RUN_FREQ_HZ changes. */
 #define MFOC_APP_CURRENT_PI { \
     .kp = MFOC_SCALAR(0.472810f), \
     .ki_ts = MFOC_SCALAR(0.070097f), \
     .out_min = MFOC_SCALAR(-0.55f), .out_max = MFOC_SCALAR(0.55f), \
     .i_min = MFOC_SCALAR(-0.50f), .i_max = MFOC_SCALAR(0.50f)}
 
-/* Reuse the 1 kHz speed profile from motor_config.h on a 400 Hz base. */
+/* Reuse the 1 kHz speed profile from motor_config.h on a 400 Hz base.
+ * ki_ts is Ki / MFOC_SPEED_RUN_FREQ_HZ: re-derive it if that rate changes. */
 #define MFOC_APP_SPEED_PI { \
     .kp = MFOC_SCALAR(0.6489304f), \
     .ki_ts = MFOC_SCALAR(0.010193372f), \
@@ -135,13 +138,13 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .speed_filter_alpha = MFOC_SCALAR(0.25f),
             .sample_period_us = 1000U, .timeout_ms = 20U,
         }, .smo = {
-            .sample_hz = 20000U,
+            .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
             .cutoff_rad_s = 4000U,
             .h = MFOC_SCALAR(5.0f / MFOC_MOTOR_BASE_VOLTAGE_VOLT),
             .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE,
         }, .flux = {
-            .sample_hz = 20000U,
+            .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
             .gain = MFOC_SCALAR(MFOC_FLUX_GAIN),
             .pll_kp = MFOC_SCALAR(MFOC_FLUX_PLL_KP),
@@ -149,7 +152,7 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
         },
 #if MFOC_FEEDBACK_ENABLE_EKF
         .ekf = {
-            .sample_hz = 20000U,
+            .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_MOTOR_BASE_ELECTRICAL_HZ,
             .q = MFOC_EKF_Q, .r = MFOC_EKF_R, .p0 = MFOC_EKF_P0,
             .min_speed = MFOC_EKF_MIN_SPEED,
@@ -159,8 +162,8 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
 #endif
         },
         .speed = MFOC_APP_SPEED_PI,
-        .speed_divider = 20U,
-        .openloop = {20000U,
+        .speed_divider = MFOC_SPEED_LOOP_DIVIDER,
+        .openloop = {MFOC_MOTOR_RUN_FREQ_HZ,
             MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
             MFOC_SCALAR(0.2f)},
     },

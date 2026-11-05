@@ -1,7 +1,7 @@
 /**
  * @file mfoc_encoder.h
  * @brief Foreground encoder sampling and ISR electrical feedback.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-21
  */
 #ifndef MFOC_ENCODER_H

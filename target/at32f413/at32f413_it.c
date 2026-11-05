@@ -12,7 +12,6 @@
 #include "at32f413.h"
 #include "perf_counter.h"
 #include "mdebug_cm.h"
-#include "foc_app.h"
 
 /* Exported by main.c */
 extern void modus_Clock(void);
@@ -67,18 +66,6 @@ void TMR1_OVF_TMR10_IRQHandler(void)
 
 void TMR1_TRG_HALL_TMR11_IRQHandler(void) {}
 void TMR1_CH_IRQHandler(void)              {}
-
-/* ---- ADC1_2 (current sensing end-of-conversion) ---- */
-void ADC1_2_IRQHandler(void)
-{
-    if (adc_flag_get(ADC1, ADC_PCCE_FLAG) != RESET) {
-        adc_flag_clear(ADC1, ADC_PCCE_FLAG);
-        /* FOC high-frequency control step: TMR1 CH4-triggered preempt
-         * conversion completes once per 20 kHz PWM carrier. This is the
-         * only call site of motor_HighFrequencyStep() (via the app). */
-        foc_app_HighFrequencyISR();
-    }
-}
 
 /* ---- Stubs ---- */
 void WWDT_IRQHandler(void)                  {}

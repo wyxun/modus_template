@@ -1,7 +1,7 @@
 /**
  * @file mfoc_feedback.h
  * @brief Independent position algorithms and control feedback selection.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-21
  */
 #ifndef MFOC_FEEDBACK_H

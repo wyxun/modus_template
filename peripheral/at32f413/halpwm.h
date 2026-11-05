@@ -4,8 +4,11 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-/* PWM frequency: 20kHz center-aligned, PCLK2 = 100MHz */
-#define PWM_FREQ_HZ           20000U
+#include "mfoc_config.h"
+
+/* PWM frequency: center-aligned, PCLK2 = 100MHz. Both the PWM and the ADC
+ * trigger follow the MFOC control rate, so it has a single source. */
+#define PWM_FREQ_HZ           MFOC_MOTOR_RUN_FREQ_HZ
 #define PWM_PERIOD            ((100000000U / PWM_FREQ_HZ / 2U) - 1U)  /* 2499 */
 #define HALF_PWM_PERIOD       (PWM_PERIOD / 2U)
 

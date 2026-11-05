@@ -1,7 +1,7 @@
 /**
  * @file mfoc_encoder.c
  * @brief Encoder delta-speed estimation and timestamp-based extrapolation.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-21
  */
 #include "mfoc_encoder.h"

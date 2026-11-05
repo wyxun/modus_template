@@ -1,7 +1,7 @@
 /**
  * @file mfoc_core.h
  * @brief Current PI, circular voltage limit and SVPWM.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-20
  */
 #ifndef MFOC_CORE_H

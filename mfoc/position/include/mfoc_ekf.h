@@ -1,7 +1,7 @@
 /**
  * @file mfoc_ekf.h
  * @brief FLOAT four-state equal-inductance PMSM extended Kalman filter.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-31
  */
 #ifndef MFOC_EKF_H

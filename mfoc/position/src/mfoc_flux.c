@@ -1,7 +1,7 @@
 /**
  * @file mfoc_flux.c
  * @brief Nonlinear PU flux observer and independent phase-locked loop.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-26
  */
 #include "mfoc_flux.h"

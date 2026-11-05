@@ -1,19 +1,21 @@
 /**
  * @file mfoc_hfi.h
  * @brief Orthogonal square-wave HFI with pulse-based magnetic polarity.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #ifndef MFOC_HFI_H
 #define MFOC_HFI_H
 #include "mfoc_angle.h"
+#include "mfoc_config.h"
 #include "mfoc_motor_config.h"
 
-/* Same sampling rate and electrical speed base as Motor. These are tuning
+/* HFI runs inside the control interrupt, so its carrier timing follows the
+ * current-loop rate. Same electrical speed base as Motor. These are tuning
  * starting points, not measured motor data. All voltages/currents are PU.
- * Hold +alpha, -alpha, +beta, -beta for two intervals each. Demodulate
- * only the second 50 us current increment of each vector (eight steps). */
-#define MFOC_HFI_SAMPLE_HZ 20000U
+ * Hold +alpha, -alpha, +beta, -beta for two intervals each. Demodulate only
+ * the second current increment of each vector, i.e. seven of eight steps. */
+#define MFOC_HFI_SAMPLE_HZ MFOC_MOTOR_RUN_FREQ_HZ
 #define MFOC_HFI_CARRIER_SAMPLES 8U
 #define MFOC_HFI_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
 #define MFOC_HFI_VOLTAGE MFOC_SCALAR(0.04f)
@@ -22,7 +24,8 @@
 /* +1 for Ld < Lq, -1 for Ld > Lq; must match measured HF saliency. */
 #define MFOC_HFI_SALIENCY_SIGN 1
 /* Per completed carrier group; retained during the two-interval experiment.
- * At 20 kHz, tracker corrections run at 2.5 kHz; 64 groups take 25.6 ms. */
+ * Tracker corrections run at MFOC_HFI_SAMPLE_HZ / CARRIER_SAMPLES; a group
+ * takes CARRIER_SAMPLES control periods, so retune after a rate change. */
 #define MFOC_HFI_PLL_KP MFOC_SCALAR(0.05f)
 #define MFOC_HFI_PLL_KI MFOC_SCALAR(0.02f)
 #define MFOC_HFI_SPEED_MAX MFOC_SCALAR(0.05f)
@@ -123,7 +126,7 @@ void mfoc_hfi_Init(mfoc_hfi_t *hfi);
  * @note Caller supplies bounded finite samples (|i_axis| <= 1, |u_axis| <= 4).
  * i[k]-i[k-1] must correspond to u_previous and the preceding injection.
  * Current history advances every ISR, including the discarded first interval;
- * accepted increments span 50 us, not the full 100 us vector hold.
+ * accepted increments span one control period, not the full two-interval hold.
  * No extra PWM delay is assumed. Missing voltage resets the whole sequence.
  * Polarity identification requires rest and zero fundamental current command;
  * current control must leave enough injection voltage and HF response.

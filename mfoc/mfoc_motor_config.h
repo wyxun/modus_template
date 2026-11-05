@@ -1,7 +1,7 @@
 /**
  * @file mfoc_motor_config.h
  * @brief Selected motor profile and its per-unit bases.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-25
  */
 #ifndef MFOC_MOTOR_CONFIG_H

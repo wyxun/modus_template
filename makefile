@@ -131,36 +131,20 @@ PERIPHERAL_SOURCES += $(wildcard peripheral/$(TARGET_CHIP)/mdi/*.c)
 PERIPHERAL_SOURCES += $(wildcard peripheral/driver/*.c)
 
 
-# FOC framework — defined by foc/foc.mk (included from target.mk).
-# Targets without FOC support leave both empty.
-FOC_SOURCES ?=
-FOC_INCLUDES ?=
-
-# FOC numeric backend is selected explicitly, never inferred from the CPU.
-FOC_NUMERIC ?= float
-ifeq ($(FOC_NUMERIC),float)
-    C_DEFS += -DFOC_NUMERIC_FLOAT=1
-else ifeq ($(FOC_NUMERIC),fixed)
-    C_DEFS += -DFOC_NUMERIC_FIXED=1
+# MFOC numeric backend and source bindings.
+MFOC_SOURCES ?=
+MFOC_INCLUDES ?=
+MFOC_NUMERIC ?= float
+ifeq ($(MFOC_NUMERIC),float)
+    C_DEFS += -DMFOC_NUMERIC_FLOAT=1
+else ifeq ($(MFOC_NUMERIC),fixed)
+    C_DEFS += -DMFOC_NUMERIC_FIXED=1
 else
-    $(error FOC_NUMERIC must be float or fixed)
+    $(error MFOC_NUMERIC must be float or fixed)
 endif
-
-ifneq ($(strip $(FOC_SOURCES)),)
-ifeq ($(FOC_NUMERIC),float)
-    C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=foc_debug_CaptureWaveform
-endif
-else ifneq ($(findstring MFOC_NUMERIC_FLOAT,$(C_DEFS)),)
+ifneq ($(findstring MFOC_NUMERIC_FLOAT,$(C_DEFS)),)
     C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=mfoc_debug_CaptureWaveform
 endif
-
-# Motor-energizing experiments are opt-in for product builds.
-FOC_EXPERIMENTAL_NSD ?= 0
-FOC_ENABLE_SMO ?= 1
-FOC_ENABLE_HFI ?= 0
-C_DEFS += -DFOC_ENABLE_EXPERIMENTAL_NSD=$(FOC_EXPERIMENTAL_NSD)
-C_DEFS += -DFOC_ENABLE_SMO=$(FOC_ENABLE_SMO)
-C_DEFS += -DFOC_ENABLE_HFI=$(FOC_ENABLE_HFI)
 
 # ------------------------------------------------------------------------------
 # All C sources  (chip-specific vars set by target.mk)
@@ -174,8 +158,8 @@ C_SOURCES =                                                                     
     $(MODUS_SRCS)                                                               \
     $(PERIF_LIB_SOURCES)                                                        \
     $(PERIPHERAL_SOURCES)                                                       \
-    $(FOC_SOURCES)                                                             \
-    $(MFOC_SOURCES)
+    $(MFOC_SOURCES)                                                              \
+    $(MFOC_TARGET_SOURCES)
 
 ifeq ($(MODUS_ENABLE),1)
     C_SOURCES += $(CLASS_SOURCES)
@@ -219,7 +203,6 @@ C_INCLUDES =                                                                    
     -Iperipheral/$(TARGET_CHIP)                                                 \
     -Iperipheral/driver                                                         \
     -Iclass                                                                     \
-    $(FOC_INCLUDES)                                                            \
     $(MFOC_INCLUDES)
 
 # ------------------------------------------------------------------------------
@@ -264,23 +247,17 @@ vpath %.s $(sort $(dir $(ASM_SOURCES)))
 vpath %.S $(sort $(dir $(ASM_SOURCES)))
 
 # 针对高频控制步相关的密集计算模块强制启用 -O2 优化
-$(BUILD_DIR)/foc_%.o: CFLAGS += -O2
 $(BUILD_DIR)/motor.o: CFLAGS += -O2
-# Preserve separate-operation rounding throughout the numeric layer's callers.
-ifneq ($(strip $(FOC_SOURCES)),)
-$(addprefix $(BUILD_DIR)/,$(notdir $(FOC_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
-endif
-ifneq ($(strip $(MFOC_SOURCES)),)
-$(addprefix $(BUILD_DIR)/,$(notdir $(MFOC_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
+# Preserve separate-operation rounding in MFOC numeric callers.
+ifneq ($(strip $(MFOC_SOURCES) $(MFOC_TARGET_SOURCES)),)
+$(addprefix $(BUILD_DIR)/,$(notdir $(MFOC_SOURCES:.c=.o) $(MFOC_TARGET_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
 endif
 
 # ------------------------------------------------------------------------------
 # Build configuration signature tracking
 # Triggers recompile whenever target, flags, or numeric backend changes
 # ------------------------------------------------------------------------------
-BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(FOC_NUMERIC)\
-                        -nsd_$(FOC_EXPERIMENTAL_NSD)-smo_$(FOC_ENABLE_SMO)       \
-                        -hfi_$(FOC_ENABLE_HFI)                                  \
+BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC)\
                         -mod_$(MODUS_ENABLE)
 
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp

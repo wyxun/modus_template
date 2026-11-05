@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification.h
  * @brief Offline identification lifecycle and synchronous control requests.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #ifndef MFOC_IDENTIFICATION_H

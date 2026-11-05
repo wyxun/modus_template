@@ -1,7 +1,7 @@
 /**
  * @file mfoc_flux.h
  * @brief Equal-inductance nonlinear flux observer and independent PLL.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-26
  */
 #ifndef MFOC_FLUX_H

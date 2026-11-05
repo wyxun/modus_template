@@ -1,7 +1,7 @@
 /**
  * @file mfoc.h
  * @brief First-stage mfoc pure computation library.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-19
  */
 #ifndef MFOC_H

@@ -1,0 +1,77 @@
+---
+# Mformat 通用模板：把 docs/c-cpp-format-guide.md 的规则翻译成 clang-format 配置
+#
+# 用法：复制到目标仓库根目录并改名为 .clang-format
+#   copy tools\format\templates\clang-format.template <repo>\.clang-format
+# 工具不会自动写入任何外部仓库。
+#
+# 版本基线：clang-format 21.1.8（换版本会改变排版输出）
+Language: Cpp
+BasedOnStyle: LLVM
+
+# 行宽 81 列（guide 第 8 行）
+ColumnLimit: 81
+
+# 4 空格缩进，不用 Tab（guide 第 7 行）
+IndentWidth: 4
+TabWidth: 4
+UseTab: Never
+
+# 续行固定 8 空格，不与左括号对齐（guide 第 44 行）
+ContinuationIndentWidth: 8
+AlignAfterOpenBracket: DontAlign
+AlignOperands: DontAlign
+
+# 运算符留在前一行（guide 第 44 行）
+BreakBeforeBinaryOperators: None
+
+# 函数左大括号另起一行；结构体/枚举/控制语句同行；else 与右大括号同行（guide 第 22 行）
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterFunction: true
+  AfterControlStatement: false
+  AfterStruct: false
+  AfterEnum: false
+  AfterUnion: false
+  AfterClass: false
+  BeforeElse: false
+  BeforeCatch: false
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+  SplitEmptyNamespace: false
+
+# 指针/引用星号靠变量名（guide 第 43 行）
+PointerAlignment: Right
+ReferenceAlignment: Right
+
+# if/for/while/switch 与左括号之间留空格，函数名与左括号之间不留（guide 第 11 行）
+SpaceBeforeParens: ControlStatements
+
+# include 保持现有顺序，不分组不排序（guide 第 76 行）
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# 多行宏反斜杠对齐（guide 第 45 行；Right = 贴 ColumnLimit，表达不出固定 57 列）
+AlignEscapedNewlines: Right
+
+# 单行语句策略（guide 第 39 行）：
+#   WithoutElse 让 `if (x) return X;` 保持单行（不拆成两行）
+#   Blocks: Never 让 `if (x) { ... }` 一律多行，不主动把块压成一行
+# 二者合起来对存量代码改动最小；代价是 guide 里
+# `if (motor == NULL) { return ERROR; }` 这种带括号的单行写法会被拆成多行
+AllowShortBlocksOnASingleLine: Never
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: WithoutElse
+
+# 预处理指令缩进：保留条件编译的视觉层次（现有代码用 3 空格，这里统一为 IndentWidth=4）
+IndentPPDirectives: AfterHash
+
+# 不重排注释、不对齐连续赋值/声明/行尾注释
+ReflowComments: false
+AlignConsecutiveAssignments: false
+AlignConsecutiveDeclarations: false
+AlignTrailingComments: false
+
+# switch 的 case 与 switch 同缩进
+IndentCaseLabels: false
+...

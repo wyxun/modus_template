@@ -1,7 +1,7 @@
 /**
  * @file mfoc_identification.c
  * @brief Foreground stages and synchronous standstill Rs identification.
- * @author Codex
+ * @author wyxun
  * @date 2026-10-24
  */
 #include "mfoc_identification.h"
@@ -165,7 +165,7 @@ static fsm_rt_t _mfoc_identification_Align(mfoc_identification_t *id,
                 mfoc_abs(current->qAlpha)) {
         return fsm_rt_err;
     }
-    output->modulation_ab.qAlpha =
+    output->modulation_ab.qAlpha=
         MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW);
     id->work.align_samples++;
     return id->work.align_samples >= MFOC_IDENTIFICATION_SAMPLE_HZ *
@@ -193,7 +193,7 @@ void mfoc_identification_Step(mfoc_identification_t *id,
             &id->work.rs, input->i_ab_k);
         /* Current belongs to the old level; apply the next one now. */
         if (progress != fsm_rt_cpl) {
-            output->modulation_ab.qAlpha =
+            output->modulation_ab.qAlpha=
                 id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW ?
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW) :
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH);
