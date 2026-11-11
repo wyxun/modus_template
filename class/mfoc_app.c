@@ -9,7 +9,9 @@
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_motor_config.h"
-#include "mfoc_port.h"
+#if MSHELL_ENABLE
+#include "mdi/service.h"
+#endif
 #include "mdebug/mshell.h"
 #if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
 #include "perf_counter.h"
@@ -118,6 +120,10 @@ int mfoc_app_Run(uintptr_t object)
 
 MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
     .motor = {
+        .current_base_milliamp = MFOC_MOTOR_BASE_CURRENT_MILLIAMP,
+        .voltage_base_millivolt = MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT,
+        .electrical_speed_base_hz =
+            MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
         .params = {
             .pole_pairs = MFOC_MOTOR_POLE_PAIRS,
             .rs = MFOC_SCALAR(MFOC_MOTOR_RS_PU),
@@ -132,12 +138,7 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .d = MFOC_APP_CURRENT_PI, .q = MFOC_APP_CURRENT_PI,
             .bus = MFOC_ONE,
         },
-        .feedback = {.encoder = {
-            .electrical_speed_base_hz = MFOC_SCALAR(
-                MFOC_MOTOR_BASE_ELECTRICAL_HZ),
-            .speed_filter_alpha = MFOC_SCALAR(0.25f),
-            .sample_period_us = 1000U, .timeout_ms = 20U,
-        }, .smo = {
+        .feedback = {.smo = {
             .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
             .cutoff_rad_s = 4000U,
@@ -175,13 +176,12 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
  * @note Foreground I2C access only; degrees use integer output. */
 static void _mfoc_app_PrintEncoder(void)
 {
-    mfoc_angle_t angle = {0U};
-    mfoc_result_t rc = mfoc_port_encoder(&angle);
-    if (rc != MFOC_RESULT_OK) {
-        MLOGF(W, "encoder read failed result=%d\r\n", (int)rc);
+    uint16_t raw = 0U;
+    mdi_status_t rc = mdi_g431_encoder_ReadRaw(&raw);
+    if (rc != MDI_OK) {
+        MLOGF(W, "encoder read failed result=%d\r\n", (int)MFOC_RESULT_IO);
         return;
     }
-    uint32_t raw = angle.wBam32 >> 20U;
     uint32_t degrees100 = (raw * 36000U + 2048U) / 4096U;
     MLOGF(I, "encoder raw=%lu angle=%lu.%02lu deg\r\n",
         (unsigned long)raw, (unsigned long)(degrees100 / 100U),

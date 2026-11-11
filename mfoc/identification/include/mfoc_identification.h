@@ -77,7 +77,8 @@ typedef struct {
     volatile mfoc_identification_stage_t stage;
     volatile bool stage_done; /* ISR publishes completion after sample writes. */
     uint8_t run_pt;           /* Foreground PT cursor. */
-    int64_t stage_deadline;   /* Foreground perfc timeout slot. */
+    mfoc_tick_t stage_started; /* Foreground Port timestamp. */
+    mfoc_tick_t stage_ticks;   /* Stage timeout in Port ticks. */
 } mfoc_identification_t;
 
 /** @brief Initialize before ISR use.

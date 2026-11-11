@@ -5,6 +5,7 @@
  * @date 2026-10-21
  */
 #include "mfoc_feedback.h"
+#include "mfoc_port.h"
 #include "mfoc_modulation.h"
 #include <stddef.h>
 
@@ -18,12 +19,6 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
         return MFOC_RESULT_NULL;
     }
     mfoc_feedback_t next = {0};
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    mfoc_result_t rc = mfoc_encoder_Init(&next.encoder, &cfg->encoder,
-                                         model->pole_pairs);
-    if (rc != MFOC_RESULT_OK) { return rc; }
-    next.encoder_status = MFOC_RESULT_INVALID_STATE;
-#endif
 #if MFOC_FEEDBACK_ENABLE_SMO
     mfoc_result_t smo_rc = mfoc_smo_Init(&next.smo, &cfg->smo, model);
     if (smo_rc != MFOC_RESULT_OK) { return smo_rc; }
@@ -48,7 +43,7 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Refresh model-dependent observers without resetting encoder/HFI.
+/** @brief Refresh model-dependent observers without resetting Port position/HFI.
  * @param feedback Stopped instance. @param model New motor model.
  * @return OK or rejected model; previous coefficients survive rejection. */
 mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
@@ -101,21 +96,6 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Advance enabled foreground services without ISR bus access.
- * @param feedback Instance. @return Service status. */
-mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
-{
-    if (feedback == NULL) { return MFOC_RESULT_NULL; }
-    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    feedback->encoder_status = mfoc_encoder_Run(&feedback->encoder);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
-    return feedback->encoder_status;
-#endif
-#endif
-    return MFOC_RESULT_OK;
-}
-
 /** @brief Reset HFI and acquire position independently of backend selection.
  * @param feedback Initialized, stopped instance. @return Capability status. */
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
@@ -130,22 +110,6 @@ mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
 #endif
 }
 
-/** @brief Commit an enabled encoder zero while the rotor is held.
- * @param feedback Instance. @param angle Held electrical angle.
- * @return Sampling/configuration status. No ISR work is added. */
-mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
-    mfoc_angle_t angle)
-{
-    if (feedback == NULL) { return MFOC_RESULT_NULL; }
-    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    return mfoc_encoder_CalibrateZero(&feedback->encoder, angle);
-#else
-    (void)angle;
-    return MFOC_RESULT_OK;
-#endif
-}
-
 /** @brief Execute enabled algorithms before selecting the control feedback.
  * @param feedback Instance. @param input Samples for model-based algorithms.
  * @param output Electrical feedback. @return Snapshot/state status. */
@@ -153,12 +117,12 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
     const mfoc_feedback_input_t *input, mfoc_feedback_output_t *output)
 {
     (void)input;
-    mfoc_feedback_output_t next = {0};
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    feedback->encoder_status = mfoc_encoder_Step(&feedback->encoder,
-        &next.angle, &next.speed);
-#else
     (void)feedback;
+    mfoc_feedback_output_t next = {0};
+#if MFOC_FEEDBACK_ENABLE_POSITION
+    mfoc_result_t position_status = mfoc_port_position(
+        &next.angle, &next.speed);
+    (void)position_status;
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI ||                     \
     MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_EKF
@@ -211,9 +175,9 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
         feedback->ekf_output = (mfoc_ekf_output_t){0};
     }
 #endif
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
-    if (feedback->encoder_status != MFOC_RESULT_OK) {
-        return feedback->encoder_status;
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
+    if (position_status != MFOC_RESULT_OK) {
+        return position_status;
     }
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
     if (feedback->smo_status != MFOC_RESULT_OK) {

@@ -43,7 +43,7 @@ foreach ($profile in $profiles) {
     Write-Output "$numeric / $cpu object compilation passed"
 }
 $portIncludes = @('mfoc', 'mfoc/math/include', 'mfoc/control/include',
-    'mfoc/port/include',
+    'mfoc/port/include', 'mfoc/position/include',
     'mfoc/motor/include', 'modus/src',
     'modus/lib/perf_counter',
     'modus/src/utilities', 'peripheral/stm32g431',

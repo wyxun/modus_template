@@ -1,6 +1,6 @@
 /**
  * @file mfoc_config.h
- * @brief User-configurable compile-time settings shared by mfoc modules.
+ * @brief Build settings, named selections and derived control timing.
  * @author wyxun
  * @date 2026-10-23
  */
@@ -38,6 +38,7 @@
 #error "MFOC_MOTOR_RUN_FREQ_HZ must be an integer multiple of the speed rate"
 #endif
 
+/* Read-only values derived from the user-selected control and speed rates. */
 /** @brief One control period, truncated microseconds. */
 #define MFOC_MOTOR_RUN_PERIOD_US (1000000U / MFOC_MOTOR_RUN_FREQ_HZ)
 #if MFOC_SPEED_RUN_FREQ_HZ == 0U
@@ -88,15 +89,32 @@
 #endif
 #define MFOC_IDENTIFICATION_L_DELTA_MIN 0.001f
 
+/* Public selector values for MFOC_FEEDBACK_BACKEND. Keep these IDs fixed. */
 #define MFOC_FEEDBACK_NONE 0
-#define MFOC_FEEDBACK_ENCODER 1
+#define MFOC_FEEDBACK_POSITION 1
+/* Compatibility name for the former encoder-specific physical source. */
+#define MFOC_FEEDBACK_ENCODER MFOC_FEEDBACK_POSITION
 #define MFOC_FEEDBACK_SMO 2
 #define MFOC_FEEDBACK_HFI 3
 #define MFOC_FEEDBACK_FLUX 4
 #define MFOC_FEEDBACK_EKF 5
 
+/* User selections. ENABLE_POSITION binds the three physical position calls
+ * in mfoc_port.h. BACKEND chooses which source supplies control feedback. */
+#ifndef MFOC_FEEDBACK_BACKEND
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_SMO
+#endif
+#ifndef MFOC_FEEDBACK_ENABLE_POSITION
+#ifdef MFOC_FEEDBACK_ENABLE_ENCODER
+#define MFOC_FEEDBACK_ENABLE_POSITION MFOC_FEEDBACK_ENABLE_ENCODER
+#else
+#define MFOC_FEEDBACK_ENABLE_POSITION 1
+#endif
+#endif
 #ifndef MFOC_FEEDBACK_ENABLE_ENCODER
-#define MFOC_FEEDBACK_ENABLE_ENCODER 1
+#define MFOC_FEEDBACK_ENABLE_ENCODER MFOC_FEEDBACK_ENABLE_POSITION
+#elif MFOC_FEEDBACK_ENABLE_ENCODER != MFOC_FEEDBACK_ENABLE_POSITION
+#error "Encoder compatibility flag must match the physical position flag"
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
 #define MFOC_FEEDBACK_ENABLE_SMO 1
@@ -147,9 +165,4 @@
 #ifndef MFOC_FLUX_PLL_KI
 #define MFOC_FLUX_PLL_KI 100.0f
 #endif
-/* Algorithms run independently of the selected control output. */
-#ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_SMO
-#endif
-
 #endif

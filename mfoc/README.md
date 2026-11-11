@@ -2,7 +2,17 @@
 
 MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位置反馈、强拖启动和参数辨识所需的模块。本仓库的 STM32G431 应用位于 [`class/mfoc_app.c`](../class/mfoc_app.c)，可作为接入参考。
 
-当前文档介绍配置与使用入口。模块职责、状态机和数据流见 [framework 文档](docs/framework.md)。
+## 文档入口
+
+| 要做的事 | 阅读入口 |
+| --- | --- |
+| 理解核心架构、单拍数据流、状态所有权（持续完善） | [框架总览](docs/framework.md) |
+| 阅读模块接口 | [Feedback 位置与速度反馈接口](docs/modules/feedback.md) · [Core](docs/framework.md#core) · [Identification](docs/framework.md#identification) |
+| 配置无感观测器，核对估算角速和有效条件 | [Flux 非线性磁链观测器](docs/modules/flux.md) · [SMO 滑模反电势观测器](docs/modules/smo.md) |
+| 接入有感位置源，理解角速如何进入 Feedback | [Encoder 位置组件](docs/modules/encoder.md) · [Hall 位置组件](docs/modules/hall.md) |
+| 选择反馈源、设置基值或修改板级换算 | [Port 相关配置和头文件](docs/configuration.md) |
+| 把库接到新的功率板 | [硬件接口移植指南](docs/port-contract.md) · [可复制的 C 模板](port/template/mfoc_port_template.c) |
+| 核对 G431 的主机测试、构建和验证范围 | [Port 迁移验证记录](docs/validation/2026-11-10-port-migration.md) |
 
 ## 目录与接口
 
@@ -15,7 +25,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `motor/` | 电机运行、反馈选择与启动流程 |
 | `position/` | 编码器及无感位置算法 |
 | `identification/` | 电机参数辨识 |
-| `port/` | 电流、母线、编码器、PWM 和时钟的接入契约 |
+| `port/` | 电流、母线、统一电角度/速度、PWM 和时钟的接入契约 |
 | `tests/`、`tools/` | 测试和代码生成工具 |
 
 各模块的公共头文件位于其 `include/`，实现位于 `src/`。`mfoc.h` 汇集基础数学及控制接口；使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供本工程使用的源码与头文件路径清单。
@@ -24,7 +34,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 ### 数值和三角函数
 
-构建时选择 FLOAT 或 FIXED，不能同时选择。当前工程通过 make 参数 `MFOC_NUMERIC=float` 或 `MFOC_NUMERIC=fixed` 选择；G431 的 `target.mk` 目前还显式定义了 FLOAT，切换目标配置时需一并核对。
+构建时选择 FLOAT 或 FIXED，不能同时选择。当前工程与 G431 目标均通过 make 参数 `MFOC_NUMERIC=float` 或 `MFOC_NUMERIC=fixed` 选择。
 
 `MFOC_TRIG_BACKEND` 选择三角函数实现：`0` 为 LIBM、`1` 为 LUT、`2` 为外部实现；默认 LUT。FIXED 不支持 LIBM，外部实现需按 [`mfoc_trig.h`](math/include/mfoc_trig.h) 提供函数。
 
@@ -40,12 +50,12 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `MFOC_ISR_MEASURE` | 中断耗时统计开关 | `0`，G431 调试构建覆盖为 `1` |
 | `MFOC_ISR_BUDGET_TICKS` | 中断耗时预算，按计时器频率设置 | `8500` |
 | `MFOC_IDENTIFICATION_ENABLE` | Motor 参数辨识流程 | `0` |
-| `MFOC_FEEDBACK_ENABLE_ENCODER` | 编码器反馈 | `1` |
-| `MFOC_FEEDBACK_ENABLE_SMO` | SMO 观测器 | `0` |
+| `MFOC_FEEDBACK_ENABLE_POSITION` | 板级提供的统一位置反馈；旧 `ENABLE_ENCODER` 名称兼容 | `1` |
+| `MFOC_FEEDBACK_ENABLE_SMO` | SMO 观测器 | `1` |
 | `MFOC_FEEDBACK_ENABLE_HFI` | 高频注入 | `0` |
-| `MFOC_FEEDBACK_ENABLE_FLUX` | 磁链观测器 | `1` |
+| `MFOC_FEEDBACK_ENABLE_FLUX` | 磁链观测器 | `0` |
 | `MFOC_FEEDBACK_ENABLE_EKF` | EKF 观测器 | `0`，仅 FLOAT |
-| `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_ENCODER` |
+| `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_SMO` |
 
 使能算法与选择控制输出是两项配置：所选 backend 对应的算法必须使能。未选作 backend 的已使能算法可用于影子观察。HFI 会产生注入电压；Flux 和 EKF 的增益、噪声参数等需要针对实际电机配置及验证。文件中还包含 Rs/L 辨识、Flux 和 EKF 的参数，具体定义以配置头为准。
 
@@ -59,19 +69,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 ## 硬件端口
 
-[`mfoc_port.h`](port/include/mfoc_port.h) 定义硬件边界。G431 的 [Port 实现](../peripheral/stm32g431/mfoc/mfoc_port.c) 使用板级 MDI 资源，由目标构建选入。移植时为单个功率级实现以下接口：
-
-| 接口 | 硬件侧职责 |
-| --- | --- |
-| `mfoc_port_init()` | 输出关闭时采集三相零偏并准备换算；当前实现也配置并核验 AS5600 滤波 |
-| `mfoc_port_current()` | 非阻塞读取新鲜、完整的三相采样帧，换算为电流 PU |
-| `mfoc_port_bus()` | 非阻塞读取已发布母线值，换算为 `Vdc/Vbase` |
-| `mfoc_port_encoder()` | 在前台读取机械角，返回 BAM32 角度 |
-| `mfoc_port_pwm()` | 写入三相占空比；启动时先写比较值再开启输出 |
-| `mfoc_port_pwm_stop()` | 关闭相输出并保留采样触发 |
-| `mfoc_port_tick()`、`mfoc_port_tick_frequency()` | 提供同一时钟的计数及频率 |
-
-板级负责 ADC、PWM、采样触发及更新时序。初始化前需准备 perfc 和 ADC 触发，关闭相输出和控制中断，并避免其他调用方同时消费校零采样帧。运行时电流读取和 PWM 更新需满足控制中断时限。电流极性、ADC 灵敏度和母线分压由板级 Port 实现提供，移植时按硬件核对。
+新板实现 `mfoc_port.h` 声明的操作。电流、母线及速度使用共同基值，电角度使用 BAM32，三相 duty 取值为 0 到 1。G431 示例在板级持有 Encoder，前台发布机械采样，ISR 读取推算的电角度和速度。接入步骤和完整接口清单见 [硬件接口移植指南](docs/port-contract.md)。
 
 ## 接入与运行
 

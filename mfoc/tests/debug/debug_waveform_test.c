@@ -18,8 +18,8 @@ static float s_sample[4];
 static unsigned s_channels;
 static unsigned s_steps;
 static bool s_started;
-static mfoc_result_t s_encoder_result;
-static unsigned s_encoder_calls;
+static mfoc_result_t s_position_result;
+static unsigned s_position_calls;
 
 /** @brief Reset fake registration. @param protocol Unused protocol.
  * @return OK. */
@@ -83,16 +83,14 @@ const mwaveform_api_t mwaveform = {.Init = init, .AddVariable = add,
     .Step = step};
 
 /** @brief Supply a cached angle without accessing hardware.
- * @param encoder Unused instance. @param angle Angle. @param speed Speed.
+ * @param angle Electrical angle. @param speed Electrical speed PU.
  * @return Injected status. */
-mfoc_result_t mfoc_encoder_Step(const mfoc_encoder_t *encoder,
-    mfoc_angle_t *angle, mfoc_scalar_t *speed)
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    (void)encoder;
-    ++s_encoder_calls;
+    ++s_position_calls;
     *angle = (mfoc_angle_t){0x40000000U};
     *speed = 0.0f;
-    return s_encoder_result;
+    return s_position_result;
 }
 
 #if MFOC_DEBUG_HFI_WAVEFORM
@@ -141,7 +139,7 @@ static void invalid_states(const mfoc_hfi_t *saved, const float expected[4])
     tMfocApp.motor.state = MFOC_MOTOR_IDLE;
     mfoc_debug_WaveformStep();
     assert_frame(invalid);
-    assert(s_encoder_calls == 0U);
+    assert(s_position_calls == 0U);
 }
 
 /** @brief Check complete-group pairing under both 2:1 transport phases.
@@ -186,12 +184,12 @@ static void full_cycles(unsigned phase)
     /* Capture callback cannot replace a complete group with partial data,
      * touch observer state, or make encoder availability a prerequisite. */
     mfoc_hfi_t partial = *hfi;
-    s_encoder_result = MFOC_RESULT_INVALID_STATE;
+    s_position_result = MFOC_RESULT_INVALID_STATE;
     mfoc_debug_CaptureWaveform();
     assert_frame(expected);
     assert(memcmp(&partial, hfi, sizeof(partial)) == 0);
-    assert(s_encoder_calls == 0U);
-    s_encoder_result = MFOC_RESULT_OK;
+    assert(s_position_calls == 0U);
+    s_position_result = MFOC_RESULT_OK;
     *hfi = saved;
     hfi->state = MFOC_HFI_TRACK;
     hfi->delta_i[axis] = (mfoc_ab_t){-0.015f, 0.0f};

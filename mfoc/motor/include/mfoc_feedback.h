@@ -8,26 +8,25 @@
 #define MFOC_FEEDBACK_H
 
 #include "mfoc_core.h"
-#include "mfoc_encoder.h"
 #include "mfoc_smo.h"
 #include "mfoc_hfi.h"
 #include "mfoc_flux.h"
 #include "mfoc_ekf.h"
 
-#if MFOC_FEEDBACK_ENABLE_ENCODER != 0 && MFOC_FEEDBACK_ENABLE_ENCODER != 1
-#error "MFOC_FEEDBACK_ENABLE_ENCODER must be 0 or 1"
+#if MFOC_FEEDBACK_ENABLE_POSITION != 0 && MFOC_FEEDBACK_ENABLE_POSITION != 1
+#error "MFOC_FEEDBACK_ENABLE_POSITION must be 0 or 1"
 #endif
 #if MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_NONE &&                              \
-    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_ENCODER &&                           \
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_POSITION &&                           \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_SMO &&                             \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI &&                               \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_FLUX &&                              \
     MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_EKF
 #error "MFOC_FEEDBACK_BACKEND must select an implemented position algorithm"
 #endif
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER &&                           \
-    !MFOC_FEEDBACK_ENABLE_ENCODER
-#error "The selected encoder output requires MFOC_FEEDBACK_ENABLE_ENCODER"
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION &&                           \
+    !MFOC_FEEDBACK_ENABLE_POSITION
+#error "POSITION backend requires MFOC_FEEDBACK_ENABLE_POSITION"
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO != 0 && MFOC_FEEDBACK_ENABLE_SMO != 1
 #error "MFOC_FEEDBACK_ENABLE_SMO must be 0 or 1"
@@ -53,7 +52,6 @@
 
 /** @brief Independent algorithm settings; enable flags control execution. */
 typedef struct {
-    mfoc_encoder_cfg_t encoder;
     mfoc_smo_cfg_t smo;
     mfoc_flux_cfg_t flux;
 #if MFOC_FEEDBACK_ENABLE_EKF
@@ -81,10 +79,6 @@ typedef struct {
 
 /** @brief Instance-owned algorithm states, independent of output selection. */
 typedef struct {
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    mfoc_encoder_t encoder;
-    mfoc_result_t encoder_status; /**< Last ISR encoder sample status. */
-#endif
 #if MFOC_FEEDBACK_ENABLE_SMO
     mfoc_smo_t smo;
     mfoc_smo_cfg_t smo_cfg; /**< Retained for stopped model updates. */
@@ -115,33 +109,21 @@ typedef struct {
 mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model);
 
-/** @brief Rebuild model-dependent observers, preserving encoder calibration.
+/** @brief Rebuild observers, preserving Port position calibration.
  * @param feedback Instance. @param model New motor PU parameters.
  * @return OK or rejected model; failure preserves all observer state.
  * @note Motor must be stopped. Pole pairs and PU bases remain unchanged. */
 mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     const mfoc_motor_params_t *model);
 
-/** @brief Service enabled foreground algorithms at their own cadences.
- * @param feedback Instance. @return Sampling/state status.
- * @note Call repeatedly while idle or running; do not call from ISR. */
-mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback);
-
 /** @brief Reset the HFI observer before starting the Motor.
  * @param feedback Initialized instance.
  * @return OK, or INVALID_STATE when HFI is compiled out. */
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback);
 
-/** @brief Calibrate an enabled encoder against a held electrical angle.
- * @param feedback Initialized instance. @param angle Held electrical angle.
- * @return Calibration status; OK without work when encoder is disabled.
- * @note Foreground only while Motor uses fixed-angle alignment. */
-mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
-    mfoc_angle_t angle);
-
 /** @brief Run enabled ISR algorithms, then select the configured output.
- * @param feedback Instance. @param input Current/prior Core samples; encoder
- * ignores this argument; absent prior voltage resets model histories.
+ * @param feedback Instance. @param input Current/prior Core samples.
+ * Physical position ignores input; absent voltage resets model histories.
  * @param output Feedback/excitation, unchanged on failure.
  * @return Backend status; NONE returns INVALID_STATE. No I2C access here.
  * @note Valid initialized feedback and output pointers are preconditions. */

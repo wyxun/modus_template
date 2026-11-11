@@ -46,8 +46,8 @@ static unsigned s_align_count;
 static unsigned s_stop_count;
 static mfoc_result_t s_align_result;
 static unsigned s_encoder_reads;
-static uint32_t s_encoder_raw;
-static mfoc_result_t s_encoder_result;
+static uint16_t s_encoder_raw;
+static mdi_status_t s_encoder_result;
 static unsigned s_current_count;
 static unsigned s_speed_count;
 static unsigned s_openloop_count;
@@ -228,9 +228,9 @@ static void shell_commands(void)
     command("encoder", "encoder raw=2048 angle=180.00 deg");
     s_encoder_raw = 4095U;
     command("encoder", "encoder raw=4095 angle=359.91 deg");
-    s_encoder_result = MFOC_RESULT_IO;
+    s_encoder_result = MDI_IO_ERROR;
     command("encoder", "encoder read failed result=6");
-    s_encoder_result = MFOC_RESULT_OK;
+    s_encoder_result = MDI_OK;
     unsigned reads = s_encoder_reads;
     command("encoder trailing", "invalid motor arguments");
     assert(s_encoder_reads == reads);
@@ -301,13 +301,11 @@ void mfoc_motor_GetStatus(const mfoc_motor_t *motor, mfoc_motor_status_t *status
 }
 
 /** @brief Supply one raw AS5600 sample without hardware.
- * @param angle Mechanical BAM32. @return Injected status. */
-mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+ * @param raw Raw mechanical angle in 12-bit counts. @return Injected status. */
+mdi_status_t mdi_g431_encoder_ReadRaw(uint16_t *raw)
 {
     ++s_encoder_reads;
-    if (s_encoder_result == MFOC_RESULT_OK) {
-        angle->wBam32 = s_encoder_raw << 20U;
-    }
+    if (s_encoder_result == MDI_OK) { *raw = s_encoder_raw; }
     return s_encoder_result;
 }
 
@@ -419,6 +417,12 @@ int mbase_Init(modus_base_t *base, modus_base_cfg_t *cfg)
  * @return Zero on success. */
 int main(void)
 {
+    assert(tMfocAppCfg.motor.current_base_milliamp ==
+        (uint32_t)MFOC_MOTOR_BASE_CURRENT_MILLIAMP);
+    assert(tMfocAppCfg.motor.voltage_base_millivolt ==
+        (uint32_t)MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT);
+    assert(tMfocAppCfg.motor.electrical_speed_base_hz ==
+        MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ));
 #if MFOC_FEEDBACK_ENABLE_EKF
     assert(tMfocAppCfg.motor.feedback.ekf.sample_hz == MFOC_MOTOR_RUN_FREQ_HZ);
     assert(tMfocAppCfg.motor.feedback.ekf.speed_base_hz ==

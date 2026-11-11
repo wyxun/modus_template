@@ -12,14 +12,16 @@
 #include <stdio.h>
 #include <string.h>
 
-/** @brief Test clock. @return Microseconds. */
-uint32_t mfoc_port_tick(void) { return 0U; }
-/** @brief Test clock scale. @return Hz. */
-uint32_t mfoc_port_tick_frequency(void) { return 1000000U; }
-/** @brief Fixed encoder sample. @param angle Output. @return OK. */
-mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+static unsigned position_reads;
+
+/** @brief Supply board-owned electrical position independently of observers.
+ * @param angle Electrical BAM32. @param speed Electrical speed PU.
+ * @return OK. */
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    *angle = (mfoc_angle_t){0x10000000U};
+    ++position_reads;
+    *angle = (mfoc_angle_t){UINT32_C(0x70000000)};
+    *speed = MFOC_SCALAR(0.125f);
     return MFOC_RESULT_OK;
 }
 
@@ -30,9 +32,6 @@ int main(void)
     mfoc_motor_params_t model = {7U, MFOC_ONE, MFOC_ONE,
         MFOC_ONE, MFOC_HALF, MFOC_ZERO};
     mfoc_feedback_cfg_t cfg = {
-        .encoder = {.electrical_speed_base_hz = MFOC_SCALAR(400.0f),
-            .speed_filter_alpha = MFOC_ONE, .sample_period_us = 1000U,
-            .timeout_ms = 10U},
         .smo = {MFOC_MOTOR_RUN_FREQ_HZ, 4000U, MFOC_SCALAR(400.0f),
             MFOC_HALF, MFOC_HALF, MFOC_ONE},
         .flux = {MFOC_MOTOR_RUN_FREQ_HZ, MFOC_SCALAR(400.0f), MFOC_ONE,
@@ -68,7 +67,6 @@ int main(void)
 
     mfoc_feedback_t feedback = {0};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
-    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     mfoc_core_output_t previous = {
         .duty = {MFOC_HALF, MFOC_SCALAR(0.6f), MFOC_SCALAR(0.4f)},
         .bus = MFOC_ONE};
@@ -76,7 +74,7 @@ int main(void)
     mfoc_feedback_output_t output = {.angle = {123U}, .speed = MFOC_ONE};
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(feedback.flux_output.valid);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK && output.angle.wBam32 == 0x70000000U);
 #else
     assert(rc == MFOC_RESULT_OK);
@@ -88,6 +86,7 @@ int main(void)
     assert(feedback.flux.psi_s.qAlpha == MFOC_ZERO);
     assert(!feedback.flux_output.valid);
     mfoc_feedback_t before = feedback;
+    unsigned reads = position_reads;
     /* SMO accepts this model, but FIXED Flux squared amplitude underflows. */
     model.rs = MFOC_HALF;
     model.flux = MFOC_SCALAR(0.0001f);
@@ -106,6 +105,7 @@ int main(void)
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
         MFOC_RESULT_OK);
     assert(feedback.flux.c.flux_sq == MFOC_ONE);
+    assert(position_reads == reads); /* Model refresh cannot resample sensors. */
 #if MFOC_FEEDBACK_ENABLE_SMO
     assert(feedback.smo.c.kr < before.smo.c.kr);
 #endif

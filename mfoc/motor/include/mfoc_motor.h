@@ -61,9 +61,15 @@ typedef struct {
  * speed_divider=0 disables speed mode; otherwise pass MFOC_SPEED_LOOP_DIVIDER
  * (MFOC_MOTOR_RUN_FREQ_HZ / MFOC_SPEED_RUN_FREQ_HZ). ki_ts is Ki times the
  * speed period, and output bounds must stay inside +/-i_max.
- * speed_max is required when speed PI or OpenLoop is enabled. */
+ * speed_max is required when speed PI or OpenLoop is enabled.
+ * electrical_speed_base_hz supplies the speed base to Port, enabled observers
+ * and OpenLoop; their nested speed_base_hz settings are ignored by Motor.
+ * When HFI is enabled, this base must equal MFOC_HFI_SPEED_BASE_HZ. */
 typedef struct {
     mfoc_motor_params_t params;
+    uint32_t current_base_milliamp; /**< Positive Ibase in mA. */
+    uint32_t voltage_base_millivolt; /**< Positive Vbase in mV. */
+    mfoc_scalar_t electrical_speed_base_hz; /**< Physical electrical Hz. */
     mfoc_motor_limits_t limits;
     mfoc_core_params_t core;
     mfoc_feedback_cfg_t feedback;
@@ -105,7 +111,8 @@ typedef struct {
     mfoc_scalar_t speed_ref;
     uint16_t speed_divider;
     uint16_t speed_count;
-    int64_t hold_deadline; /* Run deadline for fixed-angle hold only. */
+    mfoc_tick_t hold_started; /* Port timestamp for fixed-angle hold. */
+    mfoc_tick_t hold_ticks; /* Hold duration, converted once during Init. */
     volatile bool hold_active; /* Motor owns the timed ALIGN lifecycle. */
     bool openloop_active; /* Ordinary forced rotation, without handover. */
     mfoc_sensorless_start_t sensorless_start;
@@ -116,8 +123,9 @@ typedef struct {
  * @param cfg Motor PU data and finite Core configuration.
  * @return OK, NULL, INVALID_ARGUMENT or OUT_OF_RANGE.
  * @note Failure leaves motor unchanged. After validating control settings,
- * Port Init collects ten ADC offset frames spaced 10 ms apart. ADC trigger
- * and perfc must be ready, with control IRQ disabled and phase outputs off.
+ * Motor calls Port Init with the shared bases and pole pairs. Board sampling
+ * and its monotonic clock must be ready, with control IRQ disabled and
+ * phase outputs off. Port owns physical calibration and position setup.
  * Initial bus comes from cfg.core.bus; Init does not sample bus or start PWM.
  * Init must not clear a live fault or reconfigure a running motor.
  * PI limits must include zero; gains and limits must be finite. */

@@ -1,6 +1,6 @@
 /**
  * @file service.c
- * @brief Board-owned ADC schedule and foreground mean publication.
+ * @brief G431 ADC service and foreground encoder readout.
  * @author Codex
  * @date 2026-10-10
  */
@@ -16,6 +16,19 @@ typedef struct {
     bool bConfigured;
 } mdi_adc_service_state_t;
 static mdi_adc_service_state_t s_tAdcService;
+
+/** @brief Decode the AS5600 raw angle register into mechanical counts.
+ * @param raw Output between 0 and 4095. @return I2C or argument status. */
+mdi_status_t mdi_g431_encoder_ReadRaw(uint16_t *raw)
+{
+    if (raw == NULL) { return MDI_INVALID; }
+    uint8_t data[2] = {0U, 0U};
+    mdi_status_t rc = MDI_I2C_Reg8_Read(encoder_angle, 0x0CU, data, 2U);
+    if (rc != MDI_OK) { return rc; }
+    *raw = (uint16_t)((((uint32_t)data[0] << 8U) | (uint32_t)data[1]) &
+        UINT32_C(0x0FFF));
+    return MDI_OK;
+}
 
 /**
  * @brief Set scan period, rounded upward to whole microseconds.

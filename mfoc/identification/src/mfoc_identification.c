@@ -5,6 +5,7 @@
  * @date 2026-10-24
  */
 #include "mfoc_identification.h"
+#include "mfoc_port.h"
 #include "perfc_task_pt.h"
 #include <stddef.h>
 
@@ -34,13 +35,17 @@ mfoc_result_t mfoc_identification_Start(mfoc_identification_t *id,
     if (operation != MFOC_IDENTIFICATION_RESISTANCE) {
         return MFOC_RESULT_INVALID_STATE;
     }
+    uint32_t tick_hz = mfoc_port_tick_frequency();
+    if (tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
     id->result = *model;
     id->bus = bus;
     id->work = (mfoc_identification_work_t){0};
     id->operation = operation;
     id->angle = (mfoc_angle_t){0U};
     id->run_pt = 0U;
-    id->stage_deadline = 0;
+    id->stage_started = 0U;
+    id->stage_ticks = ((mfoc_tick_t)tick_hz *
+        MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS + 999U) / 1000U;
     id->stage_done = false;
     id->stage = MFOC_IDENTIFICATION_STAGE_ALIGN;
     id->state = MFOC_IDENTIFICATION_RUNNING;
@@ -72,13 +77,10 @@ fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
 
     PERFC_PT_BEGIN(id->run_pt)
     while (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
-        id->stage_deadline = 0;
-        (void)perfc_is_time_out_ms(MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS,
-                                  &id->stage_deadline, false);
+        id->stage_started = mfoc_port_tick();
         PERFC_PT_WAIT_UNTIL(id->stage_done ||
             id->state != MFOC_IDENTIFICATION_RUNNING ||
-            perfc_is_time_out_ms(MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS,
-                                &id->stage_deadline, false))
+            mfoc_port_tick() - id->stage_started >= id->stage_ticks)
         if (id->state != MFOC_IDENTIFICATION_RUNNING) {
             return id->state == MFOC_IDENTIFICATION_ERROR ?
                 fsm_rt_err : fsm_rt_cpl;

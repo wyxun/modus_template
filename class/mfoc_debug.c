@@ -5,6 +5,7 @@
  * @date 2026-10-22
  */
 #include "mfoc_debug.h"
+#include "mfoc_port.h"
 
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
 #include "mdebug/mwaveform.h"
@@ -74,11 +75,10 @@ void mfoc_debug_CaptureWaveform(void)
             mfoc_angle_to_turns(observer_angle);
     }
 #endif
-#if MFOC_FEEDBACK_ENABLE_ENCODER
+#if MFOC_FEEDBACK_ENABLE_POSITION
     mfoc_angle_t encoder_angle = {0U};
     mfoc_scalar_t speed = MFOC_ZERO;
-    mfoc_result_t rc = mfoc_encoder_Step(&motor->feedback.encoder,
-        &encoder_angle, &speed);
+    mfoc_result_t rc = mfoc_port_position(&encoder_angle, &speed);
     if (rc != MFOC_RESULT_OK) { return; }
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] =
         mfoc_angle_to_turns(encoder_angle);

@@ -12,11 +12,16 @@
 #include <stdio.h>
 #include <string.h>
 
-uint32_t mfoc_port_tick(void) { return 0U; }
-uint32_t mfoc_port_tick_frequency(void) { return 1000000U; }
-mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+static unsigned position_reads;
+
+/** @brief Supply board-owned electrical position independently of observers.
+ * @param angle Electrical BAM32. @param speed Electrical speed PU.
+ * @return OK. */
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    *angle = (mfoc_angle_t){0x10000000U};
+    ++position_reads;
+    *angle = (mfoc_angle_t){UINT32_C(0x70000000)};
+    *speed = MFOC_SCALAR(0.125f);
     return MFOC_RESULT_OK;
 }
 
@@ -24,9 +29,6 @@ int main(void)
 {
     const mfoc_motor_params_t model = {7U, 1.0f, 1.0f, 1.0f, 0.5f, 0.0f};
     const mfoc_feedback_cfg_t cfg = {
-        .encoder = {.electrical_speed_base_hz = 400.0f,
-            .speed_filter_alpha = 1.0f, .sample_period_us = 1000U,
-            .timeout_ms = 10U},
         .smo = {MFOC_MOTOR_RUN_FREQ_HZ, 4000U, 400.0f, 0.5f, 0.5f, 1.0f},
         .flux = {MFOC_MOTOR_RUN_FREQ_HZ, 400.0f, 1.0f, 0.5f, 100.0f},
         .ekf = {.sample_hz = MFOC_MOTOR_RUN_FREQ_HZ, .speed_base_hz = 400.0f,
@@ -37,7 +39,6 @@ int main(void)
             .max_speed_var = 0.5f}};
     mfoc_feedback_t feedback = {0};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
-    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     mfoc_ab_t i = {0.03f, -0.01f}, voltage = {0};
     mfoc_core_output_t previous = {
         .duty = {0.55f, 0.48f, 0.47f}, .bus = 0.9f};
@@ -46,7 +47,7 @@ int main(void)
     mfoc_feedback_output_t saved_output = output;
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(feedback.ekf.has_sample && !feedback.ekf_output.valid);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK && output.angle.wBam32 == 0x70000000U);
 #else
     assert(rc == MFOC_RESULT_INVALID_STATE);
@@ -74,7 +75,7 @@ int main(void)
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(!feedback.ekf.has_sample && !feedback.ekf_output.valid);
     assert(feedback.ekf.p[9] == cfg.ekf.p0[3]);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK);
 #else
     assert(rc == MFOC_RESULT_INVALID_STATE);
@@ -89,6 +90,7 @@ int main(void)
     (void)rc;
 
     mfoc_feedback_t before = feedback;
+    unsigned reads = position_reads;
     mfoc_motor_params_t changed = model;
     changed.lq = 0.5f; /* Rejected by EKF after SMO accepts. */
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &changed) !=
@@ -100,10 +102,7 @@ int main(void)
         MFOC_RESULT_OK);
     assert(feedback.ekf.c.ki > before.ekf.c.ki);
     assert(!feedback.ekf.has_sample && !feedback.ekf_output.valid);
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    assert(memcmp(&feedback.encoder, &before.encoder,
-        sizeof(feedback.encoder)) == 0);
-#endif
+    assert(position_reads == reads); /* Model refresh cannot resample sensors. */
     puts("EKF feedback routing, reset and model transaction passed");
     return 0;
 }

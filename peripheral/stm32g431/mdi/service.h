@@ -1,12 +1,17 @@
 /**
  * @file service.h
- * @brief Board software ADC scheduling and DMA interrupt handoff.
+ * @brief G431 ADC scheduling, DMA interrupt handoff and encoder readout.
  * @author Codex
  * @date 2026-10-10
  */
 #ifndef STM32G431_MDI_SERVICE_H
 #define STM32G431_MDI_SERVICE_H
 #include "mdi/core/contract.h"
+
+/** @brief Read AS5600 RAW ANGLE in one foreground I2C transaction.
+ * @param raw Mechanical position in counts (0..4095); unchanged on failure.
+ * @return OK, INVALID for null output, or the I2C transfer error. */
+mdi_status_t mdi_g431_encoder_ReadRaw(uint16_t *raw);
 
 /**
  * @brief Change foreground scan rate, not the ADC conversion clock.

@@ -7,6 +7,7 @@
 #ifndef MOTOR_PORT_FAKE_H
 #define MOTOR_PORT_FAKE_H
 #include "mfoc_motor.h"
+#include "mfoc_port.h"
 typedef struct {
     mfoc_uvw_t current;
     mfoc_scalar_t bus;
@@ -22,8 +23,10 @@ typedef struct {
     unsigned samples;
     unsigned bus_reads;
     unsigned feedback_reads;
-    unsigned feedback_runs;
-    mfoc_result_t feedback_run;
+    unsigned position_runs;
+    unsigned position_reads;
+    mfoc_result_t position_run;
+    mfoc_result_t position_step;
     mfoc_result_t feedback_step;
     mfoc_result_t calibration;
     unsigned calibrations;
@@ -34,7 +37,9 @@ typedef struct {
     mfoc_result_t port_init;
     bool bus_configured;
     unsigned port_inits;
-    int64_t time_ms;
+    mfoc_port_cfg_t port_cfg;
+    mfoc_feedback_cfg_t feedback_cfg;
+    mfoc_tick_t time_ms;
 } motor_port_fake_t;
 extern motor_port_fake_t motor_port_fake;
 #endif

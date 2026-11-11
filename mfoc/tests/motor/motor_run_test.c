@@ -23,6 +23,9 @@ static void setup(mfoc_motor_t *motor)
     mfoc_pi_params_t pi = {MFOC_SCALAR(0.5f), MFOC_SCALAR(0.01f),
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     mfoc_motor_cfg_t cfg = {
+        .current_base_milliamp = 10000U,
+        .voltage_base_millivolt = 12000U,
+        .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.2f), MFOC_SCALAR(0.4f), MFOC_ZERO},
         .limits = {.i_max = MFOC_SCALAR(0.8f)},
@@ -58,6 +61,9 @@ static void speed_acquisition(void)
     const mfoc_pi_params_t pi = {MFOC_HALF, MFOC_SCALAR(0.01f),
         -MFOC_HALF, MFOC_HALF, -MFOC_HALF, MFOC_HALF};
     const mfoc_motor_cfg_t cfg = {
+        .current_base_milliamp = 10000U,
+        .voltage_base_millivolt = 12000U,
+        .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
         .params = {7U, MFOC_HALF, MFOC_ONE, MFOC_ONE, MFOC_HALF, 0},
         .limits = {MFOC_ONE, MFOC_ONE}, .core = {pi, pi, MFOC_ONE},
         .speed = pi, .speed_divider = 3U};
@@ -160,12 +166,34 @@ static void fixed_angle(void)
     assert(motor.state == MFOC_MOTOR_IDLE && !motor_port_fake.enabled);
 }
 
+/** @brief Alignment uses the complete Port clock across a 32-bit wrap.
+ * @return None. */
+static void wide_clock_alignment(void)
+{
+    mfoc_motor_t motor = {0};
+    setup(&motor);
+    motor_port_fake.time_ms = UINT64_C(0x1fffffff0);
+    assert(mfoc_motor_AlignStart(&motor, MFOC_SCALAR(0.2f),
+        MFOC_SCALAR(0.25f)) == MFOC_RESULT_OK);
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor_port_fake.calibrations == 0U);
+    motor_port_fake.time_ms += MFOC_MOTOR_ALIGN_TIME_MS - 1U;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor_port_fake.calibrations == 0U && motor_port_fake.enabled);
+    /* Low 32 bits alone still indicate an unexpired hold after this jump. */
+    motor_port_fake.time_ms += UINT64_C(0x100000000);
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor_port_fake.calibrations == 1U);
+    assert(motor.state == MFOC_MOTOR_IDLE && !motor_port_fake.enabled);
+}
+
 /** @brief Exercise the complete port-bound current-control path.
  * @return Zero if every assertion passes. */
 int main(void)
 {
     mfoc_motor_t motor = {0};
     fixed_angle();
+    wide_clock_alignment();
     sensorless_speed_acquisition();
     mfoc_dq_t ref = {MFOC_SCALAR(0.2f), MFOC_SCALAR(-0.1f)};
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_INVALID_STATE);
@@ -185,6 +213,7 @@ int main(void)
     assert(motor.previous_core_output.u.qD > MFOC_ZERO &&
            motor.previous_core_output.u.qQ < MFOC_ZERO);
     assert(motor_port_fake.writes == 2U); /* Start plus one Step. */
+    assert(motor_port_fake.enables == 1U); /* Step only updates duty. */
     assert(motor.previous_core_output_valid);
     assert(motor.previous_core_output.duty.qU == motor_port_fake.duty.qU);
     assert(mfoc_motor_SetBus(&motor, MFOC_SCALAR(0.9f)) == MFOC_RESULT_OK);

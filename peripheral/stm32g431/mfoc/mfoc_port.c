@@ -7,8 +7,9 @@
 #include "mfoc_port.h"
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_encoder.h"
 #include "mdi/instance.h"
+#include "mdi/service.h"
 #include "perf_counter.h"
 #include <stddef.h>
 #include <limits.h>
@@ -21,17 +22,14 @@
 
 #define MFOC_PORT_BUS_MV_PER_COUNT_NUM UINT32_C(20570)
 #define MFOC_PORT_BUS_MV_PER_COUNT_DEN UINT32_C(2457)
-#define MFOC_PORT_BUS_BASE_MILLIVOLT MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT
 #define MFOC_PORT_BUS_OFFSET_MILLIVOLT INT32_C(0)
 #define MFOC_PORT_BUS_MAX_MILLIVOLT UINT32_C(60000)
 #define MFOC_PORT_ADC_SUM_COUNTS_PER_AMP UINT32_C(136)
-#define MFOC_PORT_COUNTS_PER_BASE \
-    ((MFOC_PORT_ADC_SUM_COUNTS_PER_AMP * \
-      MFOC_MOTOR_BASE_CURRENT_MILLIAMP + 500U) / 1000U)
+#define MFOC_PORT_POSITION_SAMPLE_US UINT32_C(1000)
 /* Preserve G431 legacy current feedback: (calibrated offset - ADC raw). */
 #define MFOC_PORT_CURRENT_INVERTED 1U
 
-#if MFOC_FEEDBACK_ENABLE_ENCODER
+#if MFOC_FEEDBACK_ENABLE_POSITION
 /** @brief Restore the AS5600 SF=3 reference used in the SMO bench tests.
  * @return IO on transfer failure, SAFETY on configuration mismatch.
  * @note Startup only with outputs gated; preserve all other CONF bits.
@@ -61,25 +59,23 @@ static mfoc_result_t _mfoc_port_EncoderInit(void)
 #endif
     return MFOC_RESULT_OK;
 }
-#endif
 
-/** @brief Read the fixed AS5600 provider through the MDI register contract.
- * @param angle Mechanical BAM32. @return Read status. */
-mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+/** @brief Convert one fresh board encoder sample to the component's BAM32.
+ * @param angle Mechanical BAM32. @return OK or IO on transfer failure. */
+static mfoc_result_t _mfoc_port_ReadMechanical(mfoc_angle_t *angle)
 {
-    if (angle == NULL) { return MFOC_RESULT_NULL; }
-    uint8_t data[2] = {0U, 0U};
-    mdi_status_t rc = MDI_I2C_Reg8_Read(encoder_angle, 0x0CU, data, 2U);
+    uint16_t raw = 0U;
+    mdi_status_t rc = mdi_g431_encoder_ReadRaw(&raw);
     if (rc != MDI_OK) { return MFOC_RESULT_IO; }
-    angle->wBam32 = ((((uint32_t)data[0] << 8U) |
-        (uint32_t)data[1]) & UINT32_C(0x0FFF)) << 20U;
+    angle->wBam32 = (uint32_t)raw << 20U;
     return MFOC_RESULT_OK;
 }
+#endif
 
-/** @brief Read the board's raw tick source. @return Low 32-bit ticks. */
-uint32_t mfoc_port_tick(void)
+/** @brief Read the board's full raw tick source. @return Raw ticks. */
+mfoc_tick_t mfoc_port_tick(void)
 {
-    return (uint32_t)MDI_TICK_Now(raw_tick);
+    return (mfoc_tick_t)MDI_TICK_Now(raw_tick);
 }
 
 /** @brief Read the initialized raw timer frequency. @return Ticks/second. */
@@ -94,16 +90,21 @@ uint32_t mfoc_port_tick_frequency(void)
 #endif
 #if MFOC_PORT_BUS_MV_PER_COUNT_NUM == 0U || \
     MFOC_PORT_BUS_MV_PER_COUNT_DEN == 0U || \
-    MFOC_PORT_BUS_BASE_MILLIVOLT == 0U || \
     MFOC_PORT_BUS_MAX_MILLIVOLT == 0U
 #error "DC-bus conversion settings must be positive"
 #endif
 
-/** @brief Current conversion settings for the bound ADC/PWM stage. */
+/** @brief Conversion and position owner for the bound ADC/PWM stage. */
 typedef struct {
     uint32_t offset_u;
     uint32_t offset_v;
     uint32_t offset_w;
+    uint32_t voltage_base_millivolt;
+#if MFOC_FEEDBACK_ENABLE_POSITION
+    mfoc_encoder_t encoder;
+    mfoc_tick_t position_period_ticks;
+    mfoc_tick_t last_position_tick;
+#endif
 #if defined(MFOC_NUMERIC_FIXED)
     int32_t gain_q30; /* Signed 2^30/counts_per_base; private precision. */
 #else
@@ -112,8 +113,9 @@ typedef struct {
     bool configured;
 } mfoc_mdi_port_t;
 
-/* Port-owned singleton settings for phase_current_completed/bridge.
- * Init publishes them only while stopped and serialized with the control ISR. */
+/* One board-owned stage bound to phase_current_completed/bridge/encoder_angle.
+ * Init is stopped and serialized with ISR. Foreground Run publishes encoder
+ * samples; the higher-priority ISR reader completes before Run resumes. */
 static mfoc_mdi_port_t s_port = {0};
 
 /** @brief Read ten spaced ADC frames and store their phase means.
@@ -144,39 +146,61 @@ static mfoc_result_t _mfoc_port_MeasureOffsets(mfoc_mdi_port_t *port)
     return MFOC_RESULT_OK;
 }
 
-/** @brief Verify encoder configuration and prepare current conversion.
+/** @brief Verify encoder configuration and prepare explicit unit conversion.
+ * @param cfg Common Motor bases and pole-pair count.
  * @return Status; failure preserves the previous port settings.
  * @note Call before the control IRQ is enabled, with ADC triggering active
  * and phase outputs gated. No bus acquisition or IRQ management occurs here.
  * Scale is 1..2^30 to retain a nonzero Q30 reciprocal. */
-mfoc_result_t mfoc_port_init(void)
+mfoc_result_t mfoc_port_init(const mfoc_port_cfg_t *cfg)
 {
+    if (cfg == NULL) { return MFOC_RESULT_NULL; }
     if (MDI_OP(bridge, _pwm_AnyOutputEnabled)()) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    if (MFOC_PORT_COUNTS_PER_BASE == 0U) {
+    uint64_t counts_per_base =
+        ((uint64_t)MFOC_PORT_ADC_SUM_COUNTS_PER_AMP *
+        cfg->current_base_milliamp + UINT64_C(500)) / UINT64_C(1000);
+    if (counts_per_base == 0U || cfg->voltage_base_millivolt == 0U) {
         return MFOC_RESULT_INVALID_ARGUMENT;
     }
-    if (MFOC_PORT_COUNTS_PER_BASE > MFOC_PORT_GAIN_SCALE) {
+    if (counts_per_base > MFOC_PORT_GAIN_SCALE) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
     mfoc_result_t rc = MFOC_RESULT_OK;
-#if MFOC_FEEDBACK_ENABLE_ENCODER
+    mfoc_mdi_port_t next = {0};
+#if MFOC_FEEDBACK_ENABLE_POSITION
+    uint32_t tick_hz = mfoc_port_tick_frequency();
+    const mfoc_encoder_cfg_t encoder_cfg = {
+        .electrical_speed_base_hz = cfg->electrical_speed_base_hz,
+        .speed_filter_alpha = MFOC_SCALAR(0.25f),
+        .electrical_zero = {0U},
+        .timeout_ms = 20U,
+        .inverted = false,
+    };
+    rc = mfoc_encoder_Init(&next.encoder, &encoder_cfg, cfg->pole_pairs,
+        tick_hz);
+    if (rc != MFOC_RESULT_OK) { return rc; }
     rc = _mfoc_port_EncoderInit();
     if (rc != MFOC_RESULT_OK) { return rc; }
+    next.position_period_ticks = ((mfoc_tick_t)tick_hz *
+        MFOC_PORT_POSITION_SAMPLE_US + UINT64_C(999999)) / UINT64_C(1000000);
 #endif
-    mfoc_mdi_port_t next = {0};
     rc = _mfoc_port_MeasureOffsets(&next);
     if (rc != MFOC_RESULT_OK) { return rc; }
+    next.voltage_base_millivolt = cfg->voltage_base_millivolt;
+#if MFOC_FEEDBACK_ENABLE_POSITION
+    next.last_position_tick = mfoc_port_tick() - next.position_period_ticks;
+#endif
     next.configured = true;
 #if defined(MFOC_NUMERIC_FIXED)
     next.gain_q30 = (int32_t)(MFOC_PORT_GAIN_SCALE /
-                              MFOC_PORT_COUNTS_PER_BASE);
+                              (uint32_t)counts_per_base);
     if (MFOC_PORT_CURRENT_INVERTED != 0U) {
         next.gain_q30 = -next.gain_q30;
     }
 #else
-    next.gain = 1.0f / (mfoc_scalar_t)MFOC_PORT_COUNTS_PER_BASE;
+    next.gain = 1.0f / (mfoc_scalar_t)counts_per_base;
     if (MFOC_PORT_CURRENT_INVERTED != 0U) { next.gain = -next.gain; }
 #endif
     s_port = next;
@@ -187,6 +211,50 @@ mfoc_result_t mfoc_port_init(void)
 #endif
     return MFOC_RESULT_OK;
 }
+
+#if MFOC_FEEDBACK_ENABLE_POSITION
+/** @brief Refresh the board-owned encoder at its existing 1 ms cadence.
+ * @return Read/update status. Foreground only; failed reads keep history. */
+mfoc_result_t mfoc_port_position_run(void)
+{
+    if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
+    mfoc_tick_t now = mfoc_port_tick();
+    if (now - s_port.last_position_tick < s_port.position_period_ticks) {
+        return MFOC_RESULT_OK;
+    }
+    s_port.last_position_tick = now;
+    mfoc_angle_t mechanical = {0U};
+    mfoc_result_t rc = _mfoc_port_ReadMechanical(&mechanical);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    return mfoc_encoder_Update(&s_port.encoder, mechanical, mfoc_port_tick());
+}
+
+/** @brief Extrapolate the published board position without sensor I/O.
+ * @param angle Electrical BAM32. @param speed Electrical speed PU.
+ * @return Snapshot status. ISR only; output pointers must be valid. */
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
+{
+    if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
+    return mfoc_encoder_Step(&s_port.encoder, mfoc_port_tick(), angle, speed);
+}
+
+/** @brief Set board position zero from a rotor held at a known field angle.
+ * @param held_angle Electrical BAM32. @return Read/calibration status.
+ * @note Foreground with readers excluded, or during a fixed-angle hold where
+ * measured position does not control the applied field. */
+mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t held_angle)
+{
+    if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
+    mfoc_angle_t mechanical = {0U};
+    mfoc_result_t rc = _mfoc_port_ReadMechanical(&mechanical);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    mfoc_tick_t now = mfoc_port_tick();
+    rc = mfoc_encoder_CalibrateZero(&s_port.encoder, mechanical, held_angle,
+        now);
+    if (rc == MFOC_RESULT_OK) { s_port.last_position_tick = now; }
+    return rc;
+}
+#endif
 
 /** @brief Convert one published DC-bus ADC mean to Vdc/Vbase.
  * @param bus Destination; unchanged on failure. @return Sample status. */
@@ -212,13 +280,13 @@ mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
     mfoc_scalar_t next = MFOC_ZERO;
 #if defined(MFOC_NUMERIC_FIXED)
     int64_t pu = (millivolt * MFOC_Q_SCALE +
-        (int64_t)MFOC_PORT_BUS_BASE_MILLIVOLT / 2) /
-        (int64_t)MFOC_PORT_BUS_BASE_MILLIVOLT;
+        (int64_t)s_port.voltage_base_millivolt / 2) /
+        (int64_t)s_port.voltage_base_millivolt;
     if (pu <= 0 || pu > INT32_MAX) { return MFOC_RESULT_OUT_OF_RANGE; }
     next = (mfoc_scalar_t)pu;
 #else
     next = (mfoc_scalar_t)millivolt /
-        (mfoc_scalar_t)MFOC_PORT_BUS_BASE_MILLIVOLT;
+        (mfoc_scalar_t)s_port.voltage_base_millivolt;
 #endif
     *bus = next;
     return MFOC_RESULT_OK;
@@ -270,12 +338,10 @@ static uint32_t _mfoc_port_DutyQ16(mfoc_scalar_t duty)
 #endif
 }
 
-/** @brief Write trusted duties, then optionally enable the bridge.
- * @param duty Normalized command. @param start True only for startup.
- * @return Submission/enable status.
- * @note G431 compare preload is disabled, so neutral duty is effective before
- * MDI Enable opens the phase gates. ISR submissions never enable outputs. */
-mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty, bool start)
+/** @brief Write trusted duties without changing output gates.
+ * @param duty Normalized command. @return Submission status.
+ * @note ISR submissions never enable outputs. */
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
 {
     MDI_PWM_DutyFrame(bridge) frame = {
         .u = _mfoc_port_DutyQ16(duty->qU),
@@ -286,8 +352,18 @@ mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty, bool start)
     if (status != MDI_OK) {
         return status == MDI_RANGE ? MFOC_RESULT_OUT_OF_RANGE : MFOC_RESULT_IO;
     }
-    if (!start) { return MFOC_RESULT_OK; }
-    status = MDI_PWM_Enable(bridge, true);
+    return MFOC_RESULT_OK;
+}
+
+/** @brief Load initial duties before enabling the phase gates.
+ * @param initial_duty Normalized startup command. @return Startup status.
+ * @note G431 compare preload is disabled, so duty is already effective when
+ * MDI Enable opens the phase gates. */
+mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
+{
+    mfoc_result_t rc = mfoc_port_pwm(initial_duty);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    mdi_status_t status = MDI_PWM_Enable(bridge, true);
     if (status == MDI_BUSY) { return MFOC_RESULT_SAFETY; }
     return status == MDI_OK ? MFOC_RESULT_OK : MFOC_RESULT_IO;
 }

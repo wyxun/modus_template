@@ -11,32 +11,13 @@
 
 motor_port_fake_t motor_port_fake;
 
-/** @brief Use milliseconds as test timer ticks. @param ms Milliseconds.
- * @return Test ticks. */
-int64_t perfc_convert_ms_to_ticks(uint32_t ms)
-{
-    return (int64_t)ms;
-}
-
-/** @brief Model the perfc deadline using the injected foreground clock.
- * @param period Duration. @param deadline Instance timer slot.
- * @param reload Restart on expiry. @return True when elapsed. */
-bool __perfc_is_time_out(int64_t period, int64_t *deadline, bool reload)
-{
-    if (*deadline == 0) {
-        *deadline = motor_port_fake.time_ms + period;
-        return false;
-    }
-    if (motor_port_fake.time_ms < *deadline) { return false; }
-    if (reload) { *deadline = motor_port_fake.time_ms + period; }
-    return true;
-}
-
 #if !defined(MFOC_TEST_REAL_PORT)
 /** @brief Record direct Motor current-port initialization.
- * @return Injected result. */
-mfoc_result_t mfoc_port_init(void)
+ * @param cfg Common unit configuration. @return Injected result. */
+mfoc_result_t mfoc_port_init(const mfoc_port_cfg_t *cfg)
 {
+    assert(cfg != NULL);
+    motor_port_fake.port_cfg = *cfg;
     ++motor_port_fake.port_inits;
     if (motor_port_fake.port_init == MFOC_RESULT_OK &&
         !motor_port_fake.bus_configured) {
@@ -68,10 +49,46 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
     return motor_port_fake.sample;
 }
 
+/** @brief Read the full injected foreground clock. @return Milliseconds. */
+mfoc_tick_t mfoc_port_tick(void) { return motor_port_fake.time_ms; }
+
+/** @brief Give the injected clock scale. @return Ticks per second. */
+uint32_t mfoc_port_tick_frequency(void) { return 1000U; }
+
+/** @brief Record foreground position refresh. @return Injected result. */
+mfoc_result_t mfoc_port_position_run(void)
+{
+    ++motor_port_fake.position_runs;
+    return motor_port_fake.position_run;
+}
+
+/** @brief Supply one coherent electrical position result.
+ * @param angle Electrical BAM32. @param speed Electrical speed PU.
+ * @return Injected result; failure preserves both outputs. */
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
+{
+    ++motor_port_fake.position_reads;
+    if (motor_port_fake.position_step == MFOC_RESULT_OK) {
+        *angle = motor_port_fake.feedback.angle;
+        *speed = motor_port_fake.feedback.speed;
+    }
+    return motor_port_fake.position_step;
+}
+
+/** @brief Require calibration while the fixed field is energized.
+ * @param angle Held electrical angle. @return Injected status. */
+mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t angle)
+{
+    assert(motor_port_fake.enabled);
+    ++motor_port_fake.calibrations;
+    motor_port_fake.held_angle = angle;
+    return motor_port_fake.calibration;
+}
+
 #endif
 
 /** @brief Initialize the test-only feedback service.
- * @param feedback Instance. @param cfg Unused settings.
+ * @param feedback Instance. @param cfg Captured settings.
  * @param model Motor constants. @return OK, or INVALID_ARGUMENT for a model
  * the real Feedback would refuse through its enabled observers.
  * @note Motor delegates model validation to Feedback, so this fake repeats the
@@ -79,7 +96,7 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model)
 {
-    (void)cfg;
+    motor_port_fake.feedback_cfg = *cfg;
     if (feedback == NULL || model == NULL ||
         model->pole_pairs == 0U ||
         !mfoc_scalar_is_finite(model->rs) || model->rs <= MFOC_ZERO ||
@@ -91,15 +108,6 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     }
     feedback->initialized = true;
     return MFOC_RESULT_OK;
-}
-
-/** @brief Record foreground service routing. @param feedback Instance.
- * @return Injected result, or INVALID_STATE before Init. */
-mfoc_result_t mfoc_feedback_Run(mfoc_feedback_t *feedback)
-{
-    if (!feedback->initialized) { return MFOC_RESULT_INVALID_STATE; }
-    ++motor_port_fake.feedback_runs;
-    return motor_port_fake.feedback_run;
 }
 
 /** @brief Reset HFI state before the Motor's normal startup.
@@ -114,17 +122,6 @@ mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
     (void)feedback;
     return MFOC_RESULT_INVALID_STATE;
 #endif
-}
-
-/** @brief Require calibration to occur while the fixed field is energized.
- * @param feedback Instance. @param angle Held angle. @return Injected status. */
-mfoc_result_t mfoc_feedback_CalibrateZero(mfoc_feedback_t *feedback,
-    mfoc_angle_t angle)
-{
-    assert(feedback->initialized && motor_port_fake.enabled);
-    ++motor_port_fake.calibrations;
-    motor_port_fake.held_angle = angle;
-    return motor_port_fake.calibration;
 }
 
 /** @brief Inject feedback to isolate Motor scheduling from its algorithm.
@@ -143,22 +140,28 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 }
 
 #if !defined(MFOC_TEST_REAL_PORT)
-/** @brief Record duty before an optional startup, with injected failures.
- * @param duty Command. @param start Whether to enable. @return Test status. */
-mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty, bool start)
+/** @brief Record duty without changing gate state.
+ * @param duty Command. @return Injected write status. */
+mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
 {
     ++motor_port_fake.writes;
     motor_port_fake.duty = *duty;
     if (motor_port_fake.write != MFOC_RESULT_OK) {
         return motor_port_fake.write;
     }
-    if (start) {
-        ++motor_port_fake.enables;
-        /* A failed enable may still require shutdown. */
-        motor_port_fake.enabled = true;
-        return motor_port_fake.enable;
-    }
     return MFOC_RESULT_OK;
+}
+
+/** @brief Load initial duty before enabling phase outputs.
+ * @param initial_duty Startup command. @return Injected write/enable status. */
+mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
+{
+    mfoc_result_t rc = mfoc_port_pwm(initial_duty);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    ++motor_port_fake.enables;
+    /* A failed enable may still require shutdown. */
+    motor_port_fake.enabled = true;
+    return motor_port_fake.enable;
 }
 
 /** @brief Disable only on successful hardware shutdown.

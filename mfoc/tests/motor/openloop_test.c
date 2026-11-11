@@ -79,6 +79,9 @@ static mfoc_motor_cfg_t config(void)
     const mfoc_pi_params_t pi = {MFOC_HALF, MFOC_SCALAR(0.01f),
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     const mfoc_motor_cfg_t cfg = {
+        .current_base_milliamp = 10000U,
+        .voltage_base_millivolt = 12000U,
+        .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.2f), MFOC_ONE, MFOC_ZERO},
         .limits = {MFOC_HALF, MFOC_SCALAR(0.75f)},
@@ -120,7 +123,7 @@ static void lifecycle(void)
     assert(motor.openloop.mode == MFOC_OPENLOOP_ALIGN);
     assert(motor.mode == MFOC_MOTOR_MODE_CURRENT);
     motor_port_fake.feedback_step = MFOC_RESULT_INVALID_STATE;
-    motor_port_fake.feedback_run = MFOC_RESULT_IO;
+    motor_port_fake.position_run = MFOC_RESULT_IO;
     for (unsigned i = 0U; i < 10U; ++i) {
         assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
         assert(motor.openloop.angle.wBam32 == 0U);

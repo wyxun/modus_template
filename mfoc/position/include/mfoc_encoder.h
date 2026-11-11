@@ -1,6 +1,6 @@
 /**
  * @file mfoc_encoder.h
- * @brief Foreground encoder sampling and ISR electrical feedback.
+ * @brief Encoder measurement processing and ISR electrical feedback.
  * @author wyxun
  * @date 2026-10-21
  */
@@ -18,24 +18,24 @@ typedef struct {
     mfoc_scalar_t electrical_speed_base_hz;
     mfoc_scalar_t speed_filter_alpha;
     mfoc_angle_t electrical_zero;
-    uint32_t sample_period_us;
     uint32_t timeout_ms;
     bool inverted;
 } mfoc_encoder_cfg_t;
 
-/** @brief One published mechanical sample, with read-completion timestamp. */
+/** @brief One published mechanical sample with its supplied timestamp. */
 typedef struct {
     mfoc_angle_t angle;
     mfoc_scalar_t speed; /**< Mechanical turns/s, before PU conversion. */
-    mfoc_scalar_t speed_pu; /**< Electrical speed PU, prepared by Run. */
-    uint32_t tick;
+    mfoc_scalar_t speed_pu; /**< Electrical speed PU, prepared by Update. */
+    mfoc_tick_t tick;
 } mfoc_encoder_sample_t;
 
 /** @brief Single foreground writer and higher-priority ISR reader.
  * Volatile slots are fully written before the byte index is published.
  * The reader must complete before foreground resumes; no concurrent cores,
- * DMA writers, or ISR calls to Run are supported. Init precedes IRQ enable.
- * Tick arithmetic uses low 32 bits; service within one full clock wrap. */
+ * DMA writers, or ISR calls to Update are supported. Init precedes IRQ enable.
+ * The caller supplies a common monotonic clock; only bounded intervals are
+ * narrowed after the timeout comparison. Sampling cadence belongs to it. */
 typedef struct {
     volatile mfoc_encoder_sample_t samples[2];
     volatile uint8_t published; /**< 0/1 slot index, 2 means no sample. */
@@ -43,41 +43,45 @@ typedef struct {
     mfoc_scalar_t filter_alpha;
     mfoc_angle_t electrical_zero;
     uint32_t tick_hz;
-    uint32_t period_ticks;
     uint32_t timeout_ticks;
-    uint32_t last_poll_tick;
     uint16_t pole_pairs;
     bool inverted;
 } mfoc_encoder_t;
 
 /** @brief Initialize coefficients; failure preserves the destination.
  * @param encoder Instance. @param cfg Encoder settings.
- * @param pole_pairs Motor pole-pair count. @return Configuration status. */
+ * @param pole_pairs Motor pole-pair count. @param tick_hz Clock frequency.
+ * @return Configuration status. */
 mfoc_result_t mfoc_encoder_Init(mfoc_encoder_t *encoder,
-    const mfoc_encoder_cfg_t *cfg, uint16_t pole_pairs);
+    const mfoc_encoder_cfg_t *cfg, uint16_t pole_pairs, uint32_t tick_hz);
 
-/** @brief Read and publish when the sample period elapses; no delay loop.
- * @param encoder Instance. @return OK, INVALID_STATE, or port read error.
- * @note Foreground only. Read errors retain the prior snapshot; Step rejects
- * it after timeout. First Run reads immediately and publishes zero speed. */
-mfoc_result_t mfoc_encoder_Run(mfoc_encoder_t *encoder);
+/** @brief Process and publish one successfully acquired mechanical sample.
+ * @param encoder Instance. @param mechanical_angle Mechanical BAM32.
+ * @param sample_tick Measurement timestamp. @return OK or state error.
+ * @note Foreground only. The caller handles failed reads without updating.
+ * First or post-timeout samples publish zero speed; equal ticks are ignored. */
+mfoc_result_t mfoc_encoder_Update(mfoc_encoder_t *encoder,
+    mfoc_angle_t mechanical_angle, mfoc_tick_t sample_tick);
 
 /** @brief Capture electrical zero from a rotor held at a known angle.
- * @param encoder Initialized instance. @param angle Held electrical angle.
- * @return Sensor/state status; failed reads preserve the calibration.
+ * @param encoder Initialized instance. @param mechanical_angle Fresh sample.
+ * @param held_angle Held electrical angle. @param sample_tick Sample time.
+ * @return State status; the caller does not call this after a failed read.
  * @note Foreground only, while Step is excluded or uses a fixed angle.
- * One fresh read; direction must already match the phase sequence.
+ * Direction must already match the phase sequence.
  * Clears velocity history to avoid extrapolating the held position. */
 mfoc_result_t mfoc_encoder_CalibrateZero(mfoc_encoder_t *encoder,
-    mfoc_angle_t angle);
+    mfoc_angle_t mechanical_angle, mfoc_angle_t held_angle,
+    mfoc_tick_t sample_tick);
 
 /** @brief Copy fresh feedback, extrapolating angle to the current tick.
- * @param encoder Instance. @param angle Electrical BAM32 output.
+ * @param encoder Instance. @param now Current timestamp on the sample clock.
+ * @param angle Electrical BAM32 output.
  * @param speed Electrical speed PU output. @return OK or sample/state error.
  * @note Valid pointers and initialized encoder are required. ISR only;
- * speed is copied from Run's snapshot without conversion.
+ * speed is copied from Update's snapshot without conversion.
  * No hardware bus access. Failure preserves both outputs. */
 mfoc_result_t mfoc_encoder_Step(const mfoc_encoder_t *encoder,
-    mfoc_angle_t *angle, mfoc_scalar_t *speed);
+    mfoc_tick_t now, mfoc_angle_t *angle, mfoc_scalar_t *speed);
 
 #endif

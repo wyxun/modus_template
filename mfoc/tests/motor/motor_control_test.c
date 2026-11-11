@@ -18,6 +18,9 @@ static mfoc_motor_cfg_t config(uint16_t divider)
     mfoc_pi_params_t pi = {MFOC_HALF, MFOC_SCALAR(0.01f),
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     mfoc_motor_cfg_t cfg = {
+        .current_base_milliamp = 10000U,
+        .voltage_base_millivolt = 12000U,
+        .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
         .params = {7U, MFOC_SCALAR(0.1f), MFOC_SCALAR(0.2f),
             MFOC_SCALAR(0.2f), MFOC_SCALAR(0.4f), MFOC_ZERO},
         .limits = {.i_max = MFOC_SCALAR(0.8f),
@@ -59,11 +62,11 @@ static void initialization(void)
     motor_port_fake.bus_sample = MFOC_RESULT_OK;
     assert(motor.state == MFOC_MOTOR_IDLE);
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
-    assert(motor_port_fake.feedback_runs == 1U);
-    motor_port_fake.feedback_run = MFOC_RESULT_IO;
+    assert(motor_port_fake.position_runs == 1U);
+    motor_port_fake.position_run = MFOC_RESULT_IO;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_IO);
     assert(motor.state == MFOC_MOTOR_IDLE);
-    motor_port_fake.feedback_run = MFOC_RESULT_OK;
+    motor_port_fake.position_run = MFOC_RESULT_OK;
     mfoc_motor_t saved = motor;
     cfg = config(0U);
     motor_port_fake.port_init = MFOC_RESULT_IO;
@@ -250,7 +253,7 @@ static void alignment(void)
     assert(mfoc_motor_AlignStart(&motor, -MFOC_HALF, MFOC_ZERO) ==
            MFOC_RESULT_OUT_OF_RANGE);
     assert(!motor_port_fake.enabled);
-    motor_port_fake.feedback_run = MFOC_RESULT_IO;
+    motor_port_fake.position_run = MFOC_RESULT_IO;
     motor_port_fake.time_ms = 100;
     assert(mfoc_motor_AlignStart(&motor, MFOC_SCALAR(0.2f),
         MFOC_SCALAR(0.25f)) == MFOC_RESULT_OK);
@@ -269,11 +272,11 @@ static void alignment(void)
     assert(motor.previous_core_output.m.qBeta > MFOC_ZERO);
     motor_port_fake.time_ms += MFOC_MOTOR_ALIGN_TIME_MS - 1U;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
-    assert(motor_port_fake.enabled && motor_port_fake.feedback_runs == 1U);
+    assert(motor_port_fake.enabled && motor_port_fake.position_runs == 1U);
     motor_port_fake.time_ms++;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
     assert(!motor_port_fake.enabled && !motor.hold_active);
-    assert(motor_port_fake.feedback_runs == 2U);
+    assert(motor_port_fake.position_runs == 2U);
     assert(motor_port_fake.calibrations == 1U);
     assert(motor_port_fake.held_angle.wBam32 == UINT32_C(0x40000000));
     assert(motor.i_ref.qD == MFOC_ZERO);

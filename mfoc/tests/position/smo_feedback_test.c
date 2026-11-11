@@ -11,18 +11,20 @@
 #include <stdio.h>
 #include <string.h>
 
-static uint32_t tick;
-static mfoc_result_t encoder_result;
-/** @brief Supply the test clock. @return Microseconds. */
-uint32_t mfoc_port_tick(void) { return tick; }
-/** @brief Supply the test clock scale. @return Ticks per second. */
-uint32_t mfoc_port_tick_frequency(void) { return 1000000U; }
-/** @brief Hold the rotor at a known mechanical angle.
- * @param angle Destination. @return OK. */
-mfoc_result_t mfoc_port_encoder(mfoc_angle_t *angle)
+static mfoc_result_t position_result;
+static unsigned position_reads;
+
+/** @brief Supply one electrical position result from an external provider.
+ * @param angle Electrical BAM32. @param speed Electrical speed PU.
+ * @return Injected status; failure leaves both outputs unchanged. */
+mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    *angle = (mfoc_angle_t){0x10000000U};
-    return encoder_result;
+    ++position_reads;
+    if (position_result == MFOC_RESULT_OK) {
+        *angle = (mfoc_angle_t){UINT32_C(0x70000000)};
+        *speed = MFOC_SCALAR(0.125f);
+    }
+    return position_result;
 }
 
 /** @brief Check shadow execution, output selection and missing-frame reset.
@@ -32,9 +34,6 @@ int main(void)
     mfoc_motor_params_t model = {.pole_pairs = 7U,
         .rs = MFOC_ONE, .ld = MFOC_ONE, .lq = MFOC_ONE, .flux = MFOC_HALF};
     mfoc_feedback_cfg_t cfg = {
-        .encoder = {.electrical_speed_base_hz = MFOC_SCALAR(400.0f),
-            .speed_filter_alpha = MFOC_ONE, .sample_period_us = 1000U,
-            .timeout_ms = 10U},
         .smo = {.sample_hz = MFOC_MOTOR_RUN_FREQ_HZ, .cutoff_rad_s = 4000U,
             .speed_base_hz = MFOC_SCALAR(400.0f),
             .h = MFOC_SCALAR(5.0f / 12.0f),
@@ -43,10 +42,10 @@ int main(void)
     mfoc_feedback_output_t output = {
         .angle = {0x12345678U}, .speed = MFOC_HALF};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
-    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, NULL, &output);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK && output.angle.wBam32 == 0x70000000U);
+    assert(output.speed == MFOC_SCALAR(0.125f));
 #else
     assert(rc == MFOC_RESULT_INVALID_STATE);
     assert(output.angle.wBam32 == 0x12345678U);
@@ -65,22 +64,29 @@ int main(void)
         assert(mfoc_modulation_ModelVoltageAlphaBeta(&previous.duty,
             previous.bus, &voltage) == MFOC_RESULT_OK);
         mfoc_smo_Step(&reference, &current, &voltage, &expected);
+        mfoc_feedback_output_t before_output = output;
         rc = mfoc_feedback_Step(&feedback, &input, &output);
+        if (rc != MFOC_RESULT_OK) {
+            assert(memcmp(&output, &before_output, sizeof(output)) == 0);
+        }
         assert(feedback.smo_status == MFOC_RESULT_OK);
 #if MFOC_FEEDBACK_ENABLE_HFI
         assert(!feedback.hfi_output.valid);
-        assert(output.u_inject_ab.qAlpha ==
-            feedback.hfi_output.u_inject_ab.qAlpha);
-        assert(output.u_inject_ab.qBeta ==
-            feedback.hfi_output.u_inject_ab.qBeta);
-        assert(mfoc_abs(output.u_inject_ab.qAlpha) +
-            mfoc_abs(output.u_inject_ab.qBeta) == MFOC_HFI_VOLTAGE);
+        assert(mfoc_abs(feedback.hfi_output.u_inject_ab.qAlpha) +
+            mfoc_abs(feedback.hfi_output.u_inject_ab.qBeta) ==
+            MFOC_HFI_VOLTAGE);
+        if (rc == MFOC_RESULT_OK) {
+            assert(output.u_inject_ab.qAlpha ==
+                feedback.hfi_output.u_inject_ab.qAlpha);
+            assert(output.u_inject_ab.qBeta ==
+                feedback.hfi_output.u_inject_ab.qBeta);
+        }
 #endif
         assert(feedback.smo_output.angle.wBam32 == expected.angle.wBam32);
         assert(feedback.smo_output.speed == expected.speed);
         assert(feedback.smo.axis[0].i_hat == reference.axis[0].i_hat);
         assert(feedback.smo.axis[1].e_hat == reference.axis[1].e_hat);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
         assert(rc == MFOC_RESULT_OK);
         assert(output.angle.wBam32 == 0x70000000U);
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
@@ -94,8 +100,8 @@ int main(void)
 #endif
         previous.bus = j % 2U == 0U ? MFOC_ONE : MFOC_SCALAR(2.0f);
     }
-    /* An expired encoder must not prevent the independent SMO update. */
-    tick = 20000U;
+    /* A failed position provider must not prevent the independent SMO. */
+    position_result = MFOC_RESULT_SAFETY;
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(feedback.smo_status == MFOC_RESULT_OK);
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
@@ -104,14 +110,13 @@ int main(void)
     assert(rc != MFOC_RESULT_OK);
 #endif
     input.previous_core_output = NULL;
-    (void)mfoc_feedback_Step(&feedback, &input, &output);
+    rc = mfoc_feedback_Step(&feedback, &input, &output);
+    assert(rc != MFOC_RESULT_OK);
     assert(feedback.smo_status == MFOC_RESULT_INVALID_STATE);
     assert(!feedback.smo_output.valid && !feedback.smo.has_angle);
     assert(feedback.smo.axis[0].i_hat == MFOC_ZERO);
     assert(feedback.smo.axis[1].e_hat == MFOC_ZERO);
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    mfoc_encoder_t encoder = feedback.encoder;
-#endif
+    unsigned reads = position_reads;
     model.rs = MFOC_HALF;
     model.ld = MFOC_HALF;
     model.lq = MFOC_HALF;
@@ -121,21 +126,21 @@ int main(void)
     assert(feedback.smo.c.ku == reference.c.ku);
     assert(feedback.smo.c.kr == reference.c.kr);
     assert(!feedback.smo_output.valid && !feedback.smo.has_angle);
-#if MFOC_FEEDBACK_ENABLE_ENCODER
-    assert(memcmp(&encoder, &feedback.encoder, sizeof(encoder)) == 0);
-#endif
+    assert(position_reads == reads); /* No position lifecycle in Feedback. */
     mfoc_smo_t retained = feedback.smo;
     model.lq = MFOC_ONE;
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
         MFOC_RESULT_INVALID_ARGUMENT);
     assert(memcmp(&retained, &feedback.smo, sizeof(retained)) == 0);
-    encoder_result = MFOC_RESULT_IO;
-    tick += 20000U;
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_ENCODER
-    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_IO);
+    position_result = MFOC_RESULT_IO;
+    mfoc_feedback_output_t before_output = output;
+    rc = mfoc_feedback_Step(&feedback, NULL, &output);
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
+    assert(rc == MFOC_RESULT_IO);
 #else
-    assert(mfoc_feedback_Run(&feedback) == MFOC_RESULT_OK);
+    assert(rc == MFOC_RESULT_INVALID_STATE);
 #endif
+    assert(memcmp(&output, &before_output, sizeof(output)) == 0);
     puts("Feedback preparation, selection and model refresh passed");
     return 0;
 }

@@ -8,8 +8,8 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
-#include "mfoc_motor.h"
-#include "motor_port_fake.h"
+#include "mfoc_port.h"
+#include "mfoc_numeric.h"
 
 static TIM_TypeDef s_tim;
 static ADC_TypeDef s_adc1;
@@ -34,14 +34,17 @@ static COMP_TypeDef s_comp4;
 #define COMP4 (&s_comp4)
 
 static bool s_feed_current;
+static const mfoc_port_cfg_t s_cfg = {
+    .current_base_milliamp = 3500U,
+    .voltage_base_millivolt = 12000U,
+    .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
+    .pole_pairs = 7U,
+};
 
 #include "../../../peripheral/stm32g431/mfoc/mfoc_port.c"
+#include "../../../peripheral/stm32g431/mdi/state.c"
+#include "../../../peripheral/stm32g431/mdi/service.c"
 
-volatile bool g_bG431JeosConsumed;
-volatile uint32_t g_awG431AdcMean[G431_ADC_CHANNEL_COUNT];
-volatile uint32_t g_wG431AdcSequence;
-volatile bool g_bG431AdcMeanValid;
-volatile bool g_bG431FaultLatched;
 static int64_t s_tick;
 
 /** @brief Supply the raw timer for port linkage. @return Fake raw ticks. */
@@ -69,17 +72,17 @@ void perfc_delay_ms(uint32_t ms)
  * @return None. */
 static void _test_Encoder(void)
 {
-    mfoc_angle_t angle = {0U};
-    assert(mfoc_port_encoder(NULL) == MFOC_RESULT_NULL);
+    uint16_t raw = 0U;
+    assert(mdi_g431_encoder_ReadRaw(NULL) == MDI_INVALID);
     I2C1->ISR = I2C_ISR_TXIS | I2C_ISR_TC | I2C_ISR_RXNE | I2C_ISR_STOPF;
     I2C1->RXDR = 0xABU;
-    assert(mfoc_port_encoder(&angle) == MFOC_RESULT_OK);
-    assert(angle.wBam32 == UINT32_C(0xBAB00000));
+    assert(mdi_g431_encoder_ReadRaw(&raw) == MDI_OK);
+    assert(raw == UINT16_C(0xBAB));
     I2C1->ISR = I2C_ISR_NACKF;
-    assert(mfoc_port_encoder(&angle) == MFOC_RESULT_IO);
-    assert(angle.wBam32 == UINT32_C(0xBAB00000));
+    assert(mdi_g431_encoder_ReadRaw(&raw) == MDI_IO_ERROR);
+    assert(raw == UINT16_C(0xBAB));
     s_tick = INT64_C(4294967299);
-    assert(mfoc_port_tick() == 3U);
+    assert(mfoc_port_tick() == UINT64_C(4294967299));
     assert(mfoc_port_tick_frequency() == 1000000U);
 }
 
@@ -116,6 +119,7 @@ static void _test_SetPort(uint32_t u, uint32_t v, uint32_t w,
     s_port.offset_u = u;
     s_port.offset_v = v;
     s_port.offset_w = w;
+    s_port.voltage_base_millivolt = 12000U;
     s_port.configured = true;
 #if defined(MFOC_NUMERIC_FIXED)
     s_port.gain_q30 = (int32_t)(MFOC_PORT_GAIN_SCALE / scale);
@@ -193,15 +197,15 @@ static void _test_Pwm(void)
     assert(TIM1->CCR1 == 101U && TIM1->CCR2 == 202U);
     assert(TIM1->CCR3 == 303U);
     TIM1->ARR = 0U;
-    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OUT_OF_RANGE);
     assert(TIM1->CCR1 == 101U && TIM1->CCR3 == 303U);
     TIM1->ARR = 4250U;
-    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OK);
     assert(TIM1->CCR1 == 0U && TIM1->CCR2 == 2125U);
     assert(TIM1->CCR3 == 4250U);
     duty = (mfoc_uvw_t){
         MFOC_SCALAR(0.25f), MFOC_HALF, MFOC_SCALAR(0.75f)};
-    assert(mfoc_port_pwm(&duty, false) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&duty) == MFOC_RESULT_OK);
     assert(TIM1->CCR1 == 1063U && TIM1->CCR2 == 2125U);
     assert(TIM1->CCR3 == 3188U);
     assert(TIM1->CCER == TIM_CCER_CC4E && TIM1->EGR == 0U);
@@ -216,10 +220,10 @@ static void _test_InitGate(void)
     TIM1->BDTR = 0U;
     TIM1->CCER = TIM_CCER_CC1NE | TIM_CCER_CC4E;
     int64_t tick = s_tick;
-    assert(mfoc_port_init() == MFOC_RESULT_INVALID_STATE);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_INVALID_STATE);
     assert(s_tick == tick);
     TIM1->SR = TIM_SR_BIF;
-    assert(mfoc_port_init() == MFOC_RESULT_INVALID_STATE);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_INVALID_STATE);
     assert(s_tick == tick);
     TIM1->CCER = TIM_CCER_CC4E;
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
@@ -262,18 +266,18 @@ static void _test_Init(void)
     s_feed_current = true;
     int64_t before = s_tick;
     I2C1->ISR = I2C_ISR_NACKF;
-    assert(mfoc_port_init() == MFOC_RESULT_IO);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_IO);
     assert(s_tick == before && TIM1->CCER == TIM_CCER_CC4E);
     I2C1->ISR = I2C_ISR_TXIS | I2C_ISR_TC | I2C_ISR_RXNE | I2C_ISR_STOPF;
     /* Constant RXDR cannot echo the write: reject SF readback mismatch. */
     I2C1->RXDR = 0xA8U;
-    assert(mfoc_port_init() == MFOC_RESULT_SAFETY);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_SAFETY);
     assert(s_tick == before && TIM1->CCER == TIM_CCER_CC4E);
     /* SF=3 with nonzero unrelated fields must also pass unchanged. */
     I2C1->RXDR = 0xABU;
-    assert(mfoc_port_init() == MFOC_RESULT_OK);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_OK);
     I2C1->RXDR = 0x03U;
-    assert(mfoc_port_init() == MFOC_RESULT_OK);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_OK);
     assert(!g_bG431AdcMeanValid);
     assert(s_port.offset_u == 8192U && s_port.offset_v == 8200U);
     assert(s_port.offset_w == 8100U);
@@ -287,10 +291,100 @@ static void _test_Init(void)
     s_feed_current = false;
     ADC1->ISR = 0U;
     int64_t start = s_tick;
-    assert(mfoc_port_init() == MFOC_RESULT_IO);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_IO);
     assert(s_tick - start == 10000);
     assert(s_port.configured && s_port.offset_u == 8192U);
     assert(TIM1->CCER == TIM_CCER_CC4E);
+}
+
+/** @brief Check explicit current and bus bases without Motor configuration.
+ * @return None. */
+static void _test_Bases(void)
+{
+    mfoc_port_cfg_t cfg = s_cfg;
+    assert(mfoc_port_init(NULL) == MFOC_RESULT_NULL);
+    cfg.current_base_milliamp = 0U;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_INVALID_ARGUMENT);
+    cfg = s_cfg;
+    cfg.voltage_base_millivolt = 0U;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_INVALID_ARGUMENT);
+    cfg = s_cfg;
+    cfg.pole_pairs = 0U;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_INVALID_ARGUMENT);
+    cfg = s_cfg;
+    cfg.electrical_speed_base_hz = MFOC_ZERO;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_INVALID_ARGUMENT);
+    cfg = s_cfg;
+    cfg.current_base_milliamp = 7000U;
+    cfg.voltage_base_millivolt = 24000U;
+    s_feed_current = true;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_OK);
+    _test_Frame(7716U, 8200U, 8100U);
+    mfoc_uvw_t current = {0};
+    assert(mfoc_port_current(&current) == MFOC_RESULT_OK);
+    _test_Near(current.qU, 0.5f);
+    g_bG431AdcMeanValid = true;
+    g_wG431AdcSequence = 4U;
+    g_awG431AdcMean[0] = 2457U;
+    mfoc_scalar_t bus = MFOC_ZERO;
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_OK);
+    _test_Near(bus, 20570.0f / 24000.0f);
+    cfg.voltage_base_millivolt = 0U;
+    assert(mfoc_port_init(&cfg) == MFOC_RESULT_INVALID_ARGUMENT);
+    assert(mfoc_port_bus(&bus) == MFOC_RESULT_OK);
+    _test_Near(bus, 20570.0f / 24000.0f);
+    /* Finish Init just before the next low-32-bit wrap. */
+    s_tick = INT64_C(8589834296);
+    assert(mfoc_port_init(&s_cfg) == MFOC_RESULT_OK);
+    s_feed_current = false;
+}
+
+/** @brief Verify foreground acquisition and ISR output share one instance.
+ * @return None. */
+static void _test_Position(void)
+{
+    mfoc_angle_t angle = {UINT32_C(0x12345678)};
+    mfoc_scalar_t speed = MFOC_ONE;
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_INVALID_STATE);
+    assert(angle.wBam32 == UINT32_C(0x12345678) && speed == MFOC_ONE);
+    I2C1->RXDR = 0U;
+    assert(mfoc_port_position_run() == MFOC_RESULT_OK);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == 0U && speed == MFOC_ZERO);
+    I2C1->RXDR = 1U;
+    s_tick += 999;
+    assert(mfoc_port_position_run() == MFOC_RESULT_OK);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == 0U && speed == MFOC_ZERO);
+    s_tick += 1;
+    assert(mfoc_port_position_run() == MFOC_RESULT_OK);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == UINT32_C(0x70700000));
+    float expected = (257.0f / 4096.0f) * 1000.0f * 0.25f * 7.0f / 400.0f;
+    assert(fabsf(mfoc_to_float(speed) - expected) < 0.001f);
+    mfoc_scalar_t previous_speed = speed;
+    s_tick += 500;
+    I2C1->ISR = I2C_ISR_NACKF;
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 > UINT32_C(0x70700000));
+    assert(speed == previous_speed); /* ISR performs no I2C access. */
+    s_tick += 500;
+    assert(mfoc_port_position_run() == MFOC_RESULT_IO);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    mfoc_angle_t previous_angle = angle;
+    s_tick += INT64_C(4294967296);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_SAFETY);
+    assert(angle.wBam32 == previous_angle.wBam32 && speed == previous_speed);
+    I2C1->ISR = I2C_ISR_TXIS | I2C_ISR_TC | I2C_ISR_RXNE | I2C_ISR_STOPF;
+    mfoc_angle_t held = {UINT32_C(0x40000000)};
+    assert(mfoc_port_position_calibrate_zero(held) == MFOC_RESULT_OK);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == held.wBam32 && speed == MFOC_ZERO);
+    I2C1->ISR = I2C_ISR_NACKF;
+    held.wBam32 = 0U;
+    assert(mfoc_port_position_calibrate_zero(held) == MFOC_RESULT_IO);
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == UINT32_C(0x40000000) && speed == MFOC_ZERO);
 }
 
 /** @brief Check polling-to-control handoff through existing bridge startup.
@@ -305,9 +399,9 @@ static void _test_ControlStartStop(void)
     COMP4->CSR = 0U;
     g_bG431FaultLatched = false;
     ADC1->IER = ADC_IER_OVRIE;
-    assert(mfoc_port_pwm(&neutral, false) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&neutral) == MFOC_RESULT_OK);
     assert(ADC1->IER == ADC_IER_OVRIE);
-    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_OK);
     assert((ADC1->IER & ADC_IER_JEOSIE) != 0U);
     assert(MDI_PWM_IsEnabled(bridge));
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
@@ -315,7 +409,7 @@ static void _test_ControlStartStop(void)
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     assert((TIM1->CCER & TIM_CCER_CC4E) != 0U);
     COMP1->CSR = COMP_CSR_VALUE;
-    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_SAFETY);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
     assert(ADC1->IER == ADC_IER_OVRIE);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     COMP1->CSR = 0U;
@@ -328,14 +422,14 @@ static void _test_Lifecycle(void)
     const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
     g_bG431AdcMeanValid = false; /* Startup no longer reads the bus. */
     g_bG431FaultLatched = true;
-    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_SAFETY);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     g_bG431FaultLatched = false;
     TIM1->ARR = 0U;
-    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_OUT_OF_RANGE);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     TIM1->ARR = 4250U;
-    assert(mfoc_port_pwm(&neutral, true) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_OK);
     assert(TIM1->CCR1 == 2125U && TIM1->CCR2 == 2125U);
     assert(TIM1->CCR3 == 2125U && MDI_PWM_IsEnabled(bridge));
     assert(!g_bG431AdcMeanValid);
@@ -343,7 +437,7 @@ static void _test_Lifecycle(void)
     assert(TIM1->CCER == TIM_CCER_CC4E);
     assert((TIM1->CR1 & TIM_CR1_CEN) != 0U);
     assert((TIM1->BDTR & TIM_BDTR_MOE) != 0U);
-    assert(mfoc_port_pwm(&neutral, false) == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm(&neutral) == MFOC_RESULT_OK);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
 }
@@ -359,8 +453,10 @@ int main(void)
     _test_InitGate();
     _test_Bus();
     _test_Init();
+    _test_Bases();
+    _test_Position();
     _test_ControlStartStop();
     _test_Lifecycle();
-    puts("G431 current conversion and PWM passed");
+    puts("G431 bases, current, position, clock and PWM passed");
     return 0;
 }

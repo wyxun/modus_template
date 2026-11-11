@@ -21,14 +21,13 @@ if ($LASTEXITCODE -ne 0) { throw 'EKF algorithm tests failed' }
 
 $sources = $base + @($algorithm, "$library/position/src/mfoc_smo.c",
     "$library/position/src/mfoc_flux.c", "$library/position/src/mfoc_hfi.c",
-    "$library/position/src/mfoc_encoder.c",
     "$library/motor/src/mfoc_feedback.c")
 foreach ($case in @(@(1, 0, 0, 0, 1), @(0, 0, 0, 0, 5),
     @(1, 1, 1, 1, 5), @(1, 1, 1, 0, 1))) {
     $encoder, $smo, $flux, $hfi, $backend = $case
     $exe = Join-Path $output "feedback-$encoder-$smo-$flux-$hfi-$backend.exe"
     & gcc @common -DMFOC_NUMERIC_FLOAT=1 -DMFOC_FEEDBACK_ENABLE_EKF=1 `
-        "-DMFOC_FEEDBACK_ENABLE_ENCODER=$encoder" `
+        "-DMFOC_FEEDBACK_ENABLE_POSITION=$encoder" `
         "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$hfi" "-DMFOC_FEEDBACK_BACKEND=$backend" `
         "$testsRoot/position/ekf_feedback_test.c" @sources -lm -o $exe

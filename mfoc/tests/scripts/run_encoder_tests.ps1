@@ -13,7 +13,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     }
     & gcc -std=c11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" "-DMFOC_FEEDBACK_BACKEND=$backend" `
-        "-DMFOC_FEEDBACK_ENABLE_ENCODER=$enabled" `
+        "-DMFOC_FEEDBACK_ENABLE_POSITION=$enabled" `
         -DMFOC_FEEDBACK_ENABLE_SMO=0 -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
         -DMFOC_FEEDBACK_ENABLE_HFI=0 -DMFOC_FEEDBACK_ENABLE_EKF=0 `
         "-I$library" "-I$library/math/include" "-I$library/control/include" `

@@ -6,7 +6,7 @@ New-Item -ItemType Directory -Path $output | Out-Null
 $sources = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" |
     ForEach-Object { $_.FullName }) + @(
     "$library/position/src/mfoc_flux.c", "$library/position/src/mfoc_smo.c",
-    "$library/position/src/mfoc_encoder.c", "$library/position/src/mfoc_hfi.c",
+    "$library/position/src/mfoc_hfi.c",
     "$library/motor/src/mfoc_feedback.c")
 foreach ($numeric in @('FLOAT', 'FIXED')) {
     $algorithm = Join-Path $output "algorithm-$numeric.exe"
@@ -28,7 +28,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
             -DMFOC_FEEDBACK_ENABLE_FLUX=1 `
-            "-DMFOC_FEEDBACK_ENABLE_ENCODER=$encoder" `
+            "-DMFOC_FEEDBACK_ENABLE_POSITION=$encoder" `
             "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
             "-DMFOC_FEEDBACK_ENABLE_HFI=$hfi" `
             "-DMFOC_FEEDBACK_BACKEND=$backend" `

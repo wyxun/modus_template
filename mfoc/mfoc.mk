@@ -26,6 +26,7 @@ MFOC_SOURCES = $(MFOC_ROOT)/math/src/mfoc_numeric.c                             
     $(MFOC_ROOT)/identification/src/mfoc_identification_flux.c                  \
     $(MFOC_ROOT)/identification/src/mfoc_identification_inertia.c               \
     $(MFOC_ROOT)/position/src/mfoc_encoder.c                                    \
+    $(MFOC_ROOT)/position/src/mfoc_hall.c                                       \
     $(MFOC_ROOT)/position/src/mfoc_smo.c                                        \
     $(MFOC_ROOT)/position/src/mfoc_flux.c                                       \
     $(MFOC_ROOT)/position/src/mfoc_ekf.c                                        \

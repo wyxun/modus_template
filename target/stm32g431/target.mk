@@ -15,7 +15,8 @@ C_DEFS += -DSTM32G431xx -DUSE_HAL_DRIVER -DUSE_FULL_LL_DRIVER
 # 12 V operation: PB10=0, Q48 off, R30=18 kOhm is the lower divider leg.
 C_DEFS += -DHALADC_VBUS_RANGE_48V=0U
 C_DEFS += -DMFOC_APP_ENABLED=1
-C_DEFS += -DMFOC_NUMERIC_FLOAT=1 -DMFOC_TRIG_BACKEND=1
+# Numeric backend is selected once by the top-level MFOC_NUMERIC setting.
+C_DEFS += -DMFOC_TRIG_BACKEND=1
 # Timing is enabled for debug builds and compiled out of release builds.
 ifeq ($(BUILD),release)
 MFOC_ISR_MEASURE ?= 0

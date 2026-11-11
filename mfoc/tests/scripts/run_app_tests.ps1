@@ -9,7 +9,8 @@ New-Item -ItemType Directory -Path $output | Out-Null
 $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     'modus/src/arch',
     'modus/lib/plooc', 'modus/lib/perf_counter', 'vendor/cortex-m/cmsis_core',
-    'class', 'mfoc', 'mfoc/math/include', 'mfoc/control/include', 'mfoc/core/include',
+    'class', 'peripheral/stm32g431', 'mfoc', 'mfoc/math/include',
+    'mfoc/control/include', 'mfoc/core/include',
     'mfoc/motor/include', 'mfoc/identification/include',
     'mfoc/position/include', 'mfoc/port/include') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }

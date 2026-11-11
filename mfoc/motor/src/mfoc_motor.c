@@ -11,7 +11,6 @@
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_modulation.h"
 #endif
-#include "perf_counter.h"
 #include <stddef.h>
 
 /** @brief Compare a caller-validated finite vector without sqrt.
@@ -55,6 +54,19 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
                              const mfoc_motor_cfg_t *cfg)
 {
     if (motor == NULL || cfg == NULL) { return MFOC_RESULT_NULL; }
+    if (cfg->current_base_milliamp == 0U ||
+        cfg->voltage_base_millivolt == 0U ||
+        cfg->electrical_speed_base_hz <= MFOC_ZERO) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    if (cfg->params.pole_pairs == 0U) { return MFOC_RESULT_INVALID_ARGUMENT; }
+#if MFOC_FEEDBACK_ENABLE_HFI
+    /* HFI retains its validated compile-time speed conversion. */
+    if (cfg->electrical_speed_base_hz !=
+        MFOC_SCALAR(MFOC_HFI_SPEED_BASE_HZ)) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+#endif
     const mfoc_motor_params_t *p = &cfg->params;
 #if defined(MFOC_NUMERIC_FLOAT)
     if (!mfoc_scalar_is_finite(
@@ -72,7 +84,13 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
 #endif
     mfoc_result_t rc = mfoc_core_Init(&next.core, &cfg->core);
     if (rc != MFOC_RESULT_OK) { return rc; }
-    rc = mfoc_feedback_Init(&next.feedback, &cfg->feedback, p);
+    mfoc_feedback_cfg_t feedback_cfg = cfg->feedback;
+    feedback_cfg.smo.speed_base_hz = cfg->electrical_speed_base_hz;
+    feedback_cfg.flux.speed_base_hz = cfg->electrical_speed_base_hz;
+#if MFOC_FEEDBACK_ENABLE_EKF
+    feedback_cfg.ekf.speed_base_hz = cfg->electrical_speed_base_hz;
+#endif
+    rc = mfoc_feedback_Init(&next.feedback, &feedback_cfg, p);
     if (rc != MFOC_RESULT_OK) { return rc; }
     if (cfg->speed_divider != 0U) {
         if (!mfoc_scalar_is_finite(cfg->limits.speed_max) ||
@@ -88,7 +106,9 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
         if (cfg->limits.speed_max > MFOC_ONE) {
             return MFOC_RESULT_OUT_OF_RANGE;
         }
-        rc = mfoc_openloop_Init(&next.openloop, &cfg->openloop);
+        mfoc_openloop_cfg_t openloop_cfg = cfg->openloop;
+        openloop_cfg.speed_base_hz = cfg->electrical_speed_base_hz;
+        rc = mfoc_openloop_Init(&next.openloop, &openloop_cfg);
         if (rc != MFOC_RESULT_OK) { return rc; }
         mfoc_sensorless_start_Init(&next.sensorless_start,
                                    cfg->openloop.sample_hz);
@@ -98,8 +118,18 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     next.mode = MFOC_MOTOR_MODE_CURRENT;
     next.state = MFOC_MOTOR_IDLE;
     next.irq_result = MFOC_RESULT_INVALID_STATE;
-    rc = mfoc_port_init();
+    const mfoc_port_cfg_t port_cfg = {
+        .current_base_milliamp = cfg->current_base_milliamp,
+        .voltage_base_millivolt = cfg->voltage_base_millivolt,
+        .electrical_speed_base_hz = cfg->electrical_speed_base_hz,
+        .pole_pairs = p->pole_pairs,
+    };
+    rc = mfoc_port_init(&port_cfg);
     if (rc != MFOC_RESULT_OK) { return rc; }
+    uint32_t tick_hz = mfoc_port_tick_frequency();
+    if (tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
+    next.hold_ticks = ((mfoc_tick_t)tick_hz * MFOC_MOTOR_ALIGN_TIME_MS +
+        999U) / 1000U;
     *motor = next;
     return MFOC_RESULT_OK;
 }
@@ -114,7 +144,7 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
     mfoc_result_t rc = mfoc_core_Reset(&motor->core);
     if (rc == MFOC_RESULT_OK) {
         const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
-        rc = mfoc_port_pwm(&neutral, true);
+        rc = mfoc_port_pwm_start(&neutral);
     }
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
@@ -170,7 +200,7 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     motor->state = motor->faults != 0U ?
         MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
     motor->hold_active = false;
-    motor->hold_deadline = 0;
+    motor->hold_started = 0U;
     motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
     motor->openloop_active = false;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
@@ -210,7 +240,7 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
             motor->i_ref = (mfoc_dq_t){0};
             mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
             motor->hold_active = false;
-            motor->hold_deadline = 0;
+            motor->hold_started = 0U;
             motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
             motor->openloop_active = false;
             motor->speed_ref = MFOC_ZERO;
@@ -257,7 +287,7 @@ mfoc_result_t mfoc_motor_SetBus(mfoc_motor_t *motor, mfoc_scalar_t bus)
     return mfoc_core_SetBus(&motor->core, bus);
 }
 
-/** @brief Refresh Core bus coefficients from the published MDI sample.
+/** @brief Refresh Core bus coefficients from the published Port sample.
  * @param motor Instance. @return Sampling/update status; bus retained on error.
  * @note Control ISR while RUNNING, or foreground while IDLE. */
 mfoc_result_t mfoc_motor_UpdateBus(mfoc_motor_t *motor)
@@ -270,10 +300,18 @@ mfoc_result_t mfoc_motor_UpdateBus(mfoc_motor_t *motor)
     return mfoc_core_SetBus(&motor->core, bus);
 }
 
-/** @brief Advance Identification or poll normal-control feedback.
+/** @brief Service physical position, then Identification or timed startup.
  * @param motor Valid initialized instance. @return Service/stop status. */
 mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
 {
+    mfoc_result_t position_rc = MFOC_RESULT_OK;
+#if MFOC_FEEDBACK_ENABLE_POSITION
+    position_rc = mfoc_port_position_run();
+#if MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_POSITION
+    /* An observational position source does not gate sensorless control. */
+    position_rc = MFOC_RESULT_OK;
+#endif
+#endif
 #if MFOC_IDENTIFICATION_ENABLE
     if ((motor->identification.stage &
          MFOC_IDENTIFICATION_CONTROL_MASK) !=
@@ -298,13 +336,11 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
         return MFOC_RESULT_OK;
     }
 #endif
-    mfoc_result_t feedback_rc = mfoc_feedback_Run(&motor->feedback);
     /* Run ends the fixed-angle hold; ISR startup budget remains paused. */
     if (motor->hold_active) {
         mfoc_motor_state_t state = motor->state;
         if (state == MFOC_MOTOR_RUNNING &&
-            !perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                                  &motor->hold_deadline, false)) {
+            mfoc_port_tick() - motor->hold_started < motor->hold_ticks) {
             return MFOC_RESULT_OK;
         }
         if (state == MFOC_MOTOR_RUNNING &&
@@ -315,11 +351,14 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
             motor->hold_active = false;
             return MFOC_RESULT_OK;
         }
-        /* Capture encoder zero before releasing a calibration hold. */
+        /* Capture physical position zero before releasing the held field. */
+#if MFOC_FEEDBACK_ENABLE_POSITION
         mfoc_result_t calibration = state == MFOC_MOTOR_RUNNING ?
-            mfoc_feedback_CalibrateZero(&motor->feedback,
-                                         motor->openloop.angle) :
+            mfoc_port_position_calibrate_zero(motor->openloop.angle) :
             MFOC_RESULT_OK;
+#else
+        mfoc_result_t calibration = MFOC_RESULT_OK;
+#endif
         mfoc_result_t rc = mfoc_motor_Stop(motor);
         if (rc != MFOC_RESULT_OK) { return rc; }
         if (calibration != MFOC_RESULT_OK) {
@@ -333,7 +372,7 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
         (motor->openloop_active ||
          motor->sensorless_start.state == MFOC_SENSORLESS_START_RAMP ||
          motor->sensorless_start.state == MFOC_SENSORLESS_START_ACQUIRE) ?
-        MFOC_RESULT_OK : feedback_rc;
+        MFOC_RESULT_OK : position_rc;
 }
 
 /** @brief Start HFI injection without a fundamental rotating field.
@@ -386,9 +425,7 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
         motor->openloop_active = false;
         return rc;
     }
-    motor->hold_deadline = 0;
-    (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                              &motor->hold_deadline, false);
+    motor->hold_started = mfoc_port_tick();
     return MFOC_RESULT_OK;
 }
 
@@ -435,9 +472,7 @@ mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
     mfoc_sensorless_start_Start(&motor->sensorless_start, speed, current);
     motor->hold_active = true;
     motor->previous_core_output_valid = false;
-    motor->hold_deadline = 0;
-    (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                              &motor->hold_deadline, false);
+    motor->hold_started = mfoc_port_tick();
     rc = mfoc_motor_Start(motor);
     if (rc != MFOC_RESULT_OK) {
         motor->hold_active = false;
@@ -474,9 +509,7 @@ mfoc_result_t mfoc_motor_AlignStart(mfoc_motor_t *motor,
         motor->hold_active = false;
         return rc;
     }
-    motor->hold_deadline = 0;
-    (void)perfc_is_time_out_ms(MFOC_MOTOR_ALIGN_TIME_MS,
-                              &motor->hold_deadline, false);
+    motor->hold_started = mfoc_port_tick();
     return MFOC_RESULT_OK;
 }
 
@@ -669,7 +702,7 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             motor->mode == MFOC_MOTOR_MODE_SPEED &&
             motor->speed_count != 0U;
     }
-    rc = mfoc_port_pwm(&phase, false);
+    rc = mfoc_port_pwm(&phase);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }

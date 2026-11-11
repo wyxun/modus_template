@@ -9,6 +9,9 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/** @brief Monotonic raw ticks supplied by the statically bound Port. */
+typedef uint64_t mfoc_tick_t;
+
 #if defined(MFOC_NUMERIC_FLOAT) && defined(MFOC_NUMERIC_FIXED)
 #error "Select exactly one mfoc numeric backend"
 #elif defined(MFOC_NUMERIC_FLOAT)

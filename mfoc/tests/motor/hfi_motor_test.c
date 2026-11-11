@@ -15,6 +15,9 @@ int main(void)
     mfoc_pi_params_t pi = {MFOC_HALF, MFOC_ZERO,
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     mfoc_motor_cfg_t cfg = {
+        .current_base_milliamp = 10000U,
+        .voltage_base_millivolt = 12000U,
+        .electrical_speed_base_hz = MFOC_SCALAR(400.0f),
         .params = {7U, MFOC_HALF, MFOC_HALF, MFOC_HALF, MFOC_ONE, 0},
         .limits = {.i_max = MFOC_HALF}, .core = {pi, pi, MFOC_ONE}};
     mfoc_motor_t motor = {0};
