@@ -9,6 +9,28 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+/* Set MFOC_USE_PERFC_FSM=1 for every translation unit in a perfc build. */
+#if defined(MFOC_USE_PERFC_FSM) && MFOC_USE_PERFC_FSM
+#include "perf_counter.h"
+typedef fsm_rt_t mfoc_fsm_rt_t;
+#define MFOC_FSM_FAILED            fsm_rt_err
+#define MFOC_FSM_COMPLETE          fsm_rt_cpl
+#define MFOC_FSM_ONGOING           fsm_rt_on_going
+#define MFOC_FSM_WAIT_FOR_OBJECT   fsm_rt_wait_for_obj
+#define MFOC_FSM_ASYNC             fsm_rt_asyn
+#define MFOC_FSM_WAIT_FOR_RESOURCE fsm_rt_wait_for_res
+#else
+/** @brief Standalone return codes for nonblocking operations. */
+typedef enum {
+    MFOC_FSM_FAILED = -1,  /**< Operation ended in error. */
+    MFOC_FSM_COMPLETE = 0, /**< No further polling is needed. */
+    MFOC_FSM_ONGOING = 1,  /**< Poll again to continue. */
+    MFOC_FSM_WAIT_FOR_OBJECT = 2,   /**< Await an object's readiness. */
+    MFOC_FSM_ASYNC = 3,             /**< Check the asynchronous result later. */
+    MFOC_FSM_WAIT_FOR_RESOURCE = 4, /**< Retry when a resource is available. */
+} mfoc_fsm_rt_t;
+#endif
+
 /** @brief Monotonic raw ticks supplied by the statically bound Port. */
 typedef uint64_t mfoc_tick_t;
 

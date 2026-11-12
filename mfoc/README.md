@@ -30,7 +30,11 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 各模块的公共头文件位于其 `include/`，实现位于 `src/`。`mfoc.h` 汇集基础数学及控制接口；使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供本工程使用的源码与头文件路径清单。
 
+独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和本工程实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。主机示例使用 GCC、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[独立工程 Makefile](tests/standalone/Makefile) · [Port 接入指南](docs/port-contract.md)
+
 ## 配置 MFOC
+
+集成 perfc 的工程可为库和调用方统一设置 `-DMFOC_USE_PERFC_FSM=1`，并提供 perfc 的头文件路径和移植配置。G431 已启用此选项，`mfoc_fsm_rt_t` 是 `fsm_rt_t` 的别名，辨识前台使用 `perfc_task_pt.h` 的原生 PT 宏。独立工程默认使用 MFOC 的返回类型和 C11 PT 实现。[公共类型](math/include/mfoc_types.h) · [PT 接口](mfoc_pt.h)
 
 ### 数值和三角函数
 
@@ -102,5 +106,7 @@ motor clear
 在仓库根目录可使用 `mingw32-make TARGET_CHIP=stm32g431` 构建；`make.bat auto` 会清理、构建、烧录并启动 RTT，请在目标和硬件配置确认后使用。
 
 ## 测试入口
+
+从仓库根目录运行 `.\mfoc\tests\scripts\run_standalone_tests.ps1`，脚本会把库和主机示例复制到仓库外的临时目录，分别构建并运行 FLOAT、FIXED 的辨识关闭和开启配置。开启时，模拟功率级按上一拍实际提交的 duty 产生电流，经 Motor 完成 Rs 辨识并校验结果。[独立验收脚本](tests/scripts/run_standalone_tests.ps1)
 
 主机测试入口为 `tests/scripts/run_tests.ps1`，ARM 编译检查入口为 `tests/scripts/check_arm.ps1`；各算法也有独立脚本。测试是软件验证，实际采样时序、电流极性、中断耗时和无感接管仍需台架验证。

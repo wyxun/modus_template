@@ -6,7 +6,6 @@
  */
 #include "mfoc_identification.h"
 #include "mfoc_port.h"
-#include "perfc_task_pt.h"
 #include <stddef.h>
 
 /** @brief Clear experiment state before use.
@@ -62,74 +61,70 @@ void mfoc_identification_Stop(mfoc_identification_t *id)
     }
 }
 
-#if defined(__GNUC__) && !defined(__clang__)
-/* perfc PT intentionally falls through into its generated resume case. */
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wimplicit-fallthrough"
-#endif
-
-/** @brief Wait for synchronous stages and publish the next experiment.
- * @param id Instance. @return Ongoing, complete, or error. */
-fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
+/** @brief Finish a sampled stage and publish its successor to the ISR.
+ * @param id Instance with stage_done set. @return True on success. */
+static bool _mfoc_identification_AdvanceStage(mfoc_identification_t *id)
 {
-    if (id->state == MFOC_IDENTIFICATION_ERROR) { return fsm_rt_err; }
-    if (id->state != MFOC_IDENTIFICATION_RUNNING) { return fsm_rt_cpl; }
-
-    PERFC_PT_BEGIN(id->run_pt)
-    while (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
-        id->stage_started = mfoc_port_tick();
-        PERFC_PT_WAIT_UNTIL(id->stage_done ||
-            id->state != MFOC_IDENTIFICATION_RUNNING ||
-            mfoc_port_tick() - id->stage_started >= id->stage_ticks)
-        if (id->state != MFOC_IDENTIFICATION_RUNNING) {
-            return id->state == MFOC_IDENTIFICATION_ERROR ?
-                fsm_rt_err : fsm_rt_cpl;
-        }
-        if (!id->stage_done) {
-            id->state = MFOC_IDENTIFICATION_ERROR;
-            return fsm_rt_err;
-        }
-        /* The ISR is paused by stage_done while its workspace is reused. */
-        if (id->stage == MFOC_IDENTIFICATION_STAGE_RS &&
-            mfoc_identification_rs_Finish(&id->work.rs, id->bus,
-                &id->result.rs) !=
-                fsm_rt_cpl) {
-            id->state = MFOC_IDENTIFICATION_ERROR;
-            return fsm_rt_err;
-        }
-        if (id->stage == MFOC_IDENTIFICATION_STAGE_FLUX &&
-            mfoc_identification_flux_Finish(&id->work.flux, &id->result,
-                &id->result.flux) != fsm_rt_cpl) {
-            id->state = MFOC_IDENTIFICATION_ERROR;
-            return fsm_rt_err;
-        }
-        if (id->stage == MFOC_IDENTIFICATION_STAGE_RS &&
-            id->operation == MFOC_IDENTIFICATION_RESISTANCE) {
-            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
-        } else if (id->stage == MFOC_IDENTIFICATION_STAGE_SPINUP) {
-            id->stage = id->operation == MFOC_IDENTIFICATION_FLUX ?
-                MFOC_IDENTIFICATION_STAGE_FLUX :
-                MFOC_IDENTIFICATION_STAGE_INERTIA;
-        } else if (id->stage == MFOC_IDENTIFICATION_STAGE_LQ ||
-                   id->stage == MFOC_IDENTIFICATION_STAGE_FLUX ||
-                   id->stage == MFOC_IDENTIFICATION_STAGE_INERTIA) {
-            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
-        } else {
-            id->stage = (mfoc_identification_stage_t)(id->stage + 1);
-        }
-        if (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
-            id->work = (mfoc_identification_work_t){0};
-            id->stage_done = false;
-        }
+    switch (id->stage) {
+    case MFOC_IDENTIFICATION_STAGE_ALIGN:
+        id->stage = MFOC_IDENTIFICATION_STAGE_RS;
+        break;
+    case MFOC_IDENTIFICATION_STAGE_RS:
+        if (mfoc_identification_rs_Finish(&id->work.rs, id->bus,
+                &id->result.rs) != MFOC_FSM_COMPLETE) { return false; }
+        id->stage = id->operation == MFOC_IDENTIFICATION_RESISTANCE ?
+            MFOC_IDENTIFICATION_STAGE_COMPLETE : MFOC_IDENTIFICATION_STAGE_LD;
+        break;
+    case MFOC_IDENTIFICATION_STAGE_LD:
+        id->stage = MFOC_IDENTIFICATION_STAGE_LQ;
+        break;
+    case MFOC_IDENTIFICATION_STAGE_SPINUP:
+        id->stage = id->operation == MFOC_IDENTIFICATION_FLUX ?
+            MFOC_IDENTIFICATION_STAGE_FLUX : MFOC_IDENTIFICATION_STAGE_INERTIA;
+        break;
+    case MFOC_IDENTIFICATION_STAGE_FLUX:
+        if (mfoc_identification_flux_Finish(&id->work.flux, &id->result,
+                &id->result.flux) != MFOC_FSM_COMPLETE) { return false; }
+        id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        break;
+    case MFOC_IDENTIFICATION_STAGE_LQ:
+    case MFOC_IDENTIFICATION_STAGE_INERTIA:
+        id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        break;
+    default:
+        return false;
     }
-    id->state = MFOC_IDENTIFICATION_DONE;
-    PERFC_PT_END()
-    return fsm_rt_cpl;
+    if (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
+        id->work = (mfoc_identification_work_t){0};
+        id->stage_done = false;
+    }
+    return true;
 }
 
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
+/** @brief Poll the foreground stage sequence without blocking.
+ * @param id Instance. @return Ongoing, complete/idle, or error. */
+mfoc_fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
+{
+    MFOC_PT_BEGIN(id->run_pt)
+    while (id->state == MFOC_IDENTIFICATION_RUNNING &&
+           id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
+        id->stage_started = mfoc_port_tick();
+        MFOC_PT_WAIT_UNTIL(id->stage_done ||
+            id->state != MFOC_IDENTIFICATION_RUNNING ||
+            mfoc_port_tick() - id->stage_started >= id->stage_ticks);
+        if (id->state != MFOC_IDENTIFICATION_RUNNING) { break; }
+        if (!id->stage_done || !_mfoc_identification_AdvanceStage(id)) {
+            id->state = MFOC_IDENTIFICATION_ERROR;
+            break;
+        }
+    }
+    if (id->state == MFOC_IDENTIFICATION_RUNNING) {
+        id->state = MFOC_IDENTIFICATION_DONE;
+    }
+    MFOC_PT_END();
+    return id->state == MFOC_IDENTIFICATION_ERROR ?
+        MFOC_FSM_FAILED : MFOC_FSM_COMPLETE;
+}
 
 /** @brief Read lifecycle without exposing algorithm history.
  * @param id Instance. @return Current state. */
@@ -155,7 +150,8 @@ mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
 /** @brief Establish a bounded fixed field before electrical measurement.
  * @param id Active ALIGN stage. @param input Current sample.
  * @param output Fixed alpha modulation. @return Stage progress. */
-static fsm_rt_t _mfoc_identification_Align(mfoc_identification_t *id,
+static mfoc_fsm_rt_t _mfoc_identification_Align(
+    mfoc_identification_t *id,
     const mfoc_identification_input_t *input,
     mfoc_identification_output_t *output)
 {
@@ -165,14 +161,14 @@ static fsm_rt_t _mfoc_identification_Align(mfoc_identification_t *id,
         mfoc_abs(current->qBeta) >
             MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) -
                 mfoc_abs(current->qAlpha)) {
-        return fsm_rt_err;
+        return MFOC_FSM_FAILED;
     }
     output->modulation_ab.qAlpha=
         MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW);
     id->work.align_samples++;
     return id->work.align_samples >= MFOC_IDENTIFICATION_SAMPLE_HZ *
         MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U ?
-        fsm_rt_cpl : fsm_rt_on_going;
+        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
 }
 
 /** @brief Dispatch one synchronous sample directly to the selected leaf.
@@ -185,7 +181,7 @@ void mfoc_identification_Step(mfoc_identification_t *id,
     *output = (mfoc_identification_output_t){.angle = id->angle};
     if (id->state != MFOC_IDENTIFICATION_RUNNING) { return; }
     if (id->stage_done) { return; }
-    fsm_rt_t progress = fsm_rt_err;
+    mfoc_fsm_rt_t progress = MFOC_FSM_FAILED;
     switch (id->stage) {
     case MFOC_IDENTIFICATION_STAGE_ALIGN:
         progress = _mfoc_identification_Align(id, input, output);
@@ -194,7 +190,7 @@ void mfoc_identification_Step(mfoc_identification_t *id,
         progress = mfoc_identification_rs_Step(
             &id->work.rs, input->i_ab_k);
         /* Current belongs to the old level; apply the next one now. */
-        if (progress != fsm_rt_cpl) {
+        if (progress != MFOC_FSM_COMPLETE) {
             output->modulation_ab.qAlpha=
                 id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW ?
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW) :
@@ -218,12 +214,12 @@ void mfoc_identification_Step(mfoc_identification_t *id,
         /* Unsupported preparation never reports completion or energizes. */
         break;
     }
-    if (progress == fsm_rt_err) {
+    if (progress == MFOC_FSM_FAILED) {
         id->state = MFOC_IDENTIFICATION_ERROR;
-    } else if (progress == fsm_rt_cpl) {
+    } else if (progress == MFOC_FSM_COMPLETE) {
         id->stage_done = true;
     } else {
         /* Leaf retains sampling history until a terminal result. */
     }
-    if (progress != fsm_rt_err) { id->angle = output->angle; }
+    if (progress != MFOC_FSM_FAILED) { id->angle = output->angle; }
 }

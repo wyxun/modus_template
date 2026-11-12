@@ -4,7 +4,8 @@ param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
     'hfi_motor'),
     [ValidateSet(0, 1)][int]$Hfi = 1,
     [ValidateSet(0, 1)][int]$Identify = 0,
-    [ValidateSet(1, 2, 4, 5)][int]$Backend = 1)
+    [ValidateSet(1, 2, 4, 5)][int]$Backend = 1,
+    [switch]$Perfc)
 $ErrorActionPreference = 'Stop'
 $smo = if ($Backend -eq 2) { 1 } else { 0 }
 $flux = if ($Backend -eq 4) { 1 } else { 0 }
@@ -12,6 +13,12 @@ $ekf = if ($Backend -eq 5) { 1 } else { 0 }
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $repo = Split-Path -Parent $library
+$perfcFlags = @()
+if ($Perfc) {
+    $perfcFlags = @('-DMFOC_USE_PERFC_FSM=1',
+        '-D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1',
+        "-I$repo/modus/lib/perf_counter")
+}
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-core-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $sources = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c",
@@ -40,7 +47,7 @@ foreach ($numeric in $numerics) {
           "-I$repo/target/stm32g431",
           "$repo/target/stm32g431/mfoc_motor_irq.c")
     }
-    $identify = if ($test -eq 'motor_identification') { 1 } else { $Identify }
+    $enableIdentification = $Identify -or $test -eq 'motor_identification'
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
@@ -48,14 +55,12 @@ foreach ($numeric in $numerics) {
         "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_FEEDBACK_ENABLE_EKF=$ekf" `
-        "-DMFOC_IDENTIFICATION_ENABLE=$identify" `
-        -D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1 `
-        @irqArguments `
+        "-DMFOC_IDENTIFICATION_ENABLE=$([int]$enableIdentification)" `
+        @perfcFlags @irqArguments `
         "-I$library" "-I$library/math/include" "-I$library/control/include" `
         "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/port/include" `
         "-I$library/position/include" "-I$library/identification/include" `
-        "-I$library/../modus/lib/perf_counter" `
         "$testsRoot/$testGroup/${test}_test.c" `
         "$testsRoot/motor/motor_port_fake.c" `
         @sources -lm -o $exe

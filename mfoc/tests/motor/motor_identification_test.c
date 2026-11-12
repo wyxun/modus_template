@@ -125,6 +125,7 @@ static void handoff(void)
 {
     mfoc_motor_t motor = {0};
     setup(&motor);
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
     const unsigned align_samples = MFOC_IDENTIFICATION_SAMPLE_HZ *
         MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U;
     for (unsigned n = 0U; n < align_samples; ++n) {
@@ -135,7 +136,16 @@ static void handoff(void)
     assert(motor_port_fake.duty.qU == MFOC_HALF);
     assert(motor_port_fake.duty.qV == MFOC_HALF);
     assert(motor_port_fake.duty.qW == MFOC_HALF);
-    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    /* A completed stage wins over a late foreground timeout check. */
+    motor_port_fake.time_ms = MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS + 1U;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor.identification.stage == MFOC_IDENTIFICATION_STAGE_RS);
+    /* The new stage gets a full deadline. Polling must not renew it. */
+    motor_port_fake.time_ms += MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS - 1U;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    ++motor_port_fake.time_ms;
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_SAFETY);
+    assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_FAULT);
 }
 
 /** @brief Invalid final data and unsupported experiments do not energize PWM.
@@ -215,16 +225,23 @@ static void armed_in_idle(void)
 {
     mfoc_motor_t motor = {0};
     setup(&motor);
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     mfoc_motor_params_t model = {0};
     assert(mfoc_identification_Start(&motor.identification, &model,
         MFOC_IDENTIFICATION_RESISTANCE, MFOC_ONE) == MFOC_RESULT_OK);
     unsigned runs = motor_port_fake.position_runs;
+    motor_port_fake.time_ms += MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS + 1U;
     assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.position_runs == runs + 1U);
     assert(mfoc_identification_GetStatus(&motor.identification) ==
         MFOC_IDENTIFICATION_RUNNING);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
+    /* Restarting after cancellation starts timing on the first active Run. */
+    assert(mfoc_motor_Run(&motor) == MFOC_RESULT_OK);
+    assert(motor.identification.stage == MFOC_IDENTIFICATION_STAGE_ALIGN);
+    assert(motor.identification.work.align_samples == 0U);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
 }
 

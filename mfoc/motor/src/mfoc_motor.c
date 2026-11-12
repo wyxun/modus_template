@@ -165,7 +165,7 @@ mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults)
     motor->faults |= faults;
     motor->state = MFOC_MOTOR_FAULT;
     motor->i_ref = (mfoc_dq_t){0};
-    motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
+    mfoc_sensorless_start_Stop(&motor->sensorless_start);
     motor->openloop_active = false;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
     mfoc_result_t rc = mfoc_port_pwm_stop();
@@ -201,7 +201,7 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
         MFOC_MOTOR_FAULT : MFOC_MOTOR_IDLE;
     motor->hold_active = false;
     motor->hold_started = 0U;
-    motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
+    mfoc_sensorless_start_Stop(&motor->sensorless_start);
     motor->openloop_active = false;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
     motor->previous_core_output_valid = false;
@@ -241,7 +241,7 @@ mfoc_result_t mfoc_motor_ClearFault(mfoc_motor_t *motor)
             mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
             motor->hold_active = false;
             motor->hold_started = 0U;
-            motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
+            mfoc_sensorless_start_Stop(&motor->sensorless_start);
             motor->openloop_active = false;
             motor->speed_ref = MFOC_ZERO;
             motor->speed_count = 0U;
@@ -321,16 +321,19 @@ mfoc_result_t mfoc_motor_Run(mfoc_motor_t *motor)
             return MFOC_RESULT_SAFETY;
         }
         if (motor->state == MFOC_MOTOR_RUNNING) {
-            fsm_rt_t progress = mfoc_identification_Run(&motor->identification);
+            mfoc_fsm_rt_t progress =
+                mfoc_identification_Run(&motor->identification);
             if (motor->state != MFOC_MOTOR_RUNNING) {
                 mfoc_identification_Stop(&motor->identification);
                 return MFOC_RESULT_SAFETY;
             }
-            if (progress == fsm_rt_err) {
+            if (progress == MFOC_FSM_FAILED) {
                 return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_EXTERNAL,
                                         MFOC_RESULT_SAFETY);
             }
-            if (progress == fsm_rt_cpl) { return mfoc_motor_Stop(motor); }
+            if (progress == MFOC_FSM_COMPLETE) {
+                return mfoc_motor_Stop(motor);
+            }
             return MFOC_RESULT_OK;
         }
         return MFOC_RESULT_OK;
@@ -476,7 +479,7 @@ mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
     rc = mfoc_motor_Start(motor);
     if (rc != MFOC_RESULT_OK) {
         motor->hold_active = false;
-        motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
+        mfoc_sensorless_start_Stop(&motor->sensorless_start);
     }
     return rc;
 #endif
@@ -579,7 +582,7 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
             motor->mode = MFOC_MOTOR_MODE_SPEED;
         }
         if (ctx.complete) {
-            motor->sensorless_start.state = MFOC_SENSORLESS_START_NONE;
+            mfoc_sensorless_start_Stop(&motor->sensorless_start);
         }
     }
     if (feedback_rc != MFOC_RESULT_OK) { return feedback_rc; }
@@ -659,7 +662,6 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             mfoc_core_input_t core_input = {.i = i_ab};
             if (identification_step) {
                 motor->i_ref = request.i_ref;
-                motor->identification.angle = request.angle;
             }
             core_input.ref = motor->i_ref;
             core_input.angle = motor->identification.angle;

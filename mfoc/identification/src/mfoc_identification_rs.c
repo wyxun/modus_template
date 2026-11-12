@@ -24,13 +24,13 @@
  * @param rs Result, unchanged on failure. @return Complete or error.
  * @note Foreground only. Supply must remain stable during both levels;
  * ideal commanded voltage excludes deadtime and current-dependent drops. */
-fsm_rt_t mfoc_identification_rs_Finish(
+mfoc_fsm_rt_t mfoc_identification_rs_Finish(
     const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
     mfoc_scalar_t *rs)
 {
     if (state == NULL || rs == NULL ||
         state->level != MFOC_IDENTIFICATION_RS_DONE ||
-        bus <= MFOC_ZERO) { return fsm_rt_err; }
+        bus <= MFOC_ZERO) { return MFOC_FSM_FAILED; }
     mfoc_scalar_t delta_i = MFOC_ZERO;
     for (uint32_t level = 0U; level < 2U; ++level) {
         mfoc_scalar_t current = state->sum_i[level] /
@@ -40,13 +40,13 @@ fsm_rt_t mfoc_identification_rs_Finish(
         if (current < MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MIN) ||
             mfoc_abs(current - half_i) >
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_STABILITY * 0.5f)) {
-            return fsm_rt_err;
+            return MFOC_FSM_FAILED;
         }
         delta_i = level == MFOC_IDENTIFICATION_RS_LOW ?
             -current : delta_i + current;
     }
     if (delta_i < MFOC_SCALAR(MFOC_IDENTIFICATION_RS_DELTA_MIN)) {
-        return fsm_rt_err;
+        return MFOC_FSM_FAILED;
     }
     mfoc_scalar_t delta_u = mfoc_mul_wide(bus,
         MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH) -
@@ -57,28 +57,34 @@ fsm_rt_t mfoc_identification_rs_Finish(
     int64_t value = (int64_t)delta_u * MFOC_Q_SCALE / delta_i;
 #endif
     if (value < MFOC_SCALAR(MFOC_MOTOR_RS_MIN_PU) ||
-        value > MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU)) { return fsm_rt_err; }
+        value > MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU)) {
+        return MFOC_FSM_FAILED;
+    }
     *rs = (mfoc_scalar_t)value;
-    return fsm_rt_cpl;
+    return MFOC_FSM_COMPLETE;
 }
 
 /** @brief Discard settling samples, then accumulate each level's current.
  * @param state Experiment. @param current Present alpha-beta current.
  * @return Ongoing or complete; caller owns voltage application.
  * @note Settling restarts at each level. Valid pointers are preconditions. */
-fsm_rt_t mfoc_identification_rs_Step(mfoc_identification_rs_t *state,
-    const mfoc_ab_t *current)
+mfoc_fsm_rt_t mfoc_identification_rs_Step(
+    mfoc_identification_rs_t *state, const mfoc_ab_t *current)
 {
-    if (state->level == MFOC_IDENTIFICATION_RS_DONE) { return fsm_rt_cpl; }
+    if (state->level == MFOC_IDENTIFICATION_RS_DONE) {
+        return MFOC_FSM_COMPLETE;
+    }
     state->count++;
-    if (state->count <= RS_SETTLE) { return fsm_rt_on_going; }
+    if (state->count <= RS_SETTLE) { return MFOC_FSM_ONGOING; }
     state->sum_i[state->level] += current->qAlpha;
     if (state->count == RS_SETTLE + RS_SAMPLES / 2U) {
         state->half_i[state->level] = state->sum_i[state->level];
     }
-    if (state->count < RS_SETTLE + RS_SAMPLES) { return fsm_rt_on_going; }
+    if (state->count < RS_SETTLE + RS_SAMPLES) {
+        return MFOC_FSM_ONGOING;
+    }
     state->count = 0U;
     state->level++;
     return state->level == MFOC_IDENTIFICATION_RS_DONE ?
-        fsm_rt_cpl : fsm_rt_on_going;
+        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
 }

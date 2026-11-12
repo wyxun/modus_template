@@ -25,14 +25,13 @@ foreach ($profile in $profiles) {
         "-mfloat-abi=$abi", '-std=gnu11', '-O2', '-ffp-contract=off',
         '-Wall', '-Wextra', '-Werror', '-ffunction-sections',
         "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
-        '-D__PERFC_CFG_DISABLE_DEFAULT_SYSTICK_PORTING__=1',
+        '-DMFOC_IDENTIFICATION_ENABLE=1',
         "-I$library", "-I$(Join-Path $math 'include')",
         "-I$(Join-Path $library 'control/include')",
         "-I$(Join-Path $library 'core/include')",
         "-I$(Join-Path $library 'motor/include')",
         "-I$(Join-Path $library 'position/include')",
         "-I$(Join-Path $library 'identification/include')",
-        "-I$(Join-Path $repo 'modus/lib/perf_counter')",
         "-I$(Join-Path $library 'port/include')")
     if ($abi -eq 'hard') { $arguments += '-mfpu=fpv4-sp-d16' }
     foreach ($source in $sources) {

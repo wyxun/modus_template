@@ -97,6 +97,17 @@ flowchart TB
 
 命令类 API 与 ISR 的互斥由应用负责，库不关中断。
 
+普通操作用 `mfoc_result_t` 报告成功或具体错误。非阻塞操作用 `mfoc_fsm_rt_t` 告知调用方如何继续。独立构建默认使用 MFOC 的六值枚举。已集成 perfc 的工程可统一定义 `MFOC_USE_PERFC_FSM=1`，由公共头包含 `perf_counter.h` 并声明 `typedef fsm_rt_t mfoc_fsm_rt_t;`。下表的六个名称在该模式下直接映射到 perfc 枚举项。G431 工程已启用此配置。[公共类型](../math/include/mfoc_types.h)
+
+| 返回值 | 数值 | 调用方的处理 |
+| --- | ---: | --- |
+| `MFOC_FSM_FAILED` | −1 | 本次操作失败，进入错误处理 |
+| `MFOC_FSM_COMPLETE` | 0 | 本次操作结束，可停止轮询 |
+| `MFOC_FSM_ONGOING` | 1 | 按正常节拍再次调用，继续推进 |
+| `MFOC_FSM_WAIT_FOR_OBJECT` | 2 | 等待指定对象满足条件，例如事件置位 |
+| `MFOC_FSM_ASYNC` | 3 | 操作异步执行，按该接口约定稍后查询结果 |
+| `MFOC_FSM_WAIT_FOR_RESOURCE` | 4 | 等待所需资源可用，例如缓冲区释放后再试 |
+
 <a id="feedback"></a>
 
 ## 3. 模块 A：Feedback（位置/速度反馈）
@@ -341,7 +352,11 @@ sequenceDiagram
 
 ## 9. 前台 Run 的职责
 
-`mfoc_motor_Run` 每个前台循环调用一次，先调用 `mfoc_port_position_run`（使能物理位置时），再推进辨识或处理对齐超时。辨识分支提前返回前也已完成位置服务。位置读取失败不会跳过对齐到期、校准结果处理和停机。Motor 保持计时和辨识阶段超时使用 Port tick；辨识暂保留 perfc PT 类型与宏，独立打包仍有后续工作。
+`mfoc_motor_Run` 每个前台循环调用一次，先调用 `mfoc_port_position_run`（使能物理位置时），再推进辨识或处理对齐超时。辨识分支提前返回前也已完成位置服务。位置读取失败不会跳过对齐到期、校准结果处理和停机。Motor 保持计时与辨识阶段超时都使用 Port 的 64 位 tick。辨识从首次前台轮询该阶段时开始计时，后续轮询沿用该起点。ISR 已完成采样时，前台优先处理完成事件，再为下一阶段计时。
+
+在 `mfoc_identification_Run` 中，`MFOC_PT_BEGIN(id->run_pt)` 和 `MFOC_PT_END()` 标出前台流程的范围。每个实例各自保存恢复点 `run_pt`。进入一个阶段时先记录起始 tick，然后在 `MFOC_PT_WAIT_UNTIL` 等待采样完成、实验中止或阶段超时。条件未满足时返回 `MFOC_FSM_ONGOING`，下次调用直接重查条件，因此采样停滞也会按原截止时间退出。G431 将这三个宏映射到原生 perfc PT，独立构建使用 C11 实现。[前台状态机](../identification/src/mfoc_identification.c) · [PT 接口](../mfoc_pt.h)
+
+空闲时调用 Run 返回 `MFOC_FSM_COMPLETE`，表示调用方可以停止轮询。实验状态由 `mfoc_identification_GetStatus` 查询，只有到达 `MFOC_IDENTIFICATION_DONE` 时，`mfoc_identification_GetResult` 才会写入模型。[辨识接口](../identification/include/mfoc_identification.h)
 
 它通常不 Trip，只有两处会锁存故障：零位标定失败（`FEEDBACK`）与辨识阶段报错（`EXTERNAL`）。应用仍需自己做：保证 Run 的调用频率、在 ISR 里调用 Step、决定母线更新节奏、确认物理故障消失后调 `ClearFault`。
 

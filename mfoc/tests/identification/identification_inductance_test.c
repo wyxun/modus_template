@@ -23,25 +23,26 @@ static void experiment(float henry, float sign, float initial)
     float amp = initial;
     assert(mfoc_identification_inductance_Step(&state,
         mfoc_from_float(amp / MFOC_MOTOR_BASE_CURRENT_AMP), MFOC_ONE) ==
-        fsm_rt_on_going);
+        MFOC_FSM_ONGOING);
     assert(state.sum_u == MFOC_ZERO);
     assert(state.sum_i_twice == MFOC_ZERO);
     for (unsigned n = 0U; n < MFOC_IDENTIFICATION_L_SAMPLES; ++n) {
         float volt = sign * (n % 2U == 0U ? 1.2f : 1.5f);
         amp = volt / ohm + (amp - volt / ohm) * decay;
-        fsm_rt_t rc = mfoc_identification_inductance_Step(&state,
-            mfoc_from_float(amp / MFOC_MOTOR_BASE_CURRENT_AMP),
-            mfoc_from_float(volt / MFOC_MOTOR_BASE_VOLTAGE_VOLT));
+        mfoc_fsm_rt_t rc =
+            mfoc_identification_inductance_Step(&state,
+                mfoc_from_float(amp / MFOC_MOTOR_BASE_CURRENT_AMP),
+                mfoc_from_float(volt / MFOC_MOTOR_BASE_VOLTAGE_VOLT));
         assert(rc == (n + 1U == MFOC_IDENTIFICATION_L_SAMPLES ?
-            fsm_rt_cpl : fsm_rt_on_going));
+            MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING));
     }
     mfoc_identification_inductance_t saved = state;
     assert(mfoc_identification_inductance_Step(&state,
-        MFOC_ONE, MFOC_ONE) == fsm_rt_cpl);
+        MFOC_ONE, MFOC_ONE) == MFOC_FSM_COMPLETE);
     assert(memcmp(&saved, &state, sizeof(state)) == 0);
     assert(mfoc_identification_inductance_Finish(&state,
         mfoc_from_float(ohm / MFOC_MOTOR_BASE_RESISTANCE_OHM),
-        &result) == fsm_rt_cpl);
+        &result) == MFOC_FSM_COMPLETE);
     float measured = mfoc_to_float(result) *
         MFOC_MOTOR_BASE_INDUCTANCE_HENRY;
     assert(fabsf(measured - henry) < henry * 0.01f);
@@ -56,20 +57,20 @@ static void rejected_results(void)
     const mfoc_scalar_t sentinel = MFOC_SCALAR(0.7f);
     mfoc_scalar_t result = sentinel;
     assert(mfoc_identification_inductance_Finish(&state,
-        MFOC_ONE, &result) == fsm_rt_err);
+        MFOC_ONE, &result) == MFOC_FSM_FAILED);
     state.count = MFOC_IDENTIFICATION_L_SAMPLES + 1U;
     assert(mfoc_identification_inductance_Finish(&state,
-        MFOC_ONE, &result) == fsm_rt_err);
+        MFOC_ONE, &result) == MFOC_FSM_FAILED);
     state.i_last = MFOC_SCALAR(0.0005f);
     assert(mfoc_identification_inductance_Finish(&state,
-        MFOC_ONE, &result) == fsm_rt_err);
+        MFOC_ONE, &result) == MFOC_FSM_FAILED);
     state.i_last = MFOC_SCALAR(0.01f);
     state.sum_u = -MFOC_ONE;
     assert(mfoc_identification_inductance_Finish(&state,
-        MFOC_ZERO, &result) == fsm_rt_err);
+        MFOC_ZERO, &result) == MFOC_FSM_FAILED);
     state.sum_u = MFOC_SCALAR(2.0f);
     assert(mfoc_identification_inductance_Finish(&state,
-        MFOC_ZERO, &result) == fsm_rt_err);
+        MFOC_ZERO, &result) == MFOC_FSM_FAILED);
     assert(result == sentinel);
 }
 

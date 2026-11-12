@@ -11,7 +11,7 @@
  * @param model Known motor PU parameters.
  * @param inertia Result, unchanged until implemented.
  * @param output Stop request. @return Error until implemented. */
-fsm_rt_t mfoc_identification_inertia_Step(
+mfoc_fsm_rt_t mfoc_identification_inertia_Step(
     const mfoc_identification_inertia_input_t *input,
     const mfoc_motor_params_t *model, mfoc_identification_output_t *output,
     mfoc_scalar_t *inertia)
@@ -21,5 +21,5 @@ fsm_rt_t mfoc_identification_inertia_Step(
     (void)output;
     (void)inertia;
     /* TODO: torque/acceleration estimation and load-torque handling. */
-    return fsm_rt_err;
+    return MFOC_FSM_FAILED;
 }

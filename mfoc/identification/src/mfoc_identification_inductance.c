@@ -19,11 +19,11 @@
  * @param state Capture. @param i_axis_k Current at this interval's end.
  * @param u_axis_previous Voltage applied during this interval.
  * @return Ongoing or complete. First call records the initial current only. */
-fsm_rt_t mfoc_identification_inductance_Step(
+mfoc_fsm_rt_t mfoc_identification_inductance_Step(
     mfoc_identification_inductance_t *state,
     mfoc_scalar_t i_axis_k, mfoc_scalar_t u_axis_previous)
 {
-    if (state->count > L_SAMPLES) { return fsm_rt_cpl; }
+    if (state->count > L_SAMPLES) { return MFOC_FSM_COMPLETE; }
     if (state->count == 0U) {
         state->i_start = i_axis_k;
     } else {
@@ -32,20 +32,23 @@ fsm_rt_t mfoc_identification_inductance_Step(
     }
     state->i_last = i_axis_k;
     state->count++;
-    return state->count > L_SAMPLES ? fsm_rt_cpl : fsm_rt_on_going;
+    return state->count > L_SAMPLES ?
+        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
 }
 
 /** @brief Evaluate L = Ts_pu * sum(u - Rs*i_mean) / (i_end - i_start).
  * @param state Frozen capture. @param rs Known PU resistance.
  * @param inductance Destination L/Lbase, written on success only.
  * @return Complete or error; no computation is added to the capture path. */
-fsm_rt_t mfoc_identification_inductance_Finish(
+mfoc_fsm_rt_t mfoc_identification_inductance_Finish(
     const mfoc_identification_inductance_t *state, mfoc_scalar_t rs,
     mfoc_scalar_t *inductance)
 {
     mfoc_scalar_t delta_i = state->i_last - state->i_start;
     if (state->count != L_SAMPLES + 1U || mfoc_abs(delta_i) <
-        MFOC_SCALAR(MFOC_IDENTIFICATION_L_DELTA_MIN)) { return fsm_rt_err; }
+        MFOC_SCALAR(MFOC_IDENTIFICATION_L_DELTA_MIN)) {
+        return MFOC_FSM_FAILED;
+    }
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t value = L_DT_PU *
         (state->sum_u - rs * state->sum_i_twice * 0.5f) / delta_i;
@@ -56,7 +59,9 @@ fsm_rt_t mfoc_identification_inductance_Finish(
     int64_t value = (residual / delta_i) * L_DT_PU / MFOC_Q_SCALE;
 #endif
     if (value < MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU) ||
-        value > MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU)) { return fsm_rt_err; }
+        value > MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU)) {
+        return MFOC_FSM_FAILED;
+    }
     *inductance = (mfoc_scalar_t)value;
-    return fsm_rt_cpl;
+    return MFOC_FSM_COMPLETE;
 }

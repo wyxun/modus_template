@@ -7,7 +7,7 @@
 #ifndef MFOC_IDENTIFICATION_H
 #define MFOC_IDENTIFICATION_H
 #include "mfoc_identification_algorithms.h"
-#include "perf_counter.h"
+#include "mfoc_pt.h"
 
 #ifndef MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS
 #define MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS 5000U
@@ -76,7 +76,7 @@ typedef struct {
     volatile mfoc_identification_state_t state;
     volatile mfoc_identification_stage_t stage;
     volatile bool stage_done; /* ISR publishes completion after sample writes. */
-    uint8_t run_pt;           /* Foreground PT cursor. */
+    mfoc_pt_t run_pt;          /* Foreground continuation across polls. */
     mfoc_tick_t stage_started; /* Foreground Port timestamp. */
     mfoc_tick_t stage_ticks;   /* Stage timeout in Port ticks. */
 } mfoc_identification_t;
@@ -104,10 +104,12 @@ void mfoc_identification_Stop(mfoc_identification_t *id);
 
 /** @brief Advance the selected experiment without blocking.
  * @param id Instance. @return Ongoing, complete/idle, or error.
- * @note Foreground only. Each stage waits for ISR completion with a timeout.
+ * @note Foreground only. Each stage's timeout starts on its first Run poll.
+ * An ISR completion already published at the deadline is consumed first.
  * New stage data is prepared while stage_done is true; clearing it publishes
  * the next stage to Step. Unsupported stages report ERROR and stop. */
-fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id);
+mfoc_fsm_rt_t mfoc_identification_Run(
+    mfoc_identification_t *id);
 
 /** @brief Read the experiment lifecycle.
  * @param id Instance. @return Current state. */

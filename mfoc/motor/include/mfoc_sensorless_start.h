@@ -46,6 +46,12 @@ void mfoc_sensorless_start_Init(mfoc_sensorless_start_t *s, uint32_t fs);
 /** @brief Prepare a new forced startup; Motor controls PWM and angle. */
 void mfoc_sensorless_start_Start(mfoc_sensorless_start_t *s,
     mfoc_scalar_t speed, mfoc_scalar_t current);
+/** @brief End the current handover on completion or cancellation.
+ * @param s Startup instance owned by the Motor. */
+static inline void mfoc_sensorless_start_Stop(mfoc_sensorless_start_t *s)
+{
+    s->state = MFOC_SENSORLESS_START_NONE;
+}
 /** @brief Advance ramp/acquisition; modifies angle and current references. */
 mfoc_result_t mfoc_sensorless_start_Step(mfoc_sensorless_start_t *s,
     mfoc_openloop_t *loop, mfoc_sensorless_input_t *ctx,

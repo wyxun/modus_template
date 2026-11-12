@@ -30,13 +30,13 @@
  * Caller establishes steady rotation/current before capture. i/angle are at
  * k; duty/bus cover [k-1,k]. Midpoint voltage projection assumes constant
  * speed and small electrical advance per sample. No settling or PWM here. */
-fsm_rt_t mfoc_identification_flux_Step(
+mfoc_fsm_rt_t mfoc_identification_flux_Step(
     mfoc_identification_flux_t *state,
     const mfoc_identification_flux_input_t *input)
 {
-    if (state->count >= FLUX_SAMPLES) { return fsm_rt_cpl; }
+    if (state->count >= FLUX_SAMPLES) { return MFOC_FSM_COMPLETE; }
     const mfoc_core_output_t *previous = input->previous_core_output;
-    if (previous == NULL) { return fsm_rt_on_going; }
+    if (previous == NULL) { return MFOC_FSM_ONGOING; }
 
     mfoc_ab_t voltage = {0};
     mfoc_dq_t i_dq = {0};
@@ -64,7 +64,8 @@ fsm_rt_t mfoc_identification_flux_Step(
     state->sum_speed += input->speed;
     state->sum_speed_i_d += mfoc_mul_wide(input->speed, i_dq.qD);
     state->count++;
-    return state->count == FLUX_SAMPLES ? fsm_rt_cpl : fsm_rt_on_going;
+    return state->count == FLUX_SAMPLES ?
+        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
 }
 
 /** @brief Calculate psi = sum(uq - Rs*iq - Ld*omega*id) / sum(omega).
@@ -74,7 +75,7 @@ fsm_rt_t mfoc_identification_flux_Step(
  * @note Foreground; omits Lq*diq/dt, so iq must be settled. Valid model and
  * pointers are preconditions. Ideal voltage excludes deadtime/device drops;
  * this window cannot establish rotor lock or verify stability by itself. */
-fsm_rt_t mfoc_identification_flux_Finish(
+mfoc_fsm_rt_t mfoc_identification_flux_Finish(
     const mfoc_identification_flux_t *state,
     const mfoc_motor_params_t *model,
     mfoc_scalar_t *flux)
@@ -82,7 +83,7 @@ fsm_rt_t mfoc_identification_flux_Finish(
     if (state->count != FLUX_SAMPLES ||
         mfoc_abs(state->sum_speed) <
             FLUX_SPEED_MIN * (mfoc_scalar_t)FLUX_SAMPLES) {
-        return fsm_rt_err;
+        return MFOC_FSM_FAILED;
     }
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t value = (state->sum_u_q - model->rs * state->sum_i_q -
@@ -95,7 +96,9 @@ fsm_rt_t mfoc_identification_flux_Finish(
     int64_t value = residual / state->sum_speed;
 #endif
     if (value <= MFOC_ZERO ||
-        value > MFOC_SCALAR(MFOC_MOTOR_FLUX_MAX_PU)) { return fsm_rt_err; }
+        value > MFOC_SCALAR(MFOC_MOTOR_FLUX_MAX_PU)) {
+        return MFOC_FSM_FAILED;
+    }
     *flux = (mfoc_scalar_t)value;
-    return fsm_rt_cpl;
+    return MFOC_FSM_COMPLETE;
 }

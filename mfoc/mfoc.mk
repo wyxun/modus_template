@@ -1,13 +1,11 @@
 # MFOC library sources; the target supplies the Port and interrupt entry.
 MFOC_ROOT ?= mfoc
-MFOC_MODUS_ROOT ?= $(abspath $(dir $(lastword $(MAKEFILE_LIST)))/../modus)
 MFOC_INCLUDES = -I$(MFOC_ROOT) -I$(MFOC_ROOT)/math/include                     \
     -I$(MFOC_ROOT)/control/include                                             \
     -I$(MFOC_ROOT)/core/include                                                \
     -I$(MFOC_ROOT)/motor/include -I$(MFOC_ROOT)/port/include                    \
     -I$(MFOC_ROOT)/position/include                                             \
-    -I$(MFOC_ROOT)/identification/include                                       \
-    -I$(MFOC_MODUS_ROOT)/lib/perf_counter
+    -I$(MFOC_ROOT)/identification/include
 MFOC_SOURCES = $(MFOC_ROOT)/math/src/mfoc_numeric.c                              \
     $(MFOC_ROOT)/math/src/mfoc_angle.c                                          \
     $(MFOC_ROOT)/math/src/mfoc_trig.c                                           \

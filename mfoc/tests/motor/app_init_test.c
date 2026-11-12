@@ -10,6 +10,11 @@
 #include <stdarg.h>
 #include <string.h>
 
+#if defined(MFOC_USE_PERFC_FSM) && MFOC_USE_PERFC_FSM
+_Static_assert(_Generic((mfoc_fsm_rt_t *)0, fsm_rt_t *: 1, default: 0),
+               "The G431 application must share perfc's FSM return type");
+#endif
+
 static mfoc_result_t s_init_result;
 static unsigned s_init_count;
 static unsigned s_run_count;

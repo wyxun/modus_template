@@ -23,6 +23,7 @@ foreach ($numeric in $numerics) {
     if ($shell -eq 0) { $logFlags = @('-D__NO_USE_LOG__') }
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror @includes `
         "-DMFOC_NUMERIC_$numeric=1" -DMODUS_ENABLE=1 -DFOC_APP=2 `
+        -DMFOC_USE_PERFC_FSM=1 `
         "-DMFOC_ISR_MEASURE=$timing" `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$Flux" `

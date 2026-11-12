@@ -9,7 +9,7 @@
 #include "mfoc_core.h"
 #include "mfoc_motor_config.h"
 #include "mfoc_motor_params.h"
-#include "perf_counter.h"
+#include "mfoc_types.h"
 
 /* Must match control sampling and the shared electrical speed PU base.
  * Identification consumes one sample per control interrupt, so the rate is
@@ -76,7 +76,7 @@ typedef struct {
  * @note Valid pointers are required. Caller applies LOW before sampling,
  * then uses the updated level for the next interval; DONE removes excitation.
  * Means, stability and resistance are evaluated by Finish in foreground. */
-fsm_rt_t mfoc_identification_rs_Step(
+mfoc_fsm_rt_t mfoc_identification_rs_Step(
     mfoc_identification_rs_t *state,
     const mfoc_ab_t *current);
 
@@ -84,7 +84,7 @@ fsm_rt_t mfoc_identification_rs_Step(
  * @param state Completed samples. @param bus Startup Vdc/Vbase.
  * @param rs Result R/Rbase, success only.
  * @return Complete or error; failure leaves rs unchanged. */
-fsm_rt_t mfoc_identification_rs_Finish(
+mfoc_fsm_rt_t mfoc_identification_rs_Finish(
     const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
     mfoc_scalar_t *rs);
 
@@ -108,7 +108,7 @@ typedef struct {
  * pulse afterwards. Subsequent calls capture the rise immediately, with no
  * settling delay. Caller removes excitation on completion, then calls Finish.
  * No PWM, voltage selection, projection or result calculation occurs here. */
-fsm_rt_t mfoc_identification_inductance_Step(
+mfoc_fsm_rt_t mfoc_identification_inductance_Step(
     mfoc_identification_inductance_t *state,
     mfoc_scalar_t i_axis_k, mfoc_scalar_t u_axis_previous);
 
@@ -118,7 +118,7 @@ fsm_rt_t mfoc_identification_inductance_Step(
  * @note Foreground; valid pointers and Rs <= MFOC_MOTOR_RS_MAX_PU required.
  * Time base is 1/omega_base. Uses trapezoidal current integration; ADC/PWM
  * timing and rotor standstill must be established by the caller. */
-fsm_rt_t mfoc_identification_inductance_Finish(
+mfoc_fsm_rt_t mfoc_identification_inductance_Finish(
     const mfoc_identification_inductance_t *state, mfoc_scalar_t rs,
     mfoc_scalar_t *inductance);
 
@@ -138,7 +138,7 @@ typedef struct {
  * @note Caller establishes valid rotor feedback and preceding PWM history.
  * Step reconstructs voltage and accumulates rotor-dq quantities;
  * it does not start Motor, select feedback, or change current references. */
-fsm_rt_t mfoc_identification_flux_Step(
+mfoc_fsm_rt_t mfoc_identification_flux_Step(
     mfoc_identification_flux_t *state,
     const mfoc_identification_flux_input_t *input);
 
@@ -146,16 +146,16 @@ fsm_rt_t mfoc_identification_flux_Step(
  * @param state Captured samples. @param model Known Rs/Ld PU parameters.
  * @param flux Result psi/psibase, written on success only.
  * @return Complete or error; flux remains unchanged on failure. */
-fsm_rt_t mfoc_identification_flux_Finish(
+mfoc_fsm_rt_t mfoc_identification_flux_Finish(
     const mfoc_identification_flux_t *state,
     const mfoc_motor_params_t *model,
     mfoc_scalar_t *flux);
 
 /** @brief Acceleration/deceleration leaf; estimator remains TODO.
  * @param input Sample. @param model Torque model. @param output Request.
- * @param inertia Result J/Jbase, written on cpl. @return Ongoing/cpl/error.
+ * @param inertia Result J/Jbase on completion. @return Stage progress.
  * @note A load-torque assumption/estimator is part of the future algorithm. */
-fsm_rt_t mfoc_identification_inertia_Step(
+mfoc_fsm_rt_t mfoc_identification_inertia_Step(
     const mfoc_identification_inertia_input_t *input,
     const mfoc_motor_params_t *model, mfoc_identification_output_t *output,
     mfoc_scalar_t *inertia);

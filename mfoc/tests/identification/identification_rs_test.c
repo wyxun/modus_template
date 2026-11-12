@@ -13,13 +13,14 @@
 /** @brief Drive fixed voltage levels through a resistance and voltage bias.
  * @param resistance Actual PU resistance. @param fault Injected fault kind.
  * @return Terminal progress; results must remain unchanged on failure. */
-static fsm_rt_t experiment(float resistance, unsigned fault)
+static mfoc_fsm_rt_t experiment(float resistance,
+                                               unsigned fault)
 {
     mfoc_identification_rs_t state = {0};
     mfoc_ab_t current = {0};
     mfoc_scalar_t result = MFOC_SCALAR(0.7f);
     float modulation = MFOC_IDENTIFICATION_RS_MODULATION_LOW;
-    fsm_rt_t progress = fsm_rt_on_going;
+    mfoc_fsm_rt_t progress = MFOC_FSM_ONGOING;
     for (unsigned n = 0U; n < 20000U; ++n) {
         float measured = (modulation - 0.015f) / resistance +
             (n % 2U == 0U ? 0.0006f : -0.0006f);
@@ -33,21 +34,21 @@ static fsm_rt_t experiment(float resistance, unsigned fault)
         if (fault == 5U) { current.qAlpha = MFOC_SCALAR(0.001f); }
         if (fault == 6U) { current.qAlpha = MFOC_SCALAR(0.015f); }
         progress = mfoc_identification_rs_Step(&state, &current);
-        if (progress != fsm_rt_on_going) { break; }
+        if (progress != MFOC_FSM_ONGOING) { break; }
         modulation = state.level == MFOC_IDENTIFICATION_RS_LOW ?
             MFOC_IDENTIFICATION_RS_MODULATION_LOW :
             MFOC_IDENTIFICATION_RS_MODULATION_HIGH;
     }
-    assert(progress != fsm_rt_on_going);
-    if (progress == fsm_rt_cpl) {
+    assert(progress != MFOC_FSM_ONGOING);
+    if (progress == MFOC_FSM_COMPLETE) {
         assert(result == MFOC_SCALAR(0.7f));
         mfoc_identification_rs_t saved = state;
         assert(mfoc_identification_rs_Step(&state, &current) ==
-            fsm_rt_cpl);
+            MFOC_FSM_COMPLETE);
         assert(memcmp(&saved, &state, sizeof(state)) == 0);
         progress = mfoc_identification_rs_Finish(&state, MFOC_ONE, &result);
         assert(memcmp(&saved, &state, sizeof(state)) == 0);
-        if (progress == fsm_rt_cpl) {
+        if (progress == MFOC_FSM_COMPLETE) {
             assert(fabsf(mfoc_to_float(result) - resistance) < 0.006f);
         } else {
             assert(result == MFOC_SCALAR(0.7f));
@@ -55,7 +56,7 @@ static fsm_rt_t experiment(float resistance, unsigned fault)
     } else {
         assert(result == MFOC_SCALAR(0.7f));
         assert(mfoc_identification_rs_Finish(&state, MFOC_ONE, &result) ==
-            fsm_rt_err);
+            MFOC_FSM_FAILED);
     }
     return progress;
 }
@@ -73,15 +74,16 @@ static void settling(void)
         mfoc_ab_t current = {MFOC_ONE, MFOC_ZERO};
         for (unsigned n = 0U; n < settle; ++n) {
             assert(mfoc_identification_rs_Step(&state, &current) ==
-                fsm_rt_on_going);
+                MFOC_FSM_ONGOING);
             assert(state.sum_i[level] == MFOC_ZERO);
             assert(state.level == level);
         }
         current.qAlpha = MFOC_HALF;
         for (unsigned n = 0U; n < samples; ++n) {
-            fsm_rt_t rc = mfoc_identification_rs_Step(&state, &current);
+            mfoc_fsm_rt_t rc =
+                mfoc_identification_rs_Step(&state, &current);
             assert(rc == (level == 1U && n + 1U == samples ?
-                fsm_rt_cpl : fsm_rt_on_going));
+                MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING));
         }
         assert(state.count == 0U && state.level == level + 1U);
         assert(state.sum_i[level] == MFOC_HALF * (mfoc_scalar_t)samples);
@@ -120,29 +122,30 @@ static void excitation(void)
  * @return Zero after all assertions pass. */
 int main(void)
 {
-    assert(experiment(1.1666667f, 0U) == fsm_rt_cpl);
-    assert(experiment(2.0f, 0U) == fsm_rt_cpl);
+    assert(experiment(1.1666667f, 0U) == MFOC_FSM_COMPLETE);
+    assert(experiment(2.0f, 0U) == MFOC_FSM_COMPLETE);
     for (unsigned fault = 1U; fault <= 6U; ++fault) {
-        assert(experiment(1.2f, fault) == fsm_rt_err);
+        assert(experiment(1.2f, fault) == MFOC_FSM_FAILED);
     }
-    assert(experiment(-1.0f, 0U) == fsm_rt_err);
-    assert(experiment(9.0f, 0U) == fsm_rt_err);
+    assert(experiment(-1.0f, 0U) == MFOC_FSM_FAILED);
+    assert(experiment(9.0f, 0U) == MFOC_FSM_FAILED);
     mfoc_identification_rs_t a = {0}, b = {0};
     mfoc_ab_t i = {0};
     mfoc_scalar_t r = MFOC_ONE;
-    assert(mfoc_identification_rs_Finish(&a, MFOC_ONE, &r) == fsm_rt_err);
+    assert(mfoc_identification_rs_Finish(&a, MFOC_ONE, &r) ==
+        MFOC_FSM_FAILED);
     assert(r == MFOC_ONE);
     for (unsigned n = 0U; n < 10U; ++n) {
         assert(mfoc_identification_rs_Step(&a, &i) ==
-            fsm_rt_on_going);
+            MFOC_FSM_ONGOING);
         assert(mfoc_identification_rs_Step(&b, &i) ==
-            fsm_rt_on_going);
+            MFOC_FSM_ONGOING);
     }
     assert(a.count == 10U && b.count == 10U);
     a = (mfoc_identification_rs_t){0};
     assert(b.count == 10U);
     assert(mfoc_identification_rs_Step(&a, &i) ==
-        fsm_rt_on_going && a.count == 1U);
+        MFOC_FSM_ONGOING && a.count == 1U);
     settling();
     excitation();
     puts("Rs slope, voltage bias, stability, rejection and reset passed");
