@@ -3,8 +3,9 @@ $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-flux-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
-$sources = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" |
-    ForEach-Object { $_.FullName }) + @(
+$base = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" |
+    ForEach-Object { $_.FullName })
+$sources = $base + @(
     "$library/position/src/mfoc_flux.c", "$library/position/src/mfoc_smo.c",
     "$library/position/src/mfoc_hfi.c",
     "$library/motor/src/mfoc_feedback.c")
@@ -17,11 +18,21 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-I$library/motor/include" "-I$library/position/include" `
         "$testsRoot/position/flux_algorithm_test.c" `
         "$library/position/src/mfoc_flux.c" `
-        @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" | `
-            ForEach-Object { $_.FullName }) -lm -o $algorithm
+        @base -lm -o $algorithm
     if ($LASTEXITCODE -ne 0) { throw "Flux algorithm build failed: $numeric" }
     & $algorithm
     if ($LASTEXITCODE -ne 0) { throw "Flux algorithm test failed: $numeric" }
+    $leaf = Join-Path $output "identification-$numeric.exe"
+    & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
+        "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
+        "-I$library" "-I$library/math/include" "-I$library/control/include" `
+        "-I$library/motor/include" "-I$library/identification/include" `
+        "$testsRoot/identification/identification_flux_test.c" `
+        "$library/identification/src/mfoc_identification_flux.c" `
+        @base -lm -o $leaf
+    if ($LASTEXITCODE -ne 0) { throw "Flux identification build failed: $numeric" }
+    & $leaf
+    if ($LASTEXITCODE -ne 0) { throw "Flux identification failed: $numeric" }
     foreach ($profile in @(@(0, 0, 0, 4), @(1, 1, 0, 1), @(0, 1, 1, 4))) {
         $encoder, $smo, $hfi, $backend = $profile
         $exe = Join-Path $output "$numeric-$encoder-$smo-$hfi-$backend.exe"

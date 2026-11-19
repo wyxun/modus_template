@@ -1,11 +1,10 @@
 /**
  * @file smo_feedback_test.c
- * @brief Feedback voltage preparation and independent algorithm selection.
+ * @brief Applied-voltage routing and independent algorithm selection.
  * @author wyxun
  * @date 2026-10-23
  */
 #include "mfoc_feedback.h"
-#include "mfoc_modulation.h"
 #include "mfoc_port.h"
 #include <assert.h>
 #include <stdio.h>
@@ -38,6 +37,9 @@ int main(void)
             .speed_base_hz = MFOC_SCALAR(400.0f),
             .h = MFOC_SCALAR(5.0f / 12.0f),
             .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE}};
+#if MFOC_FEEDBACK_ENABLE_HFI
+    cfg.observe_hfi = true;
+#endif
     mfoc_feedback_t feedback = {0};
     mfoc_feedback_output_t output = {
         .angle = {0x12345678U}, .speed = MFOC_HALF};
@@ -52,17 +54,12 @@ int main(void)
 #endif
     mfoc_smo_t reference = {0};
     assert(mfoc_smo_Init(&reference, &cfg.smo, &model) == MFOC_RESULT_OK);
-    mfoc_core_output_t previous = {
-        .duty = {MFOC_SCALAR(0.75f), MFOC_SCALAR(0.25f), MFOC_HALF},
-        .bus = MFOC_SCALAR(2.0f), .m = {MFOC_ONE, MFOC_ONE}};
+    mfoc_ab_t voltage = {MFOC_HALF, MFOC_SCALAR(-0.29f)};
     mfoc_ab_t current = {MFOC_SCALAR(0.03f), MFOC_SCALAR(-0.04f)};
     mfoc_feedback_input_t input = {.i_ab_k = &current,
-        .previous_core_output = &previous};
+        .u_ab_previous = &voltage};
     for (unsigned j = 0U; j < 50U; ++j) {
-        mfoc_ab_t voltage = {0};
         mfoc_smo_output_t expected = {0};
-        assert(mfoc_modulation_ModelVoltageAlphaBeta(&previous.duty,
-            previous.bus, &voltage) == MFOC_RESULT_OK);
         mfoc_smo_Step(&reference, &current, &voltage, &expected);
         mfoc_feedback_output_t before_output = output;
         rc = mfoc_feedback_Step(&feedback, &input, &output);
@@ -76,10 +73,8 @@ int main(void)
             mfoc_abs(feedback.hfi_output.u_inject_ab.qBeta) ==
             MFOC_HFI_VOLTAGE);
         if (rc == MFOC_RESULT_OK) {
-            assert(output.u_inject_ab.qAlpha ==
-                feedback.hfi_output.u_inject_ab.qAlpha);
-            assert(output.u_inject_ab.qBeta ==
-                feedback.hfi_output.u_inject_ab.qBeta);
+            assert(output.u_inject_ab.qAlpha == MFOC_ZERO);
+            assert(output.u_inject_ab.qBeta == MFOC_ZERO);
         }
 #endif
         assert(feedback.smo_output.angle.wBam32 == expected.angle.wBam32);
@@ -98,7 +93,7 @@ int main(void)
 #else
         assert(rc == MFOC_RESULT_INVALID_STATE);
 #endif
-        previous.bus = j % 2U == 0U ? MFOC_ONE : MFOC_SCALAR(2.0f);
+        voltage.qAlpha = j % 2U == 0U ? MFOC_SCALAR(0.25f) : MFOC_HALF;
     }
     /* A failed position provider must not prevent the independent SMO. */
     position_result = MFOC_RESULT_SAFETY;
@@ -109,7 +104,7 @@ int main(void)
 #else
     assert(rc != MFOC_RESULT_OK);
 #endif
-    input.previous_core_output = NULL;
+    input.u_ab_previous = NULL;
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(rc != MFOC_RESULT_OK);
     assert(feedback.smo_status == MFOC_RESULT_INVALID_STATE);
@@ -141,6 +136,6 @@ int main(void)
     assert(rc == MFOC_RESULT_INVALID_STATE);
 #endif
     assert(memcmp(&output, &before_output, sizeof(output)) == 0);
-    puts("Feedback preparation, selection and model refresh passed");
+    puts("Feedback voltage routing, selection and model refresh passed");
     return 0;
 }

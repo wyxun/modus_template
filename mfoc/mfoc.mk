@@ -1,5 +1,6 @@
 # MFOC library sources; the target supplies the Port and interrupt entry.
 MFOC_ROOT ?= mfoc
+MFOC_INDUCTANCE_SRC = $(MFOC_ROOT)/identification/src/inductance
 MFOC_INCLUDES = -I$(MFOC_ROOT) -I$(MFOC_ROOT)/math/include                     \
     -I$(MFOC_ROOT)/control/include                                             \
     -I$(MFOC_ROOT)/core/include                                                \
@@ -20,8 +21,10 @@ MFOC_SOURCES = $(MFOC_ROOT)/math/src/mfoc_numeric.c                             
     $(MFOC_ROOT)/motor/src/mfoc_feedback.c                                      \
     $(MFOC_ROOT)/identification/src/mfoc_identification.c                       \
     $(MFOC_ROOT)/identification/src/mfoc_identification_rs.c                    \
-    $(MFOC_ROOT)/identification/src/mfoc_identification_inductance.c            \
+    $(MFOC_INDUCTANCE_SRC)/mfoc_identification_inductance.c                     \
+    $(MFOC_INDUCTANCE_SRC)/mfoc_identification_inductance_timing.c              \
     $(MFOC_ROOT)/identification/src/mfoc_identification_flux.c                  \
+    $(MFOC_ROOT)/identification/src/mfoc_identification_rotation.c              \
     $(MFOC_ROOT)/identification/src/mfoc_identification_inertia.c               \
     $(MFOC_ROOT)/position/src/mfoc_encoder.c                                    \
     $(MFOC_ROOT)/position/src/mfoc_hall.c                                       \

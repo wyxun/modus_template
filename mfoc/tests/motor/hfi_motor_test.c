@@ -7,6 +7,7 @@
 #include "motor_port_fake.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 /** @brief Exercise HFI reset/start and Motor failure routing.
  * @return Zero on success. */
@@ -24,7 +25,8 @@ int main(void)
     assert(mfoc_motor_HfiStart(NULL) == MFOC_RESULT_NULL);
     assert(mfoc_motor_HfiStart(&motor) == MFOC_RESULT_INVALID_STATE);
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
-#if MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_FEEDBACK_ENABLE_HFI && (MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI ||  \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION)
     /* No measured response must time out and remove injection. */
     mfoc_hfi_t observer = {0};
     mfoc_hfi_output_t estimate = {0};
@@ -57,7 +59,7 @@ int main(void)
         .u_inject_ab = {.qAlpha = MFOC_HFI_VOLTAGE}};
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.previous_core_output.m.qAlpha > MFOC_ZERO);
-    assert(motor.i_ref.qD == 0 && motor.i_ref.qQ == 0);
+    assert(motor.current_cmd.qD == 0 && motor.current_cmd.qQ == 0);
     assert(motor.state == MFOC_MOTOR_RUNNING && motor_port_fake.enabled);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_IDLE);
@@ -90,7 +92,18 @@ int main(void)
     assert(mfoc_motor_HfiStart(&motor) == MFOC_RESULT_IO);
     assert(motor.state == MFOC_MOTOR_FAULT && !motor_port_fake.enabled);
 #else
+    /* Reject before resetting HFI, changing the reference or touching PWM. */
+#if MFOC_FEEDBACK_ENABLE_HFI
+    motor.feedback.hfi.state = MFOC_HFI_FAILED;
+    motor.feedback.hfi_output.valid = true;
+#endif
+    const mfoc_dq_t ref = {.qQ = MFOC_HALF};
+    assert(mfoc_motor_SetCurrent(&motor, &ref) == MFOC_RESULT_OK);
+    unsigned char saved[sizeof(motor)];
+    memcpy(saved, &motor, sizeof(saved));
     assert(mfoc_motor_HfiStart(&motor) == MFOC_RESULT_INVALID_STATE);
+    assert(memcmp(saved, &motor, sizeof(saved)) == 0);
+    assert(motor_port_fake.writes == 0U && motor_port_fake.disables == 0U);
     assert(!motor_port_fake.enabled && motor_port_fake.enables == 0U);
 #endif
     puts("HFI Motor startup and failure routing passed");

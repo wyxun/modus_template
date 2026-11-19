@@ -13,6 +13,49 @@
 #include <math.h>
 #endif
 
+#if defined(MFOC_NUMERIC_FIXED)
+/** @brief Round the requested vector magnitude up to a whole Q15 count.
+ * @param n2 Positive sum of two squared int32_t axes, at most 2^63.
+ * @return Smallest integer root whose square covers n2. */
+static uint32_t _mfoc_core_CeilSqrt(uint64_t n2)
+{
+    uint32_t high = (uint32_t)(n2 >> 32);
+    uint32_t low = (uint32_t)n2;
+    uint32_t head = high != 0U ? high : low;
+    uint32_t root = 0U;
+    uint32_t bit = UINT32_C(1) << 30;
+    /* Start at the highest power of four in the first nonzero word. */
+    while (bit > head) { bit >>= 2; }
+    do {
+        uint32_t trial = root + bit;
+        root >>= 1;
+        if (head >= trial) {
+            head -= trial;
+            root += bit;
+        }
+        bit >>= 2;
+    } while (bit != 0U);
+
+    /* head now holds the remainder. If a low word is still pending,
+     * bring down two bits at a time. (2*root + 1)^2 - (2*root)^2
+     * gives the trial subtraction for the next root bit. */
+    uint64_t rem = head;
+    if (high != 0U) {
+        for (unsigned int i = 0U; i < 16U; ++i) {
+            rem = (rem << 2) | (low >> 30);
+            low <<= 2;
+            uint64_t trial = (uint64_t)root * 4U + 1U;
+            root <<= 1;
+            if (rem >= trial) {
+                rem -= trial;
+                ++root;
+            }
+        }
+    }
+    return root + (rem != 0U ? 1U : 0U);
+}
+#endif
+
 /** @brief Limit the combined PI and injection voltage vector.
  * @param u Voltage request, replaced by limited voltage.
  * @param c Core with a precomputed voltage limit.
@@ -32,19 +75,7 @@ static bool _mfoc_core_limit(mfoc_dq_t *u, const mfoc_core_t *c)
     uint64_t n2 = (uint64_t)((int64_t)u->qD * u->qD) +
                   (uint64_t)((int64_t)u->qQ * u->qQ);
     if (n2 <= (uint64_t)((int64_t)r * r)) { return false; }
-    uint64_t rem = n2;
-    uint64_t n = 0;
-    uint64_t bit = UINT64_C(1) << 62;
-    while (bit != 0U) {
-        if (rem >= n + bit) {
-            rem -= n + bit;
-            n = (n >> 1) + bit;
-        } else {
-            n >>= 1;
-        }
-        bit >>= 2;
-    }
-    if (rem != 0U) { ++n; }
+    uint32_t n = _mfoc_core_CeilSqrt(n2);
     /* Single wide product/division per axis, rounded toward zero. */
     u->qD = (mfoc_scalar_t)((int64_t)u->qD * r / (int64_t)n);
     u->qQ = (mfoc_scalar_t)((int64_t)u->qQ * r / (int64_t)n);

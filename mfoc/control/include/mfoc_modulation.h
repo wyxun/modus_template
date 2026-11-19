@@ -22,7 +22,7 @@ void mfoc_svpwm(const mfoc_ab_t *voltage,
 mfoc_result_t mfoc_spwm(const mfoc_ab_t *voltage, mfoc_uvw_t *duty);
 /** @brief Reconstruct ideal stationary voltage from an effective interval.
  * @param duty Finite prior interval duties [0,1].
- * @param bus Finite measured bus/baseV > 0.
+ * @param bus Bus snapshot for the submitted interval, Vdc/Vbase > 0.
  * @param voltage Output voltage/baseV; may exceed 1 PU.
  * @return NULL or OK. Caller aligns i[k] and u[k-1].
  * @note Caller validates input ranges. Excludes deadtime and device drops. */

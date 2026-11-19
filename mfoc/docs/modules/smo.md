@@ -4,7 +4,7 @@ SMO 用等电感电机模型估计 αβ 电流，再从电流估计误差提取�
 
 ## 输入和参数
 
-每次 `mfoc_smo_Step()` 接收本拍测得的 `iαβ[k]`（I/Ibase）和上一控制区间施加的模型电压 `uαβ[k-1]`（V/Vbase）。Feedback 用上次成功提交给 PWM 的占空比和与其一同保存的母线快照重建该电压。它反映调制后的理想平均电压，仍有死区、器件压降等误差。[Feedback 电压准备](../../motor/src/mfoc_feedback.c) · [模型电压重建](../../control/src/mfoc_modulation.c)
+每次 `mfoc_smo_Step()` 接收本拍测得的 `iαβ[k]`（I/Ibase）和上一控制区间施加的模型电压 `uαβ[k-1]`（V/Vbase）。Motor 根据最终提交成功的占空比和本区间的母线快照重建该电压，Feedback 将它传给 SMO。它反映调制后的理想平均电压，仍有死区、器件压降等误差。[Feedback 传入前区间电压](../../motor/src/mfoc_feedback.c) · [模型电压重建](../../control/src/mfoc_modulation.c)
 
 | `mfoc_smo_Init()` 输入 | 含义与约束 | 当前应用取值 |
 | --- | --- | --- |
@@ -30,4 +30,4 @@ Init 预计算离散系数，失败保留原实例。停机更新电机模型时
 
 ## 主机验证
 
-在仓库根目录运行 `./mfoc/tests/scripts/run_smo_tests.ps1`。算法用例在 FLOAT、FIXED 两种后端检查系数、边界层限幅、正反转速度、相位补偿和复位。其中相位用例注入已知反电势，单独检验角速提取。Feedback 用例核对电压重建、影子运行、缺帧复位与模型更新。实际电机上的低速可用范围和带载接管仍需用编码器对照验证。[测试脚本](../../tests/scripts/run_smo_tests.ps1) · [Feedback 回归用例](../../tests/position/smo_feedback_test.c)
+在仓库根目录运行 `./mfoc/tests/scripts/run_smo_tests.ps1`。算法用例在 FLOAT、FIXED 两种后端检查系数、边界层限幅、正反转速度、相位补偿和复位。其中相位用例注入已知反电势，单独检验角速提取。Feedback 用例核对前区间电压传递、影子运行、缺帧复位与模型更新。实际电机上的低速可用范围和带载接管仍需用编码器对照验证。[测试脚本](../../tests/scripts/run_smo_tests.ps1) · [Feedback 回归用例](../../tests/position/smo_feedback_test.c)

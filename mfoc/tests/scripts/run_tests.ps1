@@ -33,6 +33,23 @@ foreach ($case in $cases) {
 Write-Output "Host test artifacts: $output"
 
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1')
+foreach ($enabled in @(0, 1)) {
+    & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests motor_model_update `
+        -Backend 1 -Hfi $enabled -Identify $enabled
+}
+# Exercise the supported sensorless startup with an identification owner.
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 0 -Backend 2 -Identify 1 `
+    -Tests @('motor_identification', 'motor_handover')
+# Identification uses electrical samples even when position is compiled out.
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 0 -Backend 0 -Identify 1 `
+    -Position 0 -Tests motor_identification_plant
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 1 -Backend 3 -Identify 1 `
+    -Position 0 -Tests motor_identification_plant
+# POSITION with HFI enabled is covered by the default Core suite.
+foreach ($backend in @(0, 2, 3, 4, 5)) {
+    & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests hfi_motor -Backend $backend
+}
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests hfi_motor -Backend 1 -Hfi 0
 & (Join-Path $PSScriptRoot 'run_encoder_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_hall_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_smo_tests.ps1')

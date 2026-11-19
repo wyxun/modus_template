@@ -228,6 +228,7 @@ static mfoc_result_t _mfoc_app_Speed(float speed_ref)
 static void _mfoc_app_PrintHfi(void)
 {
 #if MFOC_FEEDBACK_ENABLE_HFI
+    bool hfi_off = false;
     mfoc_hfi_state_t state = MFOC_HFI_ACQUIRE;
     mfoc_hfi_output_t output = {0};
     mfoc_motor_state_t motor_state = MFOC_MOTOR_UNINITIALIZED;
@@ -238,6 +239,7 @@ static void _mfoc_app_PrintHfi(void)
     bool overrun = false;
 #endif
     __IRQ_SAFE {
+        hfi_off = tMfocApp.motor.feedback.hfi_mode == MFOC_FEEDBACK_HFI_OFF;
         state = tMfocApp.motor.feedback.hfi.state;
         output = tMfocApp.motor.feedback.hfi_output;
         motor_state = tMfocApp.motor.state;
@@ -249,7 +251,8 @@ static void _mfoc_app_PrintHfi(void)
 #endif
     }
     const char *name = "polarity";
-    if (state == MFOC_HFI_ACQUIRE) { name = "acquire"; }
+    if (hfi_off) { name = "off"; }
+    else if (state == MFOC_HFI_ACQUIRE) { name = "acquire"; }
     else if (state == MFOC_HFI_TRACK) { name = "track"; }
     else if (state == MFOC_HFI_FAILED) { name = "failed"; }
     else { /* Polarity identification substate. */ }

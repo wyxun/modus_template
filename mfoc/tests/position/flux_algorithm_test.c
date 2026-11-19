@@ -31,26 +31,26 @@ static void sample(double turns, double current[2], double psi[2])
 }
 
 /** @brief Check signed speed and angle with a prior-interval average voltage.
- * @param speed Electrical speed PU. @param ramp Test a speed reversal.
+ * @param tuning Instance configuration. @param speed Electrical speed PU.
+ * @param ramp Test a speed reversal.
  * @return None. */
-static void tracking(double speed, bool ramp)
+static void tracking(mfoc_flux_cfg_t tuning, double speed, bool ramp)
 {
     mfoc_flux_t flux = {0};
-    mfoc_flux_cfg_t tuning = cfg;
     /* Synthetic profile: avoid amplifying endpoint-current quadrature error. */
     tuning.gain = MFOC_SCALAR(0.1f);
     assert(mfoc_flux_Init(&flux, &tuning, &model) == MFOC_RESULT_OK);
     double turns = 0.23, old_i[2] = {0}, old_psi[2] = {0};
     double max_angle = 0.0, max_speed = 0.0, sum_angle = 0.0;
     unsigned measured = 0U;
-    /* One-second scenario expressed in control periods, so the same physical
-     * run applies at any MFOC_MOTOR_RUN_FREQ_HZ. */
-    const unsigned n_total = MFOC_MOTOR_RUN_FREQ_HZ;
-    const unsigned n_warm = MFOC_MOTOR_RUN_FREQ_HZ / 5U;
-    const unsigned n_ramp0 = MFOC_MOTOR_RUN_FREQ_HZ * 3U / 10U;
-    const unsigned n_ramp1 = MFOC_MOTOR_RUN_FREQ_HZ * 7U / 10U;
-    const double dt = 6.283185307179586 * 400.0 /
-        (double)MFOC_MOTOR_RUN_FREQ_HZ;
+    /* The plant runs for one second at the requested sampling rate. */
+    const unsigned n_total = tuning.sample_hz;
+    const unsigned n_warm = n_total / 5U;
+    const unsigned n_ramp0 = n_total * 3U / 10U;
+    const unsigned n_ramp1 = n_total * 7U / 10U;
+    const double turns_per_sample = (double)mfoc_to_float(tuning.speed_base_hz)
+        / tuning.sample_hz;
+    const double dt = 6.283185307179586 * turns_per_sample;
     sample(turns, old_i, old_psi);
     for (unsigned n = 0U; n < n_total; ++n) {
         double command = speed;
@@ -59,7 +59,7 @@ static void tracking(double speed, bool ramp)
                 (double)(n - n_ramp0) / (double)(n_ramp1 - n_ramp0) : 1.0;
             command = speed * (1.0 - 2.0 * ratio);
         }
-        turns += command * 400.0 / (double)MFOC_MOTOR_RUN_FREQ_HZ;
+        turns += command * turns_per_sample;
         double current[2] = {0}, psi[2] = {0};
         sample(turns, current, psi);
         mfoc_ab_t i = {mfoc_from_float((float)current[0]),
@@ -86,8 +86,9 @@ static void tracking(double speed, bool ramp)
         memcpy(old_i, current, sizeof(old_i));
         memcpy(old_psi, psi, sizeof(old_psi));
     }
-    printf("Flux speed=%+.2f ramp=%u bias=%.3f deg max=%.3f deg "
-        "speed_error=%.5f pu\n", speed, (unsigned)ramp,
+    printf("Flux fs=%u base=%.1f speed=%+.2f ramp=%u bias=%.3f deg "
+        "max=%.3f deg speed_error=%.5f pu\n", n_total,
+        mfoc_to_float(tuning.speed_base_hz), speed, (unsigned)ramp,
         sum_angle / measured * 360.0, max_angle * 360.0, max_speed);
     double rotor_error = atan2(mfoc_to_float(flux.psi_s.qBeta) - old_i[1],
         mfoc_to_float(flux.psi_s.qAlpha) - old_i[0]) /
@@ -120,12 +121,17 @@ int main(void)
         assert(out.angle.wBam32 == 0U && out.speed == MFOC_ZERO);
     }
     assert(other.psi_s.qAlpha == MFOC_ZERO && other.pll_i == MFOC_ZERO);
+    mfoc_flux_cfg_t alternate = cfg;
+    alternate.sample_hz = 16000U;
+    alternate.speed_base_hz = MFOC_SCALAR(250.0f);
     for (int sign = -1; sign <= 1; sign += 2) {
-        tracking(sign * 0.05, false);
-        tracking(sign * 0.3, false);
-        tracking(sign * 0.7, false);
+        tracking(cfg, sign * 0.05, false);
+        tracking(cfg, sign * 0.3, false);
+        tracking(cfg, sign * 0.7, false);
+        tracking(alternate, sign * 0.3, false);
     }
-    tracking(0.3, true);
+    tracking(cfg, 0.3, true);
+    tracking(alternate, 0.3, true);
     assert(failures == 0U);
     puts("Flux amplitude, signed tracking and reversal passed");
     return 0;

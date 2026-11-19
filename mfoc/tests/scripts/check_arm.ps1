@@ -7,7 +7,7 @@ $sources = @(Get-ChildItem (Join-Path $math 'src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'control/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'core/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'motor/src') -Filter '*.c') +
-    @(Get-ChildItem (Join-Path $library 'identification/src') -Filter '*.c') +
+    @(Get-ChildItem (Join-Path $library 'identification/src') -Recurse -File -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'position/src') -Filter '*.c')
 $repo = Split-Path -Parent $library
 $clang = Join-Path $Toolchain 'clang.exe'
@@ -16,11 +16,12 @@ $size = Join-Path $Toolchain 'llvm-size.exe'
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-arm-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $profiles = @(
-    @('FIXED', 'cortex-m0', 'soft'),
-    @('FLOAT', 'cortex-m4', 'hard')
+    @('FIXED', 'cortex-m0', 'soft', 'FIXED'),
+    @('FLOAT', 'cortex-m4', 'hard', 'FLOAT'),
+    @('FIXED', 'cortex-m0', 'soft', 'FIXED-all-observers')
 )
 foreach ($profile in $profiles) {
-    $numeric, $cpu, $abi = $profile
+    $numeric, $cpu, $abi, $build = $profile
     $arguments = @('--target=arm-none-eabi', "-mcpu=$cpu", '-mthumb',
         "-mfloat-abi=$abi", '-std=gnu11', '-O2', '-ffp-contract=off',
         '-Wall', '-Wextra', '-Werror', '-ffunction-sections',
@@ -34,13 +35,55 @@ foreach ($profile in $profiles) {
         "-I$(Join-Path $library 'identification/include')",
         "-I$(Join-Path $library 'port/include')")
     if ($abi -eq 'hard') { $arguments += '-mfpu=fpv4-sp-d16' }
+    if ($build -eq 'FIXED-all-observers') {
+        $arguments += @('-DMFOC_FEEDBACK_ENABLE_HFI=1', '-DMFOC_FEEDBACK_ENABLE_FLUX=1')
+    }
     foreach ($source in $sources) {
-        $object = Join-Path $output "$numeric-$($source.BaseName).o"
+        $object = Join-Path $output "$build-$($source.BaseName).o"
         & $clang @arguments -c $source.FullName -o $object
         if ($LASTEXITCODE -ne 0) { throw "ARM build failed: $object" }
     }
-    Write-Output "$numeric / $cpu object compilation passed"
+    Write-Output "$build / $cpu object compilation passed"
 }
+# Encoder/Hall and the standalone flux capture have independent callers.
+# Keep the Motor path and discard unrelated foreground sections.
+$linker = Join-Path $Toolchain 'ld.lld.exe'
+$fixedObjects = @($sources | ForEach-Object {
+    Join-Path $output "FIXED-all-observers-$($_.BaseName).o"
+})
+$roots = @('mfoc_motor_Step', 'mfoc_encoder_Step', 'mfoc_hall_OnEdge',
+    'mfoc_hall_Step', 'mfoc_identification_inductance_Step', 'mfoc_identification_flux_Step')
+$rootFlags = @($roots | ForEach-Object { "--undefined=$_" })
+$hotPath = Join-Path $output 'fixed-sampling.o'
+& $linker -r --gc-sections @rootFlags @fixedObjects -o $hotPath
+if ($LASTEXITCODE -ne 0) { throw 'Cannot link FIXED sampling paths' }
+$defined = @(& $nm --defined-only --just-symbol-name $hotPath)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect linked FIXED sampling code' }
+foreach ($entry in ($roots + @('mfoc_smo_Step', 'mfoc_hfi_Step', 'mfoc_flux_Step',
+        'mfoc_identification_rs_Step', 'mfoc_identification_rotation_Step',
+        'mfoc_identification_inertia_Block'))) {
+    if ($entry -cnotin $defined) { throw "Missing FIXED sampling path: $entry" }
+}
+$external = @(& $nm --undefined-only --just-symbol-name $hotPath)
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect linked FIXED sampling dependencies' }
+# Cortex-M0 can use __aeabi_idiv for the signed duty numerator divided by 3.
+# Keep wide division out of the per-PWM voltage reconstruction.
+$modelAsm = & (Join-Path $Toolchain 'llvm-objdump.exe') -dr `
+    --section=.text.mfoc_modulation_ModelVoltageAlphaBeta `
+    (Join-Path $output 'FIXED-mfoc_modulation.o')
+if ($LASTEXITCODE -ne 0 -or !($modelAsm -match '<mfoc_modulation_ModelVoltageAlphaBeta>:')) {
+    throw 'Cannot inspect FIXED voltage reconstruction'
+}
+if ($modelAsm -match '__aeabi_u?ldivmod') {
+    throw 'Unexpected wide division in FIXED voltage reconstruction'
+}
+# The partial link ends at the board Port and integer/memory runtime helpers.
+$expected = @('mfoc_port_current', 'mfoc_port_position', 'mfoc_port_pwm',
+    'mfoc_port_pwm_stop', '__aeabi_ldivmod', '__aeabi_uldivmod', '__aeabi_lmul',
+    '__aeabi_idiv', '__aeabi_memclr4', '__aeabi_memclr8')
+$unexpected = @($external | Where-Object { $_ -cnotin $expected })
+if ($unexpected) { throw "Unexpected FIXED sampling dependencies: $unexpected" }
+Write-Output "Cortex-M0 FIXED linked sampling paths passed; external references: $external"
 $portIncludes = @('mfoc', 'mfoc/math/include', 'mfoc/control/include',
     'mfoc/port/include', 'mfoc/position/include',
     'mfoc/motor/include', 'modus/src',
@@ -102,6 +145,13 @@ if ($piUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {
     throw "FIXED PI must not use soft-float helpers: $piUndefined"
 }
 Write-Output 'Cortex-M0 FIXED PI: no soft-float helper symbols'
+$inductance = Join-Path $output 'FIXED-mfoc_identification_inductance.o'
+$inductanceRefs = & $nm --undefined-only $inductance
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED inductance object' }
+if ($inductanceRefs -match '__aeabi_(?:[fd]|u?[il]2[fd])|__(?:add|sub|mul|div|float|fix).*([sd]f)|inductance_(InitTiming|FinishPrepared)') {
+    throw "Default FIXED inductance must remain standalone and integer-only: $inductanceRefs"
+}
+Write-Output 'Cortex-M0 FIXED default inductance: no timing or soft-float calls'
 $smoUndefined = & $nm --undefined-only (Join-Path $output 'FIXED-mfoc_smo.o')
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED SMO object' }
 if ($smoUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)') {

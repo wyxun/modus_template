@@ -19,7 +19,7 @@ mingw32-make size                 # Display ELF section sizes
 ```
 
 `Makefile` and `make.bat` are authoritative. Available targets are the
-subdirectories under `target/`; the default target is `at32f413`.
+subdirectories under `target/`; the shared default target is `stm32g431`.
 
 For MCU debugging, follow [the AITrace skill](skills/aitrace/SKILL.md) and use
 `.\tools\aitrace.exe` as the single AI-facing entry point. Start with passive

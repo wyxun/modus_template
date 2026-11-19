@@ -5,6 +5,7 @@
  * @date 2026-10-24
  */
 #include "mfoc_feedback.h"
+#include "mfoc_core.h"
 #include "mfoc_modulation.h"
 #include <assert.h>
 #include <math.h>
@@ -76,13 +77,22 @@ int main(void)
         MFOC_RESULT_OK);
     assert(result.acquiring);
     assert(result.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
-    sample.previous_core_output = &output;
+    assert(feedback.hfi.carrier == 0U);
+    const mfoc_ab_t zero_voltage = {0};
+    sample.u_ab_previous = &zero_voltage;
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
         MFOC_RESULT_OK);
     assert(result.acquiring);
     assert(!feedback.hfi_output.valid);
+    assert(feedback.hfi.carrier == 1U);
     assert(feedback.hfi_output.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
     assert(feedback.hfi_output.u_inject_ab.qBeta == MFOC_ZERO);
+    const mfoc_ab_t applied = {MFOC_SCALAR(0.09f), MFOC_SCALAR(-0.02f)};
+    sample.u_ab_previous = &applied;
+    assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
+        MFOC_RESULT_OK);
+    assert(feedback.hfi.delta_u[0].qAlpha == applied.qAlpha);
+    assert(feedback.hfi.delta_u[0].qBeta == applied.qBeta);
     mfoc_hfi_t retained = feedback.hfi;
     assert(mfoc_feedback_SetMotorParamModel(&feedback, &model) ==
         MFOC_RESULT_OUT_OF_RANGE);
@@ -100,6 +110,17 @@ int main(void)
     assert(mfoc_feedback_Step(&feedback, &sample, &result) ==
         MFOC_RESULT_INVALID_STATE);
     assert(feedback.hfi.state == MFOC_HFI_FAILED);
+    /* Missing current invalidates HFI history and preserves the caller's output. */
+    unsigned char saved[sizeof(result)];
+    memcpy(saved, &result, sizeof(saved));
+    feedback.hfi_output.valid = true;
+    feedback.hfi_output.u_inject_ab.qAlpha = MFOC_HALF;
+    assert(mfoc_feedback_Step(&feedback, NULL, &result) ==
+        MFOC_RESULT_INVALID_STATE);
+    assert(memcmp(saved, &result, sizeof(saved)) == 0);
+    assert(!feedback.hfi.has_current && !feedback.hfi_output.valid);
+    assert(feedback.hfi_output.u_inject_ab.qAlpha == MFOC_ZERO);
+    assert(feedback.hfi_output.u_inject_ab.qBeta == MFOC_ZERO);
     puts("Injection and model ranges without SMO passed");
     return 0;
 }

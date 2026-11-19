@@ -17,7 +17,7 @@ Port 是一组编译期直接绑定的函数，连接一个静态绑定的功率
 | 对象或数据 | 拥有者 | 职责 |
 |---|---|---|
 | `mfoc_motor_t` | 应用 | 编排 Feedback、Core、速度环、启动及辨识；不保存 ADC/PWM/传感器句柄 |
-| `mfoc_feedback_t` | Motor | 拥有启用的 SMO、Flux、HFI、EKF 算法状态；按编译配置选择角度、速度及注入输出 |
+| `mfoc_feedback_t` | Motor | 拥有启用的 SMO、Flux、HFI、EKF 算法状态。主反馈提供角速，启动许可决定是否发布 HFI 注入 |
 | `mfoc_core_t` | Motor | 坐标变换、电流控制、电压约束、调制与 duty |
 | `mfoc_encoder_t` | G431 Port | 位置处理组件的实例；包含测速、滤波、零位和发布样本 |
 | `mfoc_mdi_port_t s_port` | G431 单功率级适配 | 组合 Encoder、采集周期、时刻、电流零偏、换算系数和电压基值 |
@@ -82,7 +82,7 @@ flowchart TD
     C -->|"三相 duty"| PWM["板级 · mfoc_port_pwm 写比较值"]
 ```
 
-代码的调用顺序是前台 `mfoc_motor_Run → mfoc_port_position_run → Update / OnEdge`，控制中断 `mfoc_motor_Step → mfoc_feedback_Step → mfoc_port_position → 组件 Step`。位置组件按当前 tick 外推，慢速传感器读取留在中断外。Motor 在 PWM 提交成功后保存本拍 Core 输出，供下一拍使用。母线按应用选定的节拍刷新。启动和故障关断另走第 2 节的 PWM 启停接口。
+代码的调用顺序是前台 `mfoc_motor_Run → mfoc_port_position_run → Update / OnEdge`，控制中断 `mfoc_motor_Step → mfoc_feedback_Step → mfoc_port_position → 组件 Step`。位置组件按当前 tick 外推，慢速传感器读取留在中断外。Motor 在 PWM 提交成功后，用最终 duty 及该区间的母线快照保存 αβ 模型电压，供下一拍的观测与辨识使用。母线按应用选定的节拍刷新。启动和故障关断另走第 2 节的 PWM 启停接口。
 
 ## 5. 照模板接编码器或霍尔
 

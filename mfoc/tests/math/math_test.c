@@ -59,6 +59,53 @@ mfoc_angle_t mfoc_trig_port_atan2(mfoc_scalar_t y, mfoc_scalar_t x)
 }
 #endif
 
+/** @brief Check FLOAT identity and the expected raw FIXED counts. */
+static void check_conversion(float input, int32_t counts)
+{
+    mfoc_scalar_t result = mfoc_from_float(input);
+#if defined(MFOC_NUMERIC_FIXED)
+    if (result != counts) {
+        fprintf(stderr, "%a converted to %ld counts, expected %ld\n",
+                (double)input, (long)result, (long)counts);
+    }
+    assert(result == counts);
+#else
+    (void)counts;
+    assert(result == input);
+    assert(!!signbit(result) == !!signbit(input));
+#endif
+}
+
+static void test_float_conversion(void)
+{
+    const float half_lsb = 0x1p-16f;
+    for (int sign = -1; sign <= 1; sign += 2) {
+        check_conversion(sign * 0.0f, 0);
+        check_conversion(sign * nextafterf(half_lsb, 0.0f), 0);
+        check_conversion(sign * half_lsb, sign);
+        check_conversion(sign * nextafterf(half_lsb, INFINITY), sign);
+        check_conversion(sign * nextafterf(3 * half_lsb, 0.0f), sign);
+        check_conversion(sign * 3 * half_lsb, sign * 2);
+        check_conversion(sign * nextafterf(3 * half_lsb, INFINITY),
+                         sign * 2);
+        /* Binary32 still represents odd Q15 counts at 256 PU. */
+        check_conversion(sign * 0x1.000002p8f, sign * 8388609);
+        /* The last float below +65536 is 128 raw counts below 2^31. */
+        check_conversion(sign * nextafterf(65536.0f, 0.0f),
+                         sign * INT32_C(2147483520));
+        int32_t limit = sign > 0 ? INT32_MAX : INT32_MIN;
+        check_conversion(sign * 65536.0f, limit);
+        check_conversion(sign * nextafterf(65536.0f, INFINITY), limit);
+        check_conversion(sign * FLT_MAX, limit);
+        check_conversion(sign * INFINITY, limit);
+    }
+#if defined(MFOC_NUMERIC_FIXED)
+    assert(mfoc_from_float(NAN) == MFOC_ZERO);
+#else
+    assert(isnan(mfoc_from_float(NAN)));
+#endif
+}
+
 /** @brief Check scalar rounding, saturation and checked division.
  * @return None. */
 static void test_numeric(void)
@@ -75,9 +122,6 @@ static void test_numeric(void)
     assert(mfoc_add_sat(INT32_MAX, 1) == INT32_MAX);
     assert(mfoc_sub_sat(INT32_MIN, 1) == INT32_MIN);
     assert(mfoc_abs(INT32_MIN) == INT32_MAX);
-    assert(mfoc_from_float(NAN) == 0);
-    assert(mfoc_from_float(INFINITY) == INT32_MAX);
-    assert(mfoc_from_float(-INFINITY) == INT32_MIN);
     assert(mfoc_mul_pu(-1, MFOC_HALF) == -1);
     assert(mfoc_mul_wide(-1, MFOC_HALF) == 0);
     assert(mfoc_mul_pu(MFOC_SCALAR(2.0f), MFOC_HALF) == MFOC_HALF);
@@ -279,6 +323,33 @@ static void test_model_boundaries(void)
     }
 }
 
+#if defined(MFOC_NUMERIC_FIXED)
+/** @brief Compare every legal alpha numerator with the wide duty formula. */
+static void test_fixed_model_voltage(void)
+{
+    const mfoc_scalar_t buses[] = {1, MFOC_ONE, MFOC_ONE + MFOC_HALF,
+                                   INT32_MAX};
+    for (int32_t num = -2 * MFOC_ONE; num <= 2 * MFOC_ONE; ++num) {
+        mfoc_scalar_t u = num >= 0 ? MFOC_ONE : 0;
+        mfoc_scalar_t sum = 2 * u - num;
+        mfoc_scalar_t v = sum > MFOC_ONE ? MFOC_ONE : sum;
+        mfoc_scalar_t w = sum - v;
+        mfoc_uvw_t duty = (num % 2 == 0) ? (mfoc_uvw_t){u, v, w}
+                                         : (mfoc_uvw_t){u, w, v};
+        int64_t alpha = (2 * (int64_t)duty.qU - duty.qV - duty.qW) / 3;
+        int64_t beta = (int64_t)(duty.qV - duty.qW) *
+                       MFOC_SCALAR(0.5773502692f) / MFOC_Q_SCALE;
+        for (size_t b = 0U; b < sizeof(buses) / sizeof(buses[0]); ++b) {
+            mfoc_ab_t voltage = {0};
+            assert(mfoc_modulation_ModelVoltageAlphaBeta(&duty, buses[b],
+                &voltage) == MFOC_RESULT_OK);
+            assert(voltage.qAlpha == alpha * buses[b] / MFOC_Q_SCALE);
+            assert(voltage.qBeta == beta * buses[b] / MFOC_Q_SCALE);
+        }
+    }
+}
+#endif
+
 /** @brief Check square root over tiny through full-range fixed inputs.
  * @return None. */
 static void test_sqrt(void)
@@ -299,11 +370,15 @@ static void test_sqrt(void)
 /** @brief Run independent foundational contracts. @return Zero on success. */
 int main(void)
 {
+    test_float_conversion();
     test_numeric();
     test_angle();
     test_trig();
     test_transforms();
     test_model_boundaries();
+#if defined(MFOC_NUMERIC_FIXED)
+    test_fixed_model_voltage();
+#endif
     test_sqrt();
     puts("mfoc foundational math contracts passed");
     return 0;

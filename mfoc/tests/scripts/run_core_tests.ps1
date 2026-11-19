@@ -1,15 +1,13 @@
 param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
-    'motor_control', 'motor_irq', 'motor_identification', 'identification_rs',
-    'identification_inductance',
+    'motor_control', 'motor_irq', 'voltage_interval', 'motor_identification',
+    'identification_rs', 'identification_inductance', 'identification_inertia',
     'hfi_motor'),
     [ValidateSet(0, 1)][int]$Hfi = 1,
     [ValidateSet(0, 1)][int]$Identify = 0,
-    [ValidateSet(1, 2, 4, 5)][int]$Backend = 1,
+    [ValidateSet(0, 1, 2, 3, 4, 5)][int]$Backend = 1,
+    [ValidateSet(0, 1)][int]$Position = 1,
     [switch]$Perfc)
 $ErrorActionPreference = 'Stop'
-$smo = if ($Backend -eq 2) { 1 } else { 0 }
-$flux = if ($Backend -eq 4) { 1 } else { 0 }
-$ekf = if ($Backend -eq 5) { 1 } else { 0 }
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $repo = Split-Path -Parent $library
@@ -23,7 +21,8 @@ $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-core-' + [guid]::NewGuid()
 New-Item -ItemType Directory -Path $output | Out-Null
 $sources = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c",
     "$library/core/src/*.c",
-    "$library/motor/src/*.c", "$library/identification/src/*.c" |
+    "$library/motor/src/*.c", "$library/identification/src/*.c",
+    "$library/identification/src/inductance/*.c" |
     Where-Object { $_.Name -ne 'mfoc_feedback.c' } |
     ForEach-Object { $_.FullName }) + @("$library/position/src/mfoc_hfi.c")
 $numerics = if ($Backend -eq 5) { @('FLOAT') } else { @('FLOAT', 'FIXED') }
@@ -34,7 +33,7 @@ foreach ($numeric in $numerics) {
   foreach ($test in $Tests) {
     $testGroup = switch -Regex ($test) {
       '^(core)$' { 'core'; break }
-      '^(identification_rs|identification_inductance)$' {
+      '^(identification_rs|identification_inductance|identification_inertia)$' {
         'identification'; break
       }
       default { 'motor' }
@@ -47,16 +46,40 @@ foreach ($numeric in $numerics) {
           "-I$repo/target/stm32g431",
           "$repo/target/stm32g431/mfoc_motor_irq.c")
     }
-    $enableIdentification = $Identify -or $test -eq 'motor_identification'
+    $feedbackArguments = @()
+    $modelUpdate = $test -eq 'motor_model_update'
+    $smo = [int]($Backend -eq 2 -or $modelUpdate)
+    $flux = [int]($Backend -eq 4 -or $modelUpdate)
+    $ekf = [int]($Backend -eq 5 -or ($modelUpdate -and $numeric -eq 'FLOAT'))
+    $plant = $test -eq 'motor_identification_plant'
+    if ($test -eq 'hfi_permission' -or $modelUpdate -or $plant) {
+      $feedbackArguments = @('-DMFOC_TEST_REAL_FEEDBACK=1',
+          "$library/motor/src/mfoc_feedback.c")
+    }
+    if ($plant -and $smo) { $feedbackArguments += "$library/position/src/mfoc_smo.c" }
+    if ($plant -and $flux) { $feedbackArguments += "$library/position/src/mfoc_flux.c" }
+    if ($plant -and $ekf) { $feedbackArguments += "$library/position/src/mfoc_ekf.c" }
+    if ($modelUpdate) {
+      $feedbackArguments += @('-DMFOC_MOTOR_MODEL_UPDATE_ENABLE=1',
+          "$library/position/src/mfoc_smo.c", "$library/position/src/mfoc_flux.c",
+          "$library/position/src/mfoc_ekf.c")
+    }
+    $enableIdentification = $Identify -or $plant -or
+        $test -in @('motor_identification', 'hfi_permission')
+    # Cover all three PWM routes by default; -Identify 0 tests the trimmed build.
+    if ($test -eq 'voltage_interval' -and !$PSBoundParameters.ContainsKey('Identify')) {
+      $enableIdentification = $true
+    }
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
         "-DMFOC_FEEDBACK_BACKEND=$Backend" `
+        "-DMFOC_FEEDBACK_ENABLE_POSITION=$Position" `
         "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_FEEDBACK_ENABLE_EKF=$ekf" `
         "-DMFOC_IDENTIFICATION_ENABLE=$([int]$enableIdentification)" `
-        @perfcFlags @irqArguments `
+        @perfcFlags @irqArguments @feedbackArguments `
         "-I$library" "-I$library/math/include" "-I$library/control/include" `
         "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/port/include" `

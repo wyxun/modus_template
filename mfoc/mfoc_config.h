@@ -67,23 +67,32 @@
 #define MFOC_ISR_MEASURE 0
 #endif
 
-/* Compile Motor's identification float w only when explicitly enabled. */
+/* Include the experiment workspace in Motor only when enabled. */
 #ifndef MFOC_IDENTIFICATION_ENABLE
 #define MFOC_IDENTIFICATION_ENABLE 0
 #endif
 
-/* Standstill Rs: fixed alpha modulation V/Vdc and measured current PU. */
+/* Enable the foreground API for replacing an idle Motor's PU parameters. */
+#ifndef MFOC_MOTOR_MODEL_UPDATE_ENABLE
+#define MFOC_MOTOR_MODEL_UPDATE_ENABLE 0
+#endif
+
+/* Standstill alpha modulation relative to the DC bus. Leave current margin
+ * on the default 2.55 ohm motor at 12 V. ALIGN uses the low level. */
 #define MFOC_IDENTIFICATION_RS_MODULATION_LOW 0.04f
-#define MFOC_IDENTIFICATION_RS_MODULATION_HIGH 0.09f
+#define MFOC_IDENTIFICATION_RS_MODULATION_HIGH 0.08f
 #define MFOC_IDENTIFICATION_RS_CURRENT_MAX 0.12f
 #define MFOC_IDENTIFICATION_RS_CURRENT_MIN 0.01f
 #define MFOC_IDENTIFICATION_RS_STABILITY 0.003f
-#define MFOC_IDENTIFICATION_RS_DELTA_MIN 0.02f
+/* Preserve the qualified nominal-bus slope range at the smaller step. */
+#define MFOC_IDENTIFICATION_RS_DELTA_MIN 0.016f
 #define MFOC_IDENTIFICATION_RS_ALIGN_MS 300U
 #define MFOC_IDENTIFICATION_RS_SETTLE_MS 200U
 #define MFOC_IDENTIFICATION_RS_AVERAGE_MS 100U
 
-/* Standstill L: capture the transient, not the settled current. */
+/* Locked-rotor voltage pulse (V/Vdc) and number of captured intervals. */
+#define MFOC_IDENTIFICATION_L_PULSE 0.04f
+
 #ifndef MFOC_IDENTIFICATION_L_SAMPLES
 #define MFOC_IDENTIFICATION_L_SAMPLES 8U
 #endif
@@ -102,7 +111,7 @@
 /* User selections. ENABLE_POSITION binds the three physical position calls
  * in mfoc_port.h. BACKEND chooses which source supplies control feedback. */
 #ifndef MFOC_FEEDBACK_BACKEND
-#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_SMO
+#define MFOC_FEEDBACK_BACKEND MFOC_FEEDBACK_FLUX
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_POSITION
 #ifdef MFOC_FEEDBACK_ENABLE_ENCODER
@@ -117,15 +126,15 @@
 #error "Encoder compatibility flag must match the physical position flag"
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_SMO
-#define MFOC_FEEDBACK_ENABLE_SMO 1
+#define MFOC_FEEDBACK_ENABLE_SMO 0
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_HFI
-/* Enabling HFI permits real voltage injection during Feedback Step. */
+/* Compile HFI support. Motor selects injection permission at startup. */
 #define MFOC_FEEDBACK_ENABLE_HFI 0
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_FLUX
 /* Requires confirmed motor flux and configured observer/PLL gains. */
-#define MFOC_FEEDBACK_ENABLE_FLUX 0
+#define MFOC_FEEDBACK_ENABLE_FLUX 1
 #endif
 #ifndef MFOC_FEEDBACK_ENABLE_EKF
 /* FLOAT only; start with encoder control and EKF shadow observation. */

@@ -8,6 +8,7 @@
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
+#include <string.h>
 #include "mfoc_port.h"
 #include "mfoc_numeric.h"
 
@@ -45,10 +46,27 @@ static const mfoc_port_cfg_t s_cfg = {
 #include "../../../peripheral/stm32g431/mdi/state.c"
 #include "../../../peripheral/stm32g431/mdi/service.c"
 
+#if MFOC_DEBUG_POSITION_WAVEFORM
+#include "../../../class/mfoc_debug.c"
+mfoc_app_t tMfocApp;
+static bool s_accept_wave;
+static unsigned s_clock_reads;
+static void _test_WaveStep(void)
+{
+    if (s_accept_wave) { mfoc_debug_CaptureWaveform(); }
+}
+const mwaveform_api_t mwaveform = {.Step = _test_WaveStep};
+#endif
 static int64_t s_tick;
 
 /** @brief Supply the raw timer for port linkage. @return Fake raw ticks. */
-int64_t get_system_ticks(void) { return s_tick; }
+int64_t get_system_ticks(void)
+{
+#if MFOC_DEBUG_POSITION_WAVEFORM
+    ++s_clock_reads;
+#endif
+    return s_tick;
+}
 
 /** @brief Supply the raw tick scale. @return One MHz clock. */
 uint32_t perfc_get_systimer_frequency(void) { return 1000000U; }
@@ -134,12 +152,17 @@ static void _test_SetPort(uint32_t u, uint32_t v, uint32_t w,
  * @return None. */
 static void _test_Current(void)
 {
-    mfoc_uvw_t current = {MFOC_ONE, MFOC_ONE, MFOC_ONE};
+    const mfoc_uvw_t previous = {MFOC_ONE, MFOC_HALF, -MFOC_ONE};
+    mfoc_uvw_t current = previous;
+    s_port.configured = false;
+    _test_Frame(8668U, 7962U, 8100U);
+    assert(mfoc_port_current(&current) == MFOC_RESULT_INVALID_STATE);
+    assert(memcmp(&current, &previous, sizeof(current)) == 0);
+    assert(!g_bG431JeosConsumed);
     _test_SetPort(8192U, 8200U, 8100U, 476U, false);
     ADC1->ISR = 0U;
-    g_bG431JeosConsumed = false;
     assert(mfoc_port_current(&current) == MFOC_RESULT_INVALID_STATE);
-    assert(current.qU == MFOC_ONE && current.qW == MFOC_ONE);
+    assert(memcmp(&current, &previous, sizeof(current)) == 0);
     assert(!g_bG431JeosConsumed);
     _test_Frame(8668U, 7962U, 8100U);
     assert(mfoc_port_current(&current) == MFOC_RESULT_OK);
@@ -158,24 +181,50 @@ static void _test_Current(void)
     _test_Near(current.qU, 2.0f);
 }
 
-/** @brief Sweep native ADC range and conversion gains for both polarities.
+/** @brief Compare one phase bit for bit with the original 64-bit formula.
+ * @param actual Port output. @param raw ADC count. @param offset Zero count.
+ * @return None. */
+static void _test_CurrentBits(mfoc_scalar_t actual, uint32_t raw,
+                              uint32_t offset)
+{
+    int64_t delta = (int64_t)raw - (int64_t)offset;
+#if defined(MFOC_NUMERIC_FIXED)
+    mfoc_scalar_t expected = (mfoc_scalar_t)(delta * (int64_t)s_port.gain_q30 /
+                                             INT64_C(32768));
+#else
+    mfoc_scalar_t expected = (mfoc_scalar_t)delta * s_port.gain;
+#endif
+    assert(memcmp(&actual, &expected, sizeof(expected)) == 0);
+}
+
+/** @brief Sweep every signed 14-bit ADC difference on all three channels.
  * @return None. */
 static void _test_Range(void)
 {
+    const uint32_t max_count = 0x3FFFU;
     const uint32_t scales[] = {1U, 119U, 476U, 16384U, 1048576U};
     mfoc_uvw_t current = {0};
     for (unsigned polarity = 0U; polarity < 2U; ++polarity) {
         for (unsigned i = 0U; i < sizeof(scales) / sizeof(scales[0]); ++i) {
             bool inverted = polarity != 0U;
-            _test_SetPort(8192U, 8200U, 8100U, scales[i], inverted);
-            for (uint32_t raw = 0U; raw <= 0x3FFFU; ++raw) {
-                float sign = inverted ? -1.0f : 1.0f;
-                float expected = sign * (float)((int32_t)raw - 8192) /
-                    (float)scales[i];
-                _test_Frame(raw, 8200U, 8100U);
-                assert(mfoc_port_current(&current) == MFOC_RESULT_OK);
-                _test_Near(current.qU, expected);
-                assert(current.qV == MFOC_ZERO && current.qW == MFOC_ZERO);
+            float sign = inverted ? -1.0f : 1.0f;
+            /* The two offset endpoints cover both signs on every phase. */
+            for (unsigned end = 0U; end < 2U; ++end) {
+                uint32_t offset = end == 0U ? 0U : max_count;
+                uint32_t v_offset = max_count - offset;
+                _test_SetPort(offset, v_offset, offset, scales[i], inverted);
+                for (uint32_t u = 0U; u <= max_count; ++u) {
+                    uint32_t v = max_count - u;
+                    uint32_t w = (u + 1U) & max_count;
+                    int32_t delta = (int32_t)u - (int32_t)offset;
+                    _test_Frame(u, v, w);
+                    assert(mfoc_port_current(&current) == MFOC_RESULT_OK);
+                    _test_CurrentBits(current.qU, u, offset);
+                    _test_CurrentBits(current.qV, v, v_offset);
+                    _test_CurrentBits(current.qW, w, offset);
+                    _test_Near(current.qU,
+                               sign * (float)delta / (float)scales[i]);
+                }
             }
         }
     }
@@ -387,6 +436,60 @@ static void _test_Position(void)
     assert(angle.wBam32 == UINT32_C(0x40000000) && speed == MFOC_ZERO);
 }
 
+#if MFOC_DEBUG_POSITION_WAVEFORM
+/** @brief Compare Feedback and captured position at the expiry boundary,
+ * then skip a frame and exercise the diagnostic-only read during hold. */
+static void _test_PositionWave(int32_t mechanical_delta)
+{
+    mfoc_encoder_t *encoder = &s_port.encoder;
+    mfoc_angle_t zero = {0U};
+    mfoc_angle_t moved = {(uint32_t)mechanical_delta};
+    assert(mfoc_encoder_CalibrateZero(encoder, zero, zero, s_tick) ==
+           MFOC_RESULT_OK);
+    s_tick += 1000;
+    assert(mfoc_encoder_Update(encoder, moved, s_tick) == MFOC_RESULT_OK);
+    s_tick += encoder->timeout_ticks;
+    tMfocApp.motor.state = MFOC_MOTOR_RUNNING;
+    mfoc_feedback_t *feedback = &tMfocApp.motor.feedback;
+    mfoc_feedback_output_t output = {0};
+    mfoc_feedback_cfg_t cfg = {0};
+    mfoc_motor_params_t model = {0};
+    assert(mfoc_feedback_Init(feedback, &cfg, &model) == MFOC_RESULT_OK);
+    s_clock_reads = 0U;
+    s_accept_wave = true;
+    assert(mfoc_feedback_Step(feedback, NULL, &output) == MFOC_RESULT_OK);
+    assert(output.speed * (float)mechanical_delta > 0.0f);
+    ++s_tick; /* A second extrapolation here would time out. */
+    mfoc_debug_WaveformStep();
+    assert(s_clock_reads == 1U);
+    assert(s_waveform[MFOC_DEBUG_ENCODER_ANGLE] ==
+           mfoc_angle_to_turns(output.angle));
+
+    assert(mfoc_feedback_Step(feedback, NULL, &output) == MFOC_RESULT_SAFETY);
+    /* A fresh foreground publication cannot repair the frame just read. */
+    assert(mfoc_encoder_Update(encoder, zero, s_tick) == MFOC_RESULT_OK);
+    mfoc_debug_WaveformStep();
+    assert(s_waveform[MFOC_DEBUG_ENCODER_ANGLE] == -1.0f);
+    assert(s_clock_reads == 2U);
+
+    s_accept_wave = false;
+    assert(mfoc_feedback_Step(feedback, NULL, &output) == MFOC_RESULT_OK);
+    mfoc_debug_WaveformStep();
+    assert(s_clock_reads == 3U);
+    tMfocApp.motor.hold_active = true;
+    ++s_tick;
+    assert(mfoc_encoder_Update(encoder, moved, s_tick) == MFOC_RESULT_OK);
+    s_accept_wave = true;
+    mfoc_debug_WaveformStep(); /* Hold skips Feedback. Read once on demand. */
+    assert(s_clock_reads == 4U);
+    assert(s_waveform[MFOC_DEBUG_ENCODER_ANGLE] !=
+           mfoc_angle_to_turns(output.angle));
+    assert(s_waveform[MFOC_DEBUG_OBSERVER_ANGLE] == -1.0f &&
+           s_waveform[MFOC_DEBUG_ANGLE_ERROR] == -1.0f);
+    tMfocApp.motor.hold_active = false;
+}
+#endif
+
 /** @brief Check polling-to-control handoff through existing bridge startup.
  * @return None. */
 static void _test_ControlStartStop(void)
@@ -455,6 +558,10 @@ int main(void)
     _test_Init();
     _test_Bases();
     _test_Position();
+#if MFOC_DEBUG_POSITION_WAVEFORM
+    _test_PositionWave(INT32_C(0x01000000));
+    _test_PositionWave(-INT32_C(0x01000000));
+#endif
     _test_ControlStartStop();
     _test_Lifecycle();
     puts("G431 bases, current, position, clock and PWM passed");

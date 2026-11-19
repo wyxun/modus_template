@@ -6,7 +6,6 @@
  */
 #include "mfoc_feedback.h"
 #include "mfoc_port.h"
-#include "mfoc_modulation.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>
@@ -39,10 +38,9 @@ int main(void)
             .max_speed_var = 0.5f}};
     mfoc_feedback_t feedback = {0};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
-    mfoc_ab_t i = {0.03f, -0.01f}, voltage = {0};
-    mfoc_core_output_t previous = {
-        .duty = {0.55f, 0.48f, 0.47f}, .bus = 0.9f};
-    mfoc_feedback_input_t input = {&i, &previous};
+    mfoc_ab_t i = {0.03f, -0.01f};
+    const mfoc_ab_t voltage = {0.045f, 0.0052f};
+    mfoc_feedback_input_t input = {.i_ab_k = &i, .u_ab_previous = &voltage};
     mfoc_feedback_output_t output = {.angle = {123U}, .speed = 1.0f};
     mfoc_feedback_output_t saved_output = output;
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, &input, &output);
@@ -54,11 +52,9 @@ int main(void)
     assert(memcmp(&output, &saved_output, sizeof(output)) == 0);
 #endif
     (void)saved_output;
-    /* Compare direct algorithm with reconstructed prior duty, not dq or m. */
+    /* Both paths must consume the same applied alpha-beta voltage. */
     mfoc_ekf_t direct = feedback.ekf;
     mfoc_ekf_output_t expected = {0};
-    assert(mfoc_modulation_ModelVoltageAlphaBeta(&previous.duty,
-        previous.bus, &voltage) == MFOC_RESULT_OK);
     direct.speed = feedback.ekf.speed = 0.3f;
     mfoc_ekf_Step(&direct, &i, &voltage, &expected);
     rc = mfoc_feedback_Step(&feedback, &input, &output);
@@ -71,7 +67,7 @@ int main(void)
     assert(output.angle.wBam32 == expected.angle.wBam32);
     assert(output.speed == expected.speed);
 #endif
-    input.previous_core_output = NULL;
+    input.u_ab_previous = NULL;
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(!feedback.ekf.has_sample && !feedback.ekf_output.valid);
     assert(feedback.ekf.p[9] == cfg.ekf.p0[3]);
@@ -80,7 +76,7 @@ int main(void)
 #else
     assert(rc == MFOC_RESULT_INVALID_STATE);
 #endif
-    input.previous_core_output = &previous;
+    input.u_ab_previous = &voltage;
     input.i_ab_k = NULL;
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(!feedback.ekf.has_sample);

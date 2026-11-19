@@ -1,10 +1,10 @@
 /**
  * @file mfoc_identification.c
- * @brief Foreground stages and synchronous standstill Rs identification.
+ * @brief Foreground experiment sequencing and synchronous sample routing.
  * @author wyxun
  * @date 2026-10-24
  */
-#include "mfoc_identification.h"
+#include "mfoc_identification_internal.h"
 #include "mfoc_port.h"
 #include <stddef.h>
 
@@ -31,14 +31,33 @@ mfoc_result_t mfoc_identification_Start(mfoc_identification_t *id,
     if (id->state == MFOC_IDENTIFICATION_RUNNING) {
         return MFOC_RESULT_INVALID_STATE;
     }
-    if (operation != MFOC_IDENTIFICATION_RESISTANCE) {
-        return MFOC_RESULT_INVALID_STATE;
+    if (operation != MFOC_IDENTIFICATION_RESISTANCE && id->timing_mismatch) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    if (operation == MFOC_IDENTIFICATION_FLUX ||
+        operation == MFOC_IDENTIFICATION_INERTIA) {
+        /* Low-rate builds can still use the standstill experiments. */
+        if (!MFOC_ROTATION_RATE_SUPPORTED) { return MFOC_RESULT_OUT_OF_RANGE; }
+        if (!(model->rs >= MFOC_SCALAR(MFOC_MOTOR_RS_MIN_PU) &&
+              model->rs <= MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU) &&
+              model->ld >= MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU) &&
+              model->ld <= MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU) &&
+              model->lq >= MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU) &&
+              model->lq <= MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU))) {
+            return MFOC_RESULT_INVALID_STATE;
+        }
+        if (operation == MFOC_IDENTIFICATION_INERTIA &&
+            !(model->flux > MFOC_ZERO &&
+              model->flux <= MFOC_SCALAR(MFOC_MOTOR_FLUX_MAX_PU))) {
+            return MFOC_RESULT_INVALID_STATE;
+        }
     }
     uint32_t tick_hz = mfoc_port_tick_frequency();
     if (tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
+    id->current_limit = MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX);
+    id->speed_limit = MFOC_IDENTIFICATION_SPEED_CAP_PU;
     id->result = *model;
-    id->bus = bus;
-    id->work = (mfoc_identification_work_t){0};
+    id->work.align_samples = 0U;
     id->operation = operation;
     id->angle = (mfoc_angle_t){0U};
     id->run_pt = 0U;
@@ -67,35 +86,53 @@ static bool _mfoc_identification_AdvanceStage(mfoc_identification_t *id)
 {
     switch (id->stage) {
     case MFOC_IDENTIFICATION_STAGE_ALIGN:
-        id->stage = MFOC_IDENTIFICATION_STAGE_RS;
+        if (id->operation == MFOC_IDENTIFICATION_ELECTRICAL ||
+            id->operation == MFOC_IDENTIFICATION_RESISTANCE) {
+            id->work.rs = (mfoc_identification_rs_t){0};
+            id->stage = MFOC_IDENTIFICATION_STAGE_RS;
+        } else {
+            mfoc_identification_rotation_Init(&id->work.rotating,
+                id->current_limit, id->speed_limit);
+            id->stage = MFOC_IDENTIFICATION_STAGE_SPINUP;
+        }
         break;
     case MFOC_IDENTIFICATION_STAGE_RS:
-        if (mfoc_identification_rs_Finish(&id->work.rs, id->bus,
-                &id->result.rs) != MFOC_FSM_COMPLETE) { return false; }
-        id->stage = id->operation == MFOC_IDENTIFICATION_RESISTANCE ?
-            MFOC_IDENTIFICATION_STAGE_COMPLETE : MFOC_IDENTIFICATION_STAGE_LD;
+        if (mfoc_identification_rs_Finish(&id->work.rs, &id->result.rs) !=
+            MFOC_FSM_COMPLETE) { return false; }
+        if (id->operation == MFOC_IDENTIFICATION_RESISTANCE) {
+            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        } else {
+            id->work.inductance = (mfoc_identification_inductance_t){0};
+            id->stage = MFOC_IDENTIFICATION_STAGE_LD;
+        }
         break;
     case MFOC_IDENTIFICATION_STAGE_LD:
-        id->stage = MFOC_IDENTIFICATION_STAGE_LQ;
+    case MFOC_IDENTIFICATION_STAGE_LQ: {
+        bool d_axis = id->stage == MFOC_IDENTIFICATION_STAGE_LD;
+        if (mfoc_identification_inductance_Finish(&id->work.inductance,
+                id->result.rs, d_axis ? &id->result.ld : &id->result.lq) !=
+            MFOC_FSM_COMPLETE) { return false; }
+        if (d_axis) {
+            id->work.inductance = (mfoc_identification_inductance_t){0};
+            id->stage = MFOC_IDENTIFICATION_STAGE_LQ;
+        } else {
+            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        }
         break;
-    case MFOC_IDENTIFICATION_STAGE_SPINUP:
-        id->stage = id->operation == MFOC_IDENTIFICATION_FLUX ?
-            MFOC_IDENTIFICATION_STAGE_FLUX : MFOC_IDENTIFICATION_STAGE_INERTIA;
-        break;
-    case MFOC_IDENTIFICATION_STAGE_FLUX:
-        if (mfoc_identification_flux_Finish(&id->work.flux, &id->result,
-                &id->result.flux) != MFOC_FSM_COMPLETE) { return false; }
+    }
+    case MFOC_IDENTIFICATION_STAGE_ROTATION_FINISH: {
+        bool flux = id->operation == MFOC_IDENTIFICATION_FLUX;
+        if (mfoc_identification_rotation_Finish(&id->work.rotating,
+                flux ? MFOC_ROTATION_FLUX : MFOC_ROTATION_INERTIA,
+                &id->result, flux ? &id->result.flux : &id->result.inertia) !=
+            MFOC_FSM_COMPLETE) { return false; }
         id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
         break;
-    case MFOC_IDENTIFICATION_STAGE_LQ:
-    case MFOC_IDENTIFICATION_STAGE_INERTIA:
-        id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
-        break;
+    }
     default:
         return false;
     }
     if (id->stage != MFOC_IDENTIFICATION_STAGE_COMPLETE) {
-        id->work = (mfoc_identification_work_t){0};
         id->stage_done = false;
     }
     return true;
@@ -114,6 +151,8 @@ mfoc_fsm_rt_t mfoc_identification_Run(mfoc_identification_t *id)
             mfoc_port_tick() - id->stage_started >= id->stage_ticks);
         if (id->state != MFOC_IDENTIFICATION_RUNNING) { break; }
         if (!id->stage_done || !_mfoc_identification_AdvanceStage(id)) {
+            /* An ISR can preempt Motor before the PWM stop reaches the Port. */
+            id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
             id->state = MFOC_IDENTIFICATION_ERROR;
             break;
         }
@@ -147,79 +186,121 @@ mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Establish a bounded fixed field before electrical measurement.
- * @param id Active ALIGN stage. @param input Current sample.
- * @param output Fixed alpha modulation. @return Stage progress. */
-static mfoc_fsm_rt_t _mfoc_identification_Align(
-    mfoc_identification_t *id,
-    const mfoc_identification_input_t *input,
-    mfoc_identification_output_t *output)
+/** @brief Check |alpha| + |beta| against the effective experiment limit.
+ * Subtract |alpha| first to avoid overflow when adding FIXED magnitudes. */
+static bool _mfoc_identification_CurrentAllowed(const mfoc_ab_t *current,
+                                                mfoc_scalar_t limit)
 {
-    const mfoc_ab_t *current = input->i_ab_k;
-    if (current == NULL || mfoc_abs(current->qAlpha) >
-            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) ||
-        mfoc_abs(current->qBeta) >
-            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_CURRENT_MAX) -
-                mfoc_abs(current->qAlpha)) {
-        return MFOC_FSM_FAILED;
-    }
-    output->modulation_ab.qAlpha=
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW);
-    id->work.align_samples++;
-    return id->work.align_samples >= MFOC_IDENTIFICATION_SAMPLE_HZ *
-        MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U ?
-        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
+    if (current == NULL) { return false; }
+    const mfoc_scalar_t beta_limit = limit - mfoc_abs(current->qAlpha);
+    return current->qBeta >= -beta_limit && current->qBeta <= beta_limit;
 }
 
 /** @brief Dispatch one synchronous sample directly to the selected leaf.
- * @param id Active instance. @param input Samples. @param output Request.
- * @return None. */
-void mfoc_identification_Step(mfoc_identification_t *id,
+ * @param id Active instance. @param stage Stage selected for this frame.
+ * @param input Samples. @param output Request.
+ * @return Actuator route for the next PWM interval. */
+mfoc_identification_control_t mfoc_identification_SampleStage(
+    mfoc_identification_t *id,
     const mfoc_identification_input_t *input,
-    mfoc_identification_output_t *output)
+    mfoc_identification_output_t *output, mfoc_identification_stage_t stage)
 {
     *output = (mfoc_identification_output_t){.angle = id->angle};
-    if (id->state != MFOC_IDENTIFICATION_RUNNING) { return; }
-    if (id->stage_done) { return; }
     mfoc_fsm_rt_t progress = MFOC_FSM_FAILED;
-    switch (id->stage) {
+    if (!_mfoc_identification_CurrentAllowed(input->i_ab_k,
+                                              id->current_limit)) {
+        id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
+        id->state = MFOC_IDENTIFICATION_ERROR;
+        return MFOC_IDENTIFICATION_CONTROL_VOLTAGE;
+    }
+    switch (stage) {
     case MFOC_IDENTIFICATION_STAGE_ALIGN:
-        progress = _mfoc_identification_Align(id, input, output);
+        output->modulation_ab.qAlpha =
+            MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW);
+        ++id->work.align_samples;
+        progress = id->work.align_samples >= MFOC_IDENTIFICATION_SAMPLE_HZ *
+            MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U ?
+            MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
         break;
     case MFOC_IDENTIFICATION_STAGE_RS:
         progress = mfoc_identification_rs_Step(
-            &id->work.rs, input->i_ab_k);
+            &id->work.rs, input->i_ab_k, input->u_ab_previous);
         /* Current belongs to the old level; apply the next one now. */
-        if (progress != MFOC_FSM_COMPLETE) {
-            output->modulation_ab.qAlpha=
+        if (progress == MFOC_FSM_ONGOING) {
+            output->modulation_ab.qAlpha =
                 id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW ?
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW) :
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH);
         }
         break;
     case MFOC_IDENTIFICATION_STAGE_LD:
-    case MFOC_IDENTIFICATION_STAGE_LQ:
-        /* TODO: schedule pulses and supply aligned axis samples. */
+    case MFOC_IDENTIFICATION_STAGE_LQ: {
+        bool d_axis = stage == MFOC_IDENTIFICATION_STAGE_LD;
+        mfoc_scalar_t u = MFOC_ZERO;
+        if (id->work.inductance.count != 0U) {
+            /* A lost interval invalidates the volt-second integral. */
+            if (input->u_ab_previous == NULL) { break; }
+            u = d_axis ? input->u_ab_previous->qAlpha :
+                         input->u_ab_previous->qBeta;
+            if (mfoc_abs(u) > MFOC_ONE) { break; }
+        }
+        progress = mfoc_identification_inductance_Step(&id->work.inductance,
+            d_axis ? input->i_ab_k->qAlpha : input->i_ab_k->qBeta, u);
+        if (progress == MFOC_FSM_ONGOING) {
+            /* Reverse the preceding positive Rs excitation on the d axis. */
+            if (d_axis) {
+                output->modulation_ab.qAlpha =
+                    -MFOC_SCALAR(MFOC_IDENTIFICATION_L_PULSE);
+            } else {
+                output->modulation_ab.qBeta =
+                    MFOC_SCALAR(MFOC_IDENTIFICATION_L_PULSE);
+            }
+        }
         break;
-    case MFOC_IDENTIFICATION_STAGE_FLUX:
-        /* TODO: virtual-dq flux estimator consumes i_ab/u_ab samples. */
-        break;
-    case MFOC_IDENTIFICATION_STAGE_INERTIA:
-        /* TODO: estimate speed/acceleration within the identification module. */
-        break;
+    }
     case MFOC_IDENTIFICATION_STAGE_SPINUP:
-        /* TODO: create the virtual rotation command inside identification. */
+    case MFOC_IDENTIFICATION_STAGE_FLUX:
+    case MFOC_IDENTIFICATION_STAGE_INERTIA: {
+        mfoc_rotation_stage_t phase = (mfoc_rotation_stage_t)stage;
+        progress = mfoc_identification_rotation_Step(&id->work.rotating,
+            phase, &id->result, input->i_ab_k, input->u_ab_previous);
+        if (progress == MFOC_FSM_ONGOING ||
+            (progress == MFOC_FSM_COMPLETE && phase == MFOC_ROTATION_SPINUP)) {
+            if (progress == MFOC_FSM_COMPLETE) {
+                /* Keep the field turning through the capture boundary. */
+                id->stage = id->operation == MFOC_IDENTIFICATION_FLUX ?
+                    MFOC_IDENTIFICATION_STAGE_FLUX :
+                    MFOC_IDENTIFICATION_STAGE_INERTIA;
+            }
+            id->angle = id->work.rotating.drive_angle;
+            output->angle = id->angle;
+            output->i_ref = id->work.rotating.i_ref;
+            return MFOC_IDENTIFICATION_CONTROL_VIRTUAL;
+        }
+        id->stage = MFOC_IDENTIFICATION_STAGE_ROTATION_FINISH;
         break;
+    }
     default:
         /* Unsupported preparation never reports completion or energizes. */
         break;
     }
     if (progress == MFOC_FSM_FAILED) {
+        id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
         id->state = MFOC_IDENTIFICATION_ERROR;
     } else if (progress == MFOC_FSM_COMPLETE) {
         id->stage_done = true;
     } else {
         /* Leaf retains sampling history until a terminal result. */
     }
-    if (progress != MFOC_FSM_FAILED) { id->angle = output->angle; }
+    return MFOC_IDENTIFICATION_CONTROL_VOLTAGE;
+}
+
+/** @brief Sample the currently published stage for standalone callers.
+ * @param id Instance. @param input Samples. @param output Request. */
+mfoc_identification_control_t mfoc_identification_Step(mfoc_identification_t *id,
+    const mfoc_identification_input_t *input,
+    mfoc_identification_output_t *output)
+{
+    const mfoc_identification_frame_t frame = mfoc_identification_BeginFrame(id);
+    return mfoc_identification_StepFrame(id, frame, input, output);
 }

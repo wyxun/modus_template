@@ -33,9 +33,11 @@ void mfoc_motor_IRQHandler(void)
         MFOC_MOTOR_IRQ_INSTANCE.irq_result = mfoc_motor_Step(
             &MFOC_MOTOR_IRQ_INSTANCE);
         MFOC_MOTOR_IRQ_END();
+#if MFOC_DEBUG_POSITION_WAVEFORM
+        mfoc_debug_WaveformStep();
+#endif
     }
-#if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
-// Four-channel waveform capture takes about 7 us with HFI disabled.
+#if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT) && !MFOC_DEBUG_POSITION_WAVEFORM
     mfoc_debug_WaveformStep();
 #endif
 #if MFOC_ISR_MEASURE

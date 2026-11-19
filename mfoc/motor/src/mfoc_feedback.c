@@ -6,7 +6,6 @@
  */
 #include "mfoc_feedback.h"
 #include "mfoc_port.h"
-#include "mfoc_modulation.h"
 #include <stddef.h>
 
 /** @brief Initialize enabled algorithms without runtime callbacks.
@@ -27,6 +26,13 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
 #endif
 #if MFOC_FEEDBACK_ENABLE_HFI
     mfoc_hfi_Init(&next.hfi);
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI
+    next.normal_hfi_mode = MFOC_FEEDBACK_HFI_INJECT;
+#else
+    next.normal_hfi_mode = cfg->observe_hfi ? MFOC_FEEDBACK_HFI_OBSERVE :
+                                             MFOC_FEEDBACK_HFI_OFF;
+#endif
+    next.hfi_mode = next.normal_hfi_mode;
 #endif
 #if MFOC_FEEDBACK_ENABLE_FLUX
     mfoc_result_t flux_rc = mfoc_flux_Init(&next.flux, &cfg->flux, model);
@@ -96,11 +102,13 @@ mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     return MFOC_RESULT_OK;
 }
 
-/** @brief Reset HFI and acquire position independently of backend selection.
+/** @brief Start HFI injection for HFI control or physical-position comparison.
  * @param feedback Initialized, stopped instance. @return Capability status. */
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
 {
-#if MFOC_FEEDBACK_ENABLE_HFI
+#if MFOC_FEEDBACK_ENABLE_HFI && (MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI || \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION)
+    feedback->hfi_mode = MFOC_FEEDBACK_HFI_INJECT;
     mfoc_hfi_Init(&feedback->hfi);
     feedback->hfi_output = (mfoc_hfi_output_t){0};
     return MFOC_RESULT_OK;
@@ -109,6 +117,21 @@ mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
     return MFOC_RESULT_INVALID_STATE;
 #endif
 }
+
+#if MFOC_FEEDBACK_ENABLE_HFI
+/** @brief Advance HFI or reset its history. @return True for a sampled frame. */
+static inline bool _mfoc_feedback_StepHfi(mfoc_feedback_t *feedback,
+    const mfoc_ab_t *current, const mfoc_ab_t *voltage)
+{
+    if (current == NULL) {
+        mfoc_hfi_Init(&feedback->hfi);
+        feedback->hfi_output = (mfoc_hfi_output_t){0};
+        return false;
+    }
+    mfoc_hfi_Step(&feedback->hfi, current, voltage, &feedback->hfi_output);
+    return true;
+}
+#endif
 
 /** @brief Execute enabled algorithms before selecting the control feedback.
  * @param feedback Instance. @param input Samples for model-based algorithms.
@@ -126,53 +149,44 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI ||                     \
     MFOC_FEEDBACK_ENABLE_FLUX || MFOC_FEEDBACK_ENABLE_EKF
-    mfoc_ab_t voltage = {0};
-    mfoc_result_t voltage_status = MFOC_RESULT_INVALID_STATE;
-    bool has_current = input != NULL && input->i_ab_k != NULL;
-    if (has_current && input->previous_core_output != NULL) {
-        const mfoc_core_output_t *previous = input->previous_core_output;
-        voltage_status = mfoc_modulation_ModelVoltageAlphaBeta(
-            &previous->duty, previous->bus, &voltage);
-    }
+    const mfoc_ab_t *current = input != NULL ? input->i_ab_k : NULL;
+    const mfoc_ab_t *voltage = current != NULL ? input->u_ab_previous : NULL;
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO
-    feedback->smo_status = voltage_status;
-    if (voltage_status == MFOC_RESULT_OK) {
-        mfoc_smo_Step(&feedback->smo, input->i_ab_k, &voltage,
-                       &feedback->smo_output);
+    if (voltage != NULL) {
+        mfoc_smo_Step(&feedback->smo, current, voltage, &feedback->smo_output);
+        feedback->smo_status = MFOC_RESULT_OK;
     } else {
         mfoc_smo_Reset(&feedback->smo);
         feedback->smo_output = (mfoc_smo_output_t){0};
+        feedback->smo_status = MFOC_RESULT_INVALID_STATE;
     }
-#endif
-#if MFOC_FEEDBACK_ENABLE_HFI
-    const mfoc_ab_t *u_previous = voltage_status == MFOC_RESULT_OK ?
-        &voltage : NULL;
-    feedback->hfi_output = (mfoc_hfi_output_t){0};
-    if (has_current) {
-        mfoc_hfi_Step(&feedback->hfi, input->i_ab_k, u_previous,
-                       &feedback->hfi_output);
-    } else {
-        mfoc_hfi_Init(&feedback->hfi);
-    }
-    next.u_inject_ab = feedback->hfi_output.u_inject_ab;
 #endif
 #if MFOC_FEEDBACK_ENABLE_FLUX
-    if (voltage_status == MFOC_RESULT_OK) {
-        mfoc_flux_Step(&feedback->flux, input->i_ab_k, &voltage,
-                        &feedback->flux_output);
+    if (voltage != NULL) {
+        mfoc_flux_Step(&feedback->flux, current, voltage,
+                       &feedback->flux_output);
     } else {
         mfoc_flux_Reset(&feedback->flux);
         feedback->flux_output = (mfoc_flux_output_t){0};
     }
 #endif
 #if MFOC_FEEDBACK_ENABLE_EKF
-    if (voltage_status == MFOC_RESULT_OK) {
-        mfoc_ekf_Step(&feedback->ekf, input->i_ab_k, &voltage,
-                       &feedback->ekf_output);
+    if (voltage != NULL) {
+        mfoc_ekf_Step(&feedback->ekf, current, voltage, &feedback->ekf_output);
     } else {
         mfoc_ekf_Reset(&feedback->ekf);
         feedback->ekf_output = (mfoc_ekf_output_t){0};
+    }
+#endif
+#if MFOC_FEEDBACK_ENABLE_HFI && MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_HFI
+    if (feedback->hfi_mode != MFOC_FEEDBACK_HFI_OFF) {
+        (void)_mfoc_feedback_StepHfi(feedback, current, voltage);
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
+        if (feedback->hfi_mode == MFOC_FEEDBACK_HFI_INJECT) {
+            next.u_inject_ab = feedback->hfi_output.u_inject_ab;
+        }
+#endif
     }
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
@@ -180,26 +194,26 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
         return position_status;
     }
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
-    if (feedback->smo_status != MFOC_RESULT_OK) {
-        return feedback->smo_status;
-    }
     if (!feedback->smo_output.valid) { return MFOC_RESULT_INVALID_STATE; }
     next.angle = feedback->smo_output.angle;
     next.speed = feedback->smo_output.speed;
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI
-    if (!has_current || feedback->hfi.state == MFOC_HFI_FAILED) {
+    if (feedback->hfi_mode != MFOC_FEEDBACK_HFI_INJECT) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    const bool sampled = _mfoc_feedback_StepHfi(feedback, current, voltage);
+    next.u_inject_ab = feedback->hfi_output.u_inject_ab;
+    if (!sampled || feedback->hfi.state == MFOC_HFI_FAILED) {
         return MFOC_RESULT_INVALID_STATE;
     }
     next.acquiring = !feedback->hfi_output.valid;
     next.angle = feedback->hfi_output.angle;
     next.speed = feedback->hfi_output.speed;
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_FLUX
-    if (voltage_status != MFOC_RESULT_OK) { return voltage_status; }
     if (!feedback->flux_output.valid) { return MFOC_RESULT_INVALID_STATE; }
     next.angle = feedback->flux_output.angle;
     next.speed = feedback->flux_output.speed;
 #elif MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_EKF
-    if (voltage_status != MFOC_RESULT_OK) { return voltage_status; }
     if (!feedback->ekf_output.valid) { return MFOC_RESULT_INVALID_STATE; }
     next.angle = feedback->ekf_output.angle;
     next.speed = feedback->ekf_output.speed;

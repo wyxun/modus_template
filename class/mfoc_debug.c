@@ -39,6 +39,9 @@ enum {
 
 static float s_waveform[MFOC_DEBUG_CHANNEL_COUNT];
 extern mfoc_app_t tMfocApp;
+#if MFOC_DEBUG_POSITION_WAVEFORM
+mfoc_debug_position_t mfoc_debug_position;
+#endif
 
 void mfoc_debug_CaptureWaveform(void)
 {
@@ -70,6 +73,10 @@ void mfoc_debug_CaptureWaveform(void)
         motor->feedback.smo_status == MFOC_RESULT_OK &&
         motor->feedback.smo_output.valid;
 #endif
+#if MFOC_DEBUG_POSITION_WAVEFORM
+    observer_available = observer_available &&
+        mfoc_debug_position.state != MFOC_DEBUG_POSITION_UNREAD;
+#endif
     if (observer_available) {
         s_waveform[MFOC_DEBUG_OBSERVER_ANGLE] =
             mfoc_angle_to_turns(observer_angle);
@@ -77,9 +84,17 @@ void mfoc_debug_CaptureWaveform(void)
 #endif
 #if MFOC_FEEDBACK_ENABLE_POSITION
     mfoc_angle_t encoder_angle = {0U};
-    mfoc_scalar_t speed = MFOC_ZERO;
-    mfoc_result_t rc = mfoc_port_position(&encoder_angle, &speed);
-    if (rc != MFOC_RESULT_OK) { return; }
+    if (mfoc_debug_position.state != MFOC_DEBUG_POSITION_UNREAD) {
+        if (mfoc_debug_position.state != MFOC_DEBUG_POSITION_VALID) { return; }
+        encoder_angle = mfoc_debug_position.angle;
+    } else {
+        /* Alignment and identification skip Feedback. This diagnostic
+         * sample is the only position read in the frame. */
+        mfoc_scalar_t speed = MFOC_ZERO;
+        if (mfoc_port_position(&encoder_angle, &speed) != MFOC_RESULT_OK) {
+            return;
+        }
+    }
     s_waveform[MFOC_DEBUG_ENCODER_ANGLE] =
         mfoc_angle_to_turns(encoder_angle);
 #if MFOC_FEEDBACK_ENABLE_EKF || MFOC_FEEDBACK_ENABLE_FLUX || \
@@ -171,5 +186,8 @@ void mfoc_debug_WaveformStep(void)
     } else { /* Partial pairs and polarity pauses retain the last full group. */ }
 #endif
     mwaveform.Step();
+#if MFOC_DEBUG_POSITION_WAVEFORM
+    mfoc_debug_position.state = MFOC_DEBUG_POSITION_UNREAD;
+#endif
 }
 #endif

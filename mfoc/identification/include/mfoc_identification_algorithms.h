@@ -6,7 +6,8 @@
  */
 #ifndef MFOC_IDENTIFICATION_ALGORITHMS_H
 #define MFOC_IDENTIFICATION_ALGORITHMS_H
-#include "mfoc_core.h"
+#include "mfoc_angle.h"
+#include "mfoc_config.h"
 #include "mfoc_motor_config.h"
 #include "mfoc_motor_params.h"
 #include "mfoc_types.h"
@@ -39,22 +40,14 @@ typedef struct {
 } mfoc_identification_output_t;
 
 /** @brief Standalone rotor-dq flux experiment with caller-supplied angle/speed.
- * Not connected to the Feedback-independent Motor identification path. */
+ * Motor uses a block EMF estimate from electrical samples for rotation. */
 typedef struct {
     const mfoc_ab_t *i_ab_k;
-    const mfoc_core_output_t *previous_core_output; /* NULL at startup. */
+    /** Model voltage over [k-1,k), alpha-beta V/Vbase; NULL without history. */
+    const mfoc_ab_t *u_ab_previous;
     mfoc_angle_t angle;
     mfoc_scalar_t speed; /* Electrical omega/omega_base. */
 } mfoc_identification_flux_input_t;
-
-/** @brief Mechanical experiment; torque uses measured i[k] and the PU model.
- * Sample timing comes from SAMPLE_HZ; speed and angle match i[k].
- * Leaf derives iq only at its required cadence, not from stale Core i[k-1]. */
-typedef struct {
-    const mfoc_ab_t *i_ab_k;
-    mfoc_angle_t angle;
-    mfoc_scalar_t speed; /* Electrical PU; same ratio as mechanical speed PU. */
-} mfoc_identification_inertia_input_t;
 
 typedef enum {
     MFOC_IDENTIFICATION_RS_LOW = 0,
@@ -62,31 +55,37 @@ typedef enum {
     MFOC_IDENTIFICATION_RS_DONE,
 } mfoc_identification_rs_level_t;
 
-/** @brief Two fixed-voltage current windows; zero starts the low level. */
+/** @brief Paired voltage/current windows; zero starts the low level. */
 typedef struct {
+#if defined(MFOC_NUMERIC_FIXED)
+    int64_t sum_u[2]; /* Q15 model voltage can exceed one PU. */
+#else
+    mfoc_scalar_t sum_u[2];
+#endif
     mfoc_scalar_t sum_i[2];
     mfoc_scalar_t half_i[2]; /* First-half sums, not means. */
     uint32_t count;
     mfoc_identification_rs_level_t level;
 } mfoc_identification_rs_t;
 
-/** @brief Wait for settling and collect each voltage level's current window.
- * @param state Zeroed experiment state. @param current Synchronous sample.
+/** @brief Settle and collect paired voltage/current at each level.
+ * @param state Zeroed experiment state. @param current Current at k, I/Ibase.
+ * @param u_ab_previous Model voltage over [k-1,k), V/Vbase; NULL skips sample.
  * @return Sampling ongoing or complete.
- * @note Valid pointers are required. Caller applies LOW before sampling,
+ * @note The stage checks its measured current limit before calling this leaf.
+ * State and current are required. Caller applies LOW before sampling,
  * then uses the updated level for the next interval; DONE removes excitation.
  * Means, stability and resistance are evaluated by Finish in foreground. */
 mfoc_fsm_rt_t mfoc_identification_rs_Step(
-    mfoc_identification_rs_t *state,
-    const mfoc_ab_t *current);
+    mfoc_identification_rs_t *state, const mfoc_ab_t *current,
+    const mfoc_ab_t *u_ab_previous);
 
 /** @brief Validate both frozen windows and compute Rs in the foreground.
- * @param state Completed samples. @param bus Startup Vdc/Vbase.
+ * @param state Completed pairs of current and model voltage.
  * @param rs Result R/Rbase, success only.
  * @return Complete or error; failure leaves rs unchanged. */
 mfoc_fsm_rt_t mfoc_identification_rs_Finish(
-    const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
-    mfoc_scalar_t *rs);
+    const mfoc_identification_rs_t *state, mfoc_scalar_t *rs);
 
 /** @brief One fixed-axis voltage pulse; zero initializes a fresh capture. */
 typedef struct {
@@ -122,6 +121,26 @@ mfoc_fsm_rt_t mfoc_identification_inductance_Finish(
     const mfoc_identification_inductance_t *state, mfoc_scalar_t rs,
     mfoc_scalar_t *inductance);
 
+/** @brief Prepare one optional foreground time coefficient for both axes.
+ * @param dt_pu Receives 2*pi*electrical_base_hz/sample_hz on success only.
+ * @param sample_hz Control samples per second.
+ * @param electrical_base_hz Positive electrical Hz in the selected backend.
+ * @return OK, NULL, INVALID_ARGUMENT or OUT_OF_RANGE.
+ * @note Call once during experiment initialization. Keep the coefficient
+ * outside the capture state. The default Finish uses the compiled profile. */
+mfoc_result_t mfoc_identification_inductance_InitTiming(
+    mfoc_scalar_t *dt_pu, uint32_t sample_hz, mfoc_scalar_t electrical_base_hz);
+
+/** @brief Evaluate a frozen axis capture with the experiment's time base.
+ * @param state Frozen capture, with the same preconditions as Finish.
+ * @param rs Known nonnegative R/Rbase, at most MFOC_MOTOR_RS_MAX_PU.
+ * @param dt_pu Coefficient returned by a successful InitTiming.
+ * @param inductance Destination L/Lbase, written on success only.
+ * @return Complete or error, as for the default Finish. Foreground only. */
+mfoc_fsm_rt_t mfoc_identification_inductance_FinishPrepared(
+    const mfoc_identification_inductance_t *state, mfoc_scalar_t rs,
+    mfoc_scalar_t dt_pu, mfoc_scalar_t *inductance);
+
 /** @brief Steady rotor-dq window; zero before capture, freeze before Finish.
  * Sums retain PU scaling; count is the number of accepted samples. */
 typedef struct {
@@ -135,9 +154,8 @@ typedef struct {
 /** @brief Capture flux samples after rotation and current have settled.
  * @param state Instance-owned window. @param input Current and prior voltage.
  * @return Ongoing or complete after the sampling window.
- * @note Caller establishes valid rotor feedback and preceding PWM history.
- * Step reconstructs voltage and accumulates rotor-dq quantities;
- * it does not start Motor, select feedback, or change current references. */
+ * @note Caller supplies rotor angle and speed at k. A missing model voltage
+ * skips the sample; valid intervals contribute rotor-dq quantities. */
 mfoc_fsm_rt_t mfoc_identification_flux_Step(
     mfoc_identification_flux_t *state,
     const mfoc_identification_flux_input_t *input);
@@ -151,12 +169,4 @@ mfoc_fsm_rt_t mfoc_identification_flux_Finish(
     const mfoc_motor_params_t *model,
     mfoc_scalar_t *flux);
 
-/** @brief Acceleration/deceleration leaf; estimator remains TODO.
- * @param input Sample. @param model Torque model. @param output Request.
- * @param inertia Result J/Jbase on completion. @return Stage progress.
- * @note A load-torque assumption/estimator is part of the future algorithm. */
-mfoc_fsm_rt_t mfoc_identification_inertia_Step(
-    const mfoc_identification_inertia_input_t *input,
-    const mfoc_motor_params_t *model, mfoc_identification_output_t *output,
-    mfoc_scalar_t *inertia);
 #endif

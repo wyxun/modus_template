@@ -79,7 +79,7 @@ typedef struct {
 } mfoc_motor_cfg_t;
 
 /** @brief Motor-owned runtime data; initialize before use.
- * Owns Feedback, speed PI, current control, and prior Core output.
+ * Owns Feedback, speed PI, Core telemetry and the submitted interval voltage.
  * No ADC/PWM handles are stored here.
  * Do not change members directly while dependent algorithms are active.
  * One application-owned instance controls the statically bound power stage.
@@ -92,29 +92,33 @@ typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;
     mfoc_core_t core;
-    mfoc_feedback_t feedback;
-#if MFOC_IDENTIFICATION_ENABLE
-    mfoc_identification_t identification;
-#endif
     mfoc_openloop_t openloop;
-    mfoc_dq_t i_ref; /* dq current reference, I/Ibase. */
+    mfoc_dq_t current_cmd; /* Accepted SetCurrent command, I/Ibase. */
     volatile mfoc_motor_mode_t mode;
     volatile mfoc_motor_state_t state;
     volatile uint32_t faults; /* ISR fault latch. */
     volatile mfoc_result_t irq_result; /* Last IRQ Step result; diagnostics. */
-    mfoc_core_output_t previous_core_output;
-    bool previous_core_output_valid;
+    mfoc_feedback_t feedback;
 #if MFOC_IDENTIFICATION_ENABLE
-    mfoc_ab_t previous_voltage_ab; /* Prior requested voltage, V/Vbase. */
+    mfoc_identification_t identification;
 #endif
+    mfoc_core_output_t previous_core_output; /* Core telemetry only. */
+    mfoc_ab_t previous_voltage_ab; /* Submitted interval model, V/Vbase. */
+    bool previous_core_output_valid; /* False after direct voltage output. */
+    bool previous_voltage_ab_valid;  /* Set after a successful PWM Step. */
+    volatile bool hold_active;
+    bool openloop_active;
     mfoc_pi_t speed;
     mfoc_scalar_t speed_ref;
     uint16_t speed_divider;
     uint16_t speed_count;
     mfoc_tick_t hold_started; /* Port timestamp for fixed-angle hold. */
     mfoc_tick_t hold_ticks; /* Hold duration, converted once during Init. */
-    volatile bool hold_active; /* Motor owns the timed ALIGN lifecycle. */
-    bool openloop_active; /* Ordinary forced rotation, without handover. */
+    /* Forced-field Id and regulated Iq belong to mutually exclusive modes. */
+    union {
+        mfoc_scalar_t fixed_id;
+        mfoc_scalar_t speed_iq; /* Retained through capture and PI decimation. */
+    };
     mfoc_sensorless_start_t sensorless_start;
 } mfoc_motor_t;
 
@@ -132,9 +136,24 @@ typedef struct {
 mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
                              const mfoc_motor_cfg_t *cfg);
 
+#if MFOC_MOTOR_MODEL_UPDATE_ENABLE
+/** @brief Apply a finite PU model while IDLE, excluding concurrent Motor use.
+ * @param motor Initialized instance with no pending hold or identification.
+ * @param params PU data in this Motor's Init bases, with the same pole count.
+ * @return OK after all observers accept; rejection preserves the instance.
+ * GetResult from this Motor's experiment can be passed directly. Convert
+ * externally sourced data to the same bases first. PI gains retain their tuning. */
+mfoc_result_t mfoc_motor_ApplyModel(mfoc_motor_t *motor,
+                                   const mfoc_motor_params_t *params);
+#endif
+
 /** @brief Reset PI and start neutral PWM from IDLE.
  * @param motor Initialized instance. @return Operation status.
- * @note Retains a previously accepted current command. Failure to write
+ * @note Ordinary closed-loop startup preserves current/speed mode and enables
+ * injection only with primary HFI. Forced and identification starts disable HFI.
+ * Start runs an armed identification. AlignStart, OpenLoopStart,
+ * SensorlessStart and HfiStart reject it before changing state or enabling PWM.
+ * Retains a previously accepted current command. Failure to write
  * or enable PWM trips the motor. Port Init must already have succeeded.
  * Call in foreground; no bus read or angle acquisition occurs here. */
 mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
@@ -149,7 +168,8 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor);
  * @param motor IDLE/RUNNING instance. @param ref Finite current in I/Ibase.
  * @return Status; rejection leaves the previous command intact.
  * @note Selects current mode while IDLE. While RUNNING, only update a
- * current-mode Motor from its control ISR; this function masks no IRQ. */
+ * current-mode Motor from its control ISR; this function masks no IRQ.
+ * An armed identification owns the reference until its stage is released. */
 mfoc_result_t mfoc_motor_SetCurrent(mfoc_motor_t *motor,
                                    const mfoc_dq_t *ref);
 
@@ -188,18 +208,20 @@ mfoc_result_t mfoc_motor_OpenLoopStart(mfoc_motor_t *motor,
 /** @brief Hold a fixed field, ramp, acquire feedback and blend to speed FOC.
  * @param motor IDLE instance with OpenLoop and speed PI configured.
  * @param speed Signed electrical speed PU. @param current Current amplitude PU.
- * @return Command/start status. Requires SMO/FLUX and HFI disabled.
- * @note Current adjustment is a TODO; the skeleton holds startup current.
- * Run ends the initial hold. Step owns acquisition and blending. */
+ * @return Command/start status. Requires SMO, Flux or FLOAT EKF, with HFI off.
+ * @note Run ends the hold. Step adjusts startup Iq and blends the angle. */
 mfoc_result_t mfoc_motor_SensorlessStart(mfoc_motor_t *motor,
     mfoc_scalar_t speed, mfoc_scalar_t current);
 
 /** @brief Reset HFI and start the Motor with zero current reference.
- * @param motor IDLE instance with HFI compiled in. @return Startup status. */
+ * @param motor IDLE instance with HFI enabled and HFI or POSITION selected.
+ * @return INVALID_STATE for a conflicting experiment or unsupported backend,
+ * before changing HFI state or starting PWM. Otherwise startup status. */
 mfoc_result_t mfoc_motor_HfiStart(mfoc_motor_t *motor);
 
 /** @brief Select speed mode and set a bounded electrical-speed reference.
- * @param motor Instance with the speed PI configured.
+ * @param motor IDLE or speed-mode RUNNING instance with nonzero speed_divider
+ * and no identification stage owning the reference.
  * @param ref Electrical speed PU.
  * @return Command status; rejection retains the previous reference. */
 mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
@@ -209,9 +231,10 @@ mfoc_result_t mfoc_motor_SetSpeed(mfoc_motor_t *motor, mfoc_scalar_t ref);
  * @note Control ISR only, one call per completed current frame. A single
  * RUNNING check precedes current read, Clarke, feedback, optional speed PI,
  * Core, and PWM submission. Idle/fault calls consume no frame. Runtime
- * failures Trip Motor; successful PWM submission publishes the prior output.
- * Forced startup treats observer status as diagnostic. Feedback acquisition
- * holds fundamental current at zero and suspends speed control. Feedback
+ * failures Trip Motor. Successful PWM submission publishes the interval's
+ * model voltage for the next current sample, including direct-voltage stages.
+ * Forced startup treats observer status as diagnostic. HFI acquisition runs
+ * both current PIs at zero dq reference and freezes speed control. Feedback
  * failures in normal control/acquisition Trip, as do sampling/PWM errors. */
 mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor);
 

@@ -24,6 +24,7 @@ foreach ($numeric in $numerics) {
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror @includes `
         "-DMFOC_NUMERIC_$numeric=1" -DMODUS_ENABLE=1 -DFOC_APP=2 `
         -DMFOC_USE_PERFC_FSM=1 `
+        -DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION `
         "-DMFOC_ISR_MEASURE=$timing" `
         "-DMFOC_FEEDBACK_ENABLE_HFI=$Hfi" `
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$Flux" `

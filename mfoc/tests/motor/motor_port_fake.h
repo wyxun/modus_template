@@ -23,6 +23,8 @@ typedef struct {
     unsigned samples;
     unsigned bus_reads;
     unsigned feedback_reads;
+    const mfoc_ab_t *feedback_voltage_address; /* Motor-owned history. */
+    mfoc_ab_t feedback_voltage; /* Copied during Step, before next PWM. */
     unsigned position_runs;
     unsigned position_reads;
     mfoc_result_t position_run;

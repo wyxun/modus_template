@@ -7,7 +7,7 @@
 #ifndef MFOC_FEEDBACK_H
 #define MFOC_FEEDBACK_H
 
-#include "mfoc_core.h"
+#include "mfoc_config.h"
 #include "mfoc_smo.h"
 #include "mfoc_hfi.h"
 #include "mfoc_flux.h"
@@ -50,30 +50,43 @@
 #error "The selected EKF output requires MFOC_FEEDBACK_ENABLE_EKF"
 #endif
 
-/** @brief Independent algorithm settings; enable flags control execution. */
+#if MFOC_FEEDBACK_ENABLE_HFI
+/** @brief HFI execution and permission to publish its voltage request. */
+enum {
+    MFOC_FEEDBACK_HFI_OFF,
+    MFOC_FEEDBACK_HFI_OBSERVE,
+    MFOC_FEEDBACK_HFI_INJECT
+};
+#endif
+
+/** @brief Instance settings for the compiled observers. */
 typedef struct {
     mfoc_smo_cfg_t smo;
     mfoc_flux_cfg_t flux;
 #if MFOC_FEEDBACK_ENABLE_EKF
     mfoc_ekf_cfg_t ekf;
 #endif
+#if MFOC_FEEDBACK_ENABLE_HFI
+    bool observe_hfi; /**< Run HFI diagnostics in ordinary non-HFI control. */
+#endif
 } mfoc_feedback_cfg_t;
 
 /** @brief Borrowed samples and prior interval values for one Step. */
 typedef struct {
     const mfoc_ab_t *i_ab_k; /**< Current sample i[k], alpha-beta I/Ibase. */
-    /** Core output from step k-1; NULL before the first successful Step. */
-    const mfoc_core_output_t *previous_core_output;
+    /** Model voltage over [k-1,k), alpha-beta V/Vbase; NULL without history. */
+    const mfoc_ab_t *u_ab_previous;
 } mfoc_feedback_input_t;
 
-/** @brief Control feedback/request; angle and speed require !acquiring.
- * On OK, acquiring holds fundamental current at zero while applying injection. */
+/** @brief Selected control feedback and next-interval injection request.
+ * During HFI acquisition, Motor uses the estimated angle and freezes speed
+ * control. The current PIs run at zero dq reference with injection enabled. */
 typedef struct {
     mfoc_angle_t angle;   /**< Electrical BAM32. */
     mfoc_scalar_t speed;  /**< omega_e/omega_base. */
     mfoc_ab_t u_inject_ab; /**< Next-interval V/Vbase; zero when inactive. */
 #if MFOC_FEEDBACK_ENABLE_HFI
-    bool acquiring; /**< Position acquisition owns excitation this step. */
+    bool acquiring; /**< Primary HFI is acquiring its control angle. */
 #endif
 } mfoc_feedback_output_t;
 
@@ -99,6 +112,10 @@ typedef struct {
     mfoc_ekf_cfg_t ekf_cfg; /**< Retained for stopped model updates. */
     mfoc_ekf_output_t ekf_output;
 #endif
+#if MFOC_FEEDBACK_ENABLE_HFI
+    uint8_t normal_hfi_mode; /**< Init policy for ordinary closed-loop starts. */
+    uint8_t hfi_mode;        /**< Policy for this run, set before PWM starts. */
+#endif
     bool initialized;
 } mfoc_feedback_t;
 
@@ -116,14 +133,28 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
 mfoc_result_t mfoc_feedback_SetMotorParamModel(mfoc_feedback_t *feedback,
     const mfoc_motor_params_t *model);
 
-/** @brief Reset the HFI observer before starting the Motor.
+#if MFOC_FEEDBACK_ENABLE_HFI
+/** @brief Prepare HFI before a normal Motor start.
+ * @param feedback Stopped instance. @param closed_loop Use its Init policy.
+ * A forced field or identification owns excitation when closed_loop is false. */
+static inline void mfoc_feedback_PrepareHfi(mfoc_feedback_t *feedback,
+                                            bool closed_loop)
+{
+    feedback->hfi_mode = closed_loop ? feedback->normal_hfi_mode :
+                                       MFOC_FEEDBACK_HFI_OFF;
+    feedback->hfi_output.valid = false;
+}
+#endif
+
+/** @brief Reset HFI and authorize injection with POSITION or HFI feedback.
  * @param feedback Initialized instance.
- * @return OK, or INVALID_STATE when HFI is compiled out. */
+ * @return OK or INVALID_STATE for an unsupported backend/build. */
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback);
 
 /** @brief Run enabled ISR algorithms, then select the configured output.
- * @param feedback Instance. @param input Current/prior Core samples.
+ * @param feedback Instance. @param input Current and prior-interval voltage.
  * Physical position ignores input; absent voltage resets model histories.
+ * An authorized HFI run can request its first injection without voltage.
  * @param output Feedback/excitation, unchanged on failure.
  * @return Backend status; NONE returns INVALID_STATE. No I2C access here.
  * @note Valid initialized feedback and output pointers are preconditions. */

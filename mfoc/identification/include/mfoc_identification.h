@@ -6,7 +6,7 @@
  */
 #ifndef MFOC_IDENTIFICATION_H
 #define MFOC_IDENTIFICATION_H
-#include "mfoc_identification_algorithms.h"
+#include "mfoc_identification_rotation.h"
 #include "mfoc_pt.h"
 
 #ifndef MFOC_IDENTIFICATION_STAGE_TIMEOUT_MS
@@ -41,27 +41,30 @@ typedef enum {
     MFOC_IDENTIFICATION_STAGE_LQ =
         MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 4U,
     MFOC_IDENTIFICATION_STAGE_SPINUP =
-        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 5U,
+        MFOC_ROTATION_SPINUP,
     MFOC_IDENTIFICATION_STAGE_FLUX =
-        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 6U,
+        MFOC_ROTATION_FLUX,
     MFOC_IDENTIFICATION_STAGE_INERTIA =
-        MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 7U,
+        MFOC_ROTATION_INERTIA,
+    MFOC_IDENTIFICATION_STAGE_ROTATION_FINISH =
+        MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 9U,
     MFOC_IDENTIFICATION_STAGE_COMPLETE =
         MFOC_IDENTIFICATION_CONTROL_VOLTAGE | 8U,
 } mfoc_identification_stage_t;
 
-/** @brief Raw synchronous samples; independent of Feedback/Core structures.
- * u_ab_previous is the previous requested stator voltage in V/Vbase. */
+/** @brief Synchronous current and the preceding PWM interval's model voltage. */
 typedef struct {
-    const mfoc_ab_t *i_ab_k;
-    mfoc_ab_t u_ab_previous;
+    const mfoc_ab_t *i_ab_k; /**< Sample at k, alpha-beta I/Ibase. */
+    /** Model voltage over [k-1,k), alpha-beta V/Vbase; NULL without history. */
+    const mfoc_ab_t *u_ab_previous;
 } mfoc_identification_input_t;
 
 /** @brief Mutually exclusive workspaces; unused algorithms add no state. */
 typedef union {
     uint32_t align_samples;
     mfoc_identification_rs_t rs;
-    mfoc_identification_flux_t flux;
+    mfoc_identification_inductance_t inductance;
+    mfoc_identification_rotation_t rotating;
 } mfoc_identification_work_t;
 
 /** @brief Instance-owned experiment and result; no Motor or hardware pointer.
@@ -69,13 +72,15 @@ typedef union {
  * A completed result preserves all model fields not measured by this run. */
 typedef struct {
     mfoc_motor_params_t result;
-    mfoc_scalar_t bus; /* Fixed supply snapshot; not sampled by Step. */
     mfoc_identification_work_t work;
+    mfoc_scalar_t current_limit; /* Effective experiment limit, I/Ibase. */
+    mfoc_scalar_t speed_limit; /* Electrical speed magnitude, PU. */
     mfoc_identification_operation_t operation;
     mfoc_angle_t angle; /* Last identification-owned virtual angle. */
     volatile mfoc_identification_state_t state;
     volatile mfoc_identification_stage_t stage;
     volatile bool stage_done; /* ISR publishes completion after sample writes. */
+    bool timing_mismatch; /* Configured Motor uses another timing profile. */
     mfoc_pt_t run_pt;          /* Foreground continuation across polls. */
     mfoc_tick_t stage_started; /* Foreground Port timestamp. */
     mfoc_tick_t stage_ticks;   /* Stage timeout in Port ticks. */
@@ -87,12 +92,13 @@ void mfoc_identification_Init(mfoc_identification_t *id);
 
 /** @brief Arm an experiment; does not enable PWM or start Motor.
  * @param id Instance. @param model Current PU model. @param operation Test.
- * @param bus Positive startup Vdc/Vbase snapshot.
- * @return OK when armed; INVALID_STATE for active or unsupported operations.
+ * @param bus Positive Vdc/Vbase at startup. Each sample uses its own interval.
+ * @return OK when armed; INVALID_STATE for active or missing model prerequisites.
  * @note Call while Motor is IDLE; the caller owns Motor startup/shutdown.
- * RESISTANCE is implemented; Ld/Lq pulse scheduling and rotating preparation
- * remain TODO. The independent inductance capture/Finish leaf is available;
- * Flux has an independent estimator but cannot yet start through Motor. */
+ * ELECTRICAL runs alignment, Rs and both inductance pulses with the rotor
+ * held at the aligned position. FLUX and INERTIA run with a free shaft.
+ * They estimate rotation from phase current and preceding PWM voltage.
+ * FLUX needs known Rs/Ld/Lq; INERTIA also needs known magnet flux. */
 mfoc_result_t mfoc_identification_Start(mfoc_identification_t *id,
     const mfoc_motor_params_t *model,
     mfoc_identification_operation_t operation, mfoc_scalar_t bus);
@@ -104,7 +110,7 @@ void mfoc_identification_Stop(mfoc_identification_t *id);
 
 /** @brief Advance the selected experiment without blocking.
  * @param id Instance. @return Ongoing, complete/idle, or error.
- * @note Foreground only. Each stage's timeout starts on its first Run poll.
+ * @note Foreground only. Spinup and rotating capture share one deadline.
  * An ISR completion already published at the deadline is consumed first.
  * New stage data is prepared while stage_done is true; clearing it publishes
  * the next stage to Step. Unsupported stages report ERROR and stop. */
@@ -124,10 +130,13 @@ mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
 
 /** @brief Consume i[k] and the preceding submitted PWM interval.
  * @param id Active instance. @param input Current/prior-interval samples.
- * @param output Next experiment command. @return None.
- * @note ISR only. Inputs are raw current and prior requested voltage; no
- * Feedback output or Core output is passed into the identification module. */
-void mfoc_identification_Step(mfoc_identification_t *id,
+ * @param output Next experiment command.
+ * @return Effective actuator route, including neutral voltage on failure.
+ * @note ISR only. Alignment and Rs can start with no voltage history.
+ * If |i_alpha| + |i_beta| exceeds MFOC_IDENTIFICATION_RS_CURRENT_MAX,
+ * the experiment requests zero excitation and fails. Motor may lower this limit. */
+mfoc_identification_control_t mfoc_identification_Step(
+    mfoc_identification_t *id,
     const mfoc_identification_input_t *input,
     mfoc_identification_output_t *output);
 #endif

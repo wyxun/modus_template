@@ -11,11 +11,91 @@
 #include <stdio.h>
 #include <string.h>
 
+/** @brief Limit PI and stationary injection together; track the loss in dq. */
+static void injection_limit(const mfoc_core_params_t *cfg)
+{
+    mfoc_core_t core = {0};
+    mfoc_core_output_t out = {0};
+    mfoc_core_input_t in = {
+        .ref = {MFOC_SCALAR(0.24f), MFOC_SCALAR(-0.18f)},
+        .angle = {.wBam32 = UINT32_C(0x40000000)},
+        .u_inject_ab = {MFOC_SCALAR(0.08f), MFOC_SCALAR(0.10f)}
+    };
+    assert(mfoc_core_Init(&core, cfg) == MFOC_RESULT_OK);
+    /* At a quarter turn, injection in dq is (beta, -alpha). */
+    mfoc_core_Step(&core, &in, &out);
+    assert(!out.limited);
+    assert(fabsf(mfoc_to_float(out.u.qD) - 0.34f) < 0.0002f);
+    assert(fabsf(mfoc_to_float(out.u.qQ) + 0.26f) < 0.0002f);
+    assert(core.d.ui == MFOC_ZERO && core.q.ui == MFOC_ZERO);
+
+    in.u_inject_ab = (mfoc_ab_t){MFOC_SCALAR(0.24f), MFOC_SCALAR(0.38f)};
+    mfoc_core_Step(&core, &in, &out);
+    assert(out.limited);
+    const float d = mfoc_to_float(out.u.qD);
+    const float q = mfoc_to_float(out.u.qQ);
+    const float scale = MFOC_CORE_M_MAX / hypotf(0.62f, -0.42f);
+    assert(fabsf(d - 0.62f * scale) < 0.0002f);
+    assert(fabsf(q + 0.42f * scale) < 0.0002f);
+    assert(fabsf(mfoc_to_float(core.d.ui) - (d - 0.62f)) < 0.0002f);
+    assert(fabsf(mfoc_to_float(core.q.ui) - (q + 0.42f)) < 0.0002f);
+}
+
+#if defined(MFOC_NUMERIC_FIXED)
+/** @brief Find the smallest integer whose square covers the Q30 norm. */
+static int64_t reference_radius(uint64_t norm_sq)
+{
+    uint64_t lo = 0U;
+    uint64_t hi = UINT32_MAX;
+    while (lo < hi) {
+        uint64_t mid = (lo + hi) / 2U;
+        if (mid * mid < norm_sq) { lo = mid + 1U; }
+        else { hi = mid; }
+    }
+    return (int64_t)lo;
+}
+
+/** @brief Exercise the current loop at radius, square and word boundaries. */
+static void fixed_limit_boundaries(const mfoc_core_params_t *cfg)
+{
+    mfoc_core_t core = {0};
+    assert(mfoc_core_Init(&core, cfg) == MFOC_RESULT_OK);
+    int32_t r = core.u_max;
+    const mfoc_ab_t requests[] = {
+        {r - 1, 0}, {r, 0}, {r, 1}, {r + 1, 0}, {-r, -1},
+        /* 32769 squared minus one, exactly, and plus one. */
+        {32768, 256}, {32769, 0}, {32769, 1}, {32768, 32768},
+        {65535, 0}, {65536, 0}, {65536, 1}, {INT32_MIN, 0},
+        {INT32_MAX, INT32_MAX}, {INT32_MIN, INT32_MIN}, {0, -r}
+    };
+    for (size_t i = 0U; i < sizeof(requests) / sizeof(requests[0]); ++i) {
+        assert(mfoc_core_Reset(&core) == MFOC_RESULT_OK);
+        mfoc_core_input_t in = {.u_inject_ab = requests[i]};
+        mfoc_core_output_t out = {0};
+        mfoc_core_Step(&core, &in, &out);
+        int64_t d = requests[i].qAlpha;
+        int64_t q = requests[i].qBeta;
+        uint64_t n2 = (uint64_t)(d * d) + (uint64_t)(q * q);
+        int64_t n = reference_radius(n2);
+        assert(out.limited == (n > r));
+        assert(out.u.qD == (n > r ? d * r / n : d));
+        assert(out.u.qQ == (n > r ? q * r / n : q));
+    }
+}
+#endif
+
 int main(void)
 {
     mfoc_pi_params_t pi = {MFOC_ONE, MFOC_ZERO,
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     mfoc_core_params_t cfg = {pi, pi, MFOC_ONE};
+    injection_limit(&cfg);
+#if defined(MFOC_NUMERIC_FIXED)
+    fixed_limit_boundaries(&cfg);
+    mfoc_core_params_t small_bus = cfg;
+    small_bus.bus = 2; /* Smallest representable radius (one Q15 count). */
+    fixed_limit_boundaries(&small_bus);
+#endif
     mfoc_core_t c = {0};
     mfoc_core_input_t in = {0};
     mfoc_core_output_t out = {0};

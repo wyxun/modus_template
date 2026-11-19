@@ -254,7 +254,11 @@ int main(void)
     tMfocApp.motor.feedback.ekf_output.angle.wBam32 = 0x50000000U;
 #endif
     mfoc_debug_WaveformStep();
+    /* Feedback and each enabled observer have run in this frame. */
+    mfoc_debug_position.angle = (mfoc_angle_t){0x40000000U};
+    mfoc_debug_position.state = MFOC_DEBUG_POSITION_VALID;
     mfoc_debug_CaptureWaveform();
+    assert(s_position_calls == 0U);
     assert(*s_values[0] == 0.25f && *s_values[3] == 0.02f);
 #if MFOC_FEEDBACK_ENABLE_EKF
     assert(*s_values[1] == 0.3125f && *s_values[2] == 0.0625f);
@@ -275,6 +279,12 @@ int main(void)
 #endif
     tMfocApp.motor.hold_active = true;
     mfoc_debug_CaptureWaveform();
+    assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
+    tMfocApp.motor.hold_active = false;
+    /* Identification may skip Feedback while an older observer is valid. */
+    mfoc_debug_WaveformStep();
+    mfoc_debug_CaptureWaveform();
+    assert(s_position_calls == 1U && *s_values[0] == 0.25f);
     assert(*s_values[1] == -1.0f && *s_values[2] == -1.0f);
     tMfocApp.motor.state = MFOC_MOTOR_IDLE;
     mfoc_debug_CaptureWaveform();

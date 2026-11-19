@@ -77,7 +77,7 @@ static void speed_acquisition(void)
     assert(motor.speed_count == 0U && motor.speed.ui == MFOC_ZERO);
     motor_port_fake.feedback.acquiring = false;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
-    assert(motor.speed_count == 2U && motor.i_ref.qQ > MFOC_ZERO);
+    assert(motor.speed_count == 2U && motor.speed_iq > MFOC_ZERO);
     mfoc_scalar_t integral = motor.speed.ui;
     motor_port_fake.feedback.acquiring = true;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
@@ -102,7 +102,7 @@ static void sensorless_speed_acquisition(void)
             -MFOC_HALF, MFOC_HALF};
         motor.speed_divider = 3U;
         motor.speed_ref = mfoc_from_float(0.4f * (float)direction);
-        motor.i_ref.qQ = mfoc_from_float(0.05f * (float)direction);
+        motor.speed_iq = mfoc_from_float(0.05f * (float)direction);
         motor.sensorless_start.state = MFOC_SENSORLESS_START_ACQUIRE;
         motor.sensorless_start.captured = true;
         motor.sensorless_start.offset = 10;
@@ -111,18 +111,18 @@ static void sensorless_speed_acquisition(void)
         motor.sensorless_start.stable_ticks = 4U;
         motor.sensorless_start.speed_window = MFOC_SCALAR(0.04f);
         motor_port_fake.feedback.speed = motor.speed_ref;
-        mfoc_scalar_t initial = motor.i_ref.qQ;
+        mfoc_scalar_t initial = motor.speed_iq;
         assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
         assert(motor.sensorless_start.state ==
             MFOC_SENSORLESS_START_ACQUIRE);
         assert(motor.mode == MFOC_MOTOR_MODE_SPEED);
-        assert(motor.i_ref.qQ == initial && motor.speed_count == 2U);
+        assert(motor.speed_iq == initial && motor.speed_count == 2U);
         motor_port_fake.feedback.speed =
             mfoc_from_float(0.5f * (float)direction);
         for (unsigned n = 0; n < 3U; ++n) {
             assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
         }
-        assert(mfoc_to_float(motor.i_ref.qQ) * (float)direction <
+        assert(mfoc_to_float(motor.speed_iq) * (float)direction <
                mfoc_to_float(initial) * (float)direction);
         assert(motor.sensorless_start.stable == 0U);
         motor_port_fake.feedback.speed = motor.speed_ref;
@@ -203,8 +203,8 @@ int main(void)
     mfoc_dq_t excessive = {MFOC_SCALAR(0.7f), MFOC_SCALAR(0.7f)};
     assert(mfoc_motor_SetCurrent(&motor, &excessive) ==
            MFOC_RESULT_OUT_OF_RANGE);
-    assert(motor.i_ref.qD == ref.qD);
-    assert(motor.i_ref.qQ == ref.qQ);
+    assert(motor.current_cmd.qD == ref.qD);
+    assert(motor.current_cmd.qQ == ref.qQ);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.duty.qU == MFOC_HALF);
     assert(motor_port_fake.enabled);
@@ -220,7 +220,7 @@ int main(void)
     assert(mfoc_motor_SetBus(&motor, MFOC_ZERO) != MFOC_RESULT_OK);
     assert(motor.state == MFOC_MOTOR_RUNNING);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
-    assert(motor.i_ref.qD == MFOC_ZERO);
+    assert(motor.current_cmd.qD == MFOC_ZERO);
     assert(motor.core.d.ui == MFOC_ZERO && motor.core.q.ui == MFOC_ZERO);
     assert(!motor_port_fake.enabled);
 
@@ -287,7 +287,7 @@ int main(void)
     assert(fabsf(mfoc_to_float(motor.previous_core_output.u.qD) -
         0.1f) < 0.0003f);
     assert(motor.previous_core_output.u.qQ == MFOC_ZERO);
-    assert(motor.i_ref.qD == ref.qD);
+    assert(motor.current_cmd.qD == ref.qD);
     motor_port_fake.feedback.acquiring = false;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.previous_core_output.u.qD > MFOC_SCALAR(0.1f));

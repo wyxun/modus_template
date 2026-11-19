@@ -1,21 +1,38 @@
 # ==============================================================================
 # Project Makefile — Multi-chip support via target/$(TARGET_CHIP)/
-# Toolchain : LLVM Embedded Toolchain for Arm (Windows)
+# Toolchain : LLVM for bare-metal targets
 # Usage     : make [BUILD=debug|release] [TARGET_CHIP=stm32g431] ...
 # ==============================================================================
-SW_ROOT ?= D:/software
-MSYS2_BIN = $(SW_ROOT)/msys64/mingw64/bin
-MAKE      = $(MSYS2_BIN)/mingw32-make.exe
+.DEFAULT_GOAL := all
+# Resolve the target= alias before a personal file selects its probe.
+ifdef target
+    ifneq ($(origin TARGET_CHIP),command line)
+        override TARGET_CHIP := $(target)
+    endif
+endif
+-include config.local.mk
+
+ifeq ($(OS),Windows_NT)
+    EXE_SUFFIX = .exe
+    ifneq ($(strip $(SW_ROOT)),)
+        MSYS2_BIN ?= $(SW_ROOT)/msys64/mingw64/bin
+        ARM_LLVM_BIN ?= $(SW_ROOT)/llvm_for_arm/bin
+        WCH_OPENOCD_ROOT ?= $(SW_ROOT)/MounRiver/MounRiver_Studio2/resources/app/resources/win32/components/WCH/OpenOCD/OpenOCD
+    endif
+    RISCV_LLVM_BIN ?= $(MSYS2_BIN)
+    ifneq ($(strip $(MSYS2_BIN)),)
+        ifndef STM32_OPENOCD_BIN
+            STM32_OPENOCD_BIN = $(MSYS2_BIN)/openocd.exe
+            STM32_OPENOCD_SCRIPTS ?= $(MSYS2_BIN)/../share/openocd/scripts
+        endif
+    endif
+    SWD_SPEED_KHZ ?= 4000
+endif
 
 # ------------------------------------------------------------------------------
 # Project
 # ------------------------------------------------------------------------------
 TARGET = template
-
-# Support both target=xxx (lowercase) and TARGET_CHIP=xxx (uppercase)
-ifdef target
-    TARGET_CHIP = $(target)
-endif
 
 TARGET_CHIP ?= stm32g431
 CLASS_SOURCES = class/template_class.c template_driver.c
@@ -23,26 +40,27 @@ CLASS_SOURCES = class/template_class.c template_driver.c
 include target/$(TARGET_CHIP)/target.mk
 
 # ------------------------------------------------------------------------------
-# Toolchain  (Windows LLVM path)
+# Toolchain directories are optional when the tools are on PATH.
 # ------------------------------------------------------------------------------
 ifeq ($(TARGET_CHIP),ch592)
     TARGET_TRIPLE = --target=riscv32-none-elf
-    LLVM_PATH = $(SW_ROOT)/msys64/mingw64/bin/
+    LLVM_PATH = $(if $(RISCV_LLVM_BIN),$(RISCV_LLVM_BIN)/)
 else
     TARGET_TRIPLE = --target=armv7em-none-eabi
-    LLVM_PATH = $(SW_ROOT)/llvm_for_arm/bin/
+    LLVM_PATH = $(LLVM_UTILS_PATH)
 endif
 
 # Always use llvm_for_arm's multi-architecture binary utilities
-LLVM_UTILS_PATH = $(SW_ROOT)/llvm_for_arm/bin/
+LLVM_UTILS_PATH = $(if $(ARM_LLVM_BIN),$(ARM_LLVM_BIN)/)
+LLVM_NM = $(LLVM_UTILS_PATH)llvm-nm$(EXE_SUFFIX)
 
-CC  = $(LLVM_PATH)clang
-AS  = $(LLVM_PATH)clang
-CP  = $(LLVM_UTILS_PATH)llvm-objcopy
-SZ  = $(LLVM_UTILS_PATH)llvm-size
-LD  = $(LLVM_PATH)clang
-AR  = $(LLVM_UTILS_PATH)llvm-ar
-NM  = $(LLVM_UTILS_PATH)llvm-nm
+CC  = "$(LLVM_PATH)clang$(EXE_SUFFIX)"
+AS  = $(CC)
+CP  = "$(LLVM_UTILS_PATH)llvm-objcopy$(EXE_SUFFIX)"
+SZ  = "$(LLVM_UTILS_PATH)llvm-size$(EXE_SUFFIX)"
+LD  = $(CC)
+AR  = "$(LLVM_UTILS_PATH)llvm-ar$(EXE_SUFFIX)"
+NM  = "$(LLVM_NM)"
 
 # ------------------------------------------------------------------------------
 # Directories
@@ -51,8 +69,9 @@ BUILD_DIR = build
 
 ifeq ($(OS),Windows_NT)
     SHELL = cmd.exe
-    MKDIR = if not exist $(BUILD_DIR) mkdir $(BUILD_DIR)
-    RMDIR = if exist $(BUILD_DIR) rd /s /q $(BUILD_DIR)
+    BUILD_DIR_WIN = $(subst /,\,$(BUILD_DIR))
+    MKDIR = if not exist "$(BUILD_DIR_WIN)" mkdir "$(BUILD_DIR_WIN)"
+    RMDIR = if exist "$(BUILD_DIR_WIN)" rd /s /q "$(BUILD_DIR_WIN)"
 else
     MKDIR = mkdir -p $(BUILD_DIR)
     RMDIR = rm -rf $(BUILD_DIR)
@@ -142,8 +161,10 @@ else ifeq ($(MFOC_NUMERIC),fixed)
 else
     $(error MFOC_NUMERIC must be float or fixed)
 endif
-ifneq ($(findstring MFOC_NUMERIC_FLOAT,$(C_DEFS)),)
+ifeq ($(MFOC_NUMERIC),float)
+ifneq ($(filter -DMFOC_APP_ENABLED=1,$(C_DEFS)),)
     C_DEFS += -DMWAVEFORM_PREPARE_SAMPLE=mfoc_debug_CaptureWaveform
+endif
 endif
 
 # ------------------------------------------------------------------------------
@@ -232,10 +253,10 @@ all: $(BUILD_DIR)/$(TARGET).elf $(BUILD_DIR)/$(TARGET).bin                      
         $(BUILD_DIR)/$(TARGET).hex size
 
 release:
-	$(MAKE) BUILD=release
+	"$(MAKE)" BUILD=release all
 
 debug-rel:
-	$(MAKE) BUILD=debug-rel
+	"$(MAKE)" BUILD=debug-rel all
 
 OBJECTS  = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
 ASM_OBJECTS = $(patsubst %.s,$(BUILD_DIR)/%.o,$(patsubst %.S,$(BUILD_DIR)/%.o,  \
@@ -263,8 +284,8 @@ BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp
 
 ifeq ($(OS),Windows_NT)
-    PREV_CONFIG := $(shell if exist $(subst /,\,$(CONFIG_STAMP))                \
-        type $(subst /,,$(CONFIG_STAMP)) 2>nul)
+    CONFIG_STAMP_WIN = $(BUILD_DIR_WIN)\.config_stamp
+    PREV_CONFIG := $(shell if exist "$(CONFIG_STAMP_WIN)" type "$(CONFIG_STAMP_WIN)")
 else
     PREV_CONFIG := $(shell cat $(CONFIG_STAMP) 2>/dev/null)
 endif
@@ -275,12 +296,12 @@ endif
 
 $(CONFIG_STAMP): | $(BUILD_DIR)
 ifeq ($(OS),Windows_NT)
-	@echo $(BUILD_CONFIG_SIGNATURE)> $(subst /,\,$(CONFIG_STAMP))
+	@echo $(BUILD_CONFIG_SIGNATURE)>"$(CONFIG_STAMP_WIN)"
 else
 	@echo $(BUILD_CONFIG_SIGNATURE) > $(CONFIG_STAMP)
 endif
 
-$(OBJECTS): $(CONFIG_STAMP) makefile
+$(OBJECTS): $(CONFIG_STAMP) makefile $(wildcard config.local.mk)
 
 -include $(OBJECTS:.o=.d)
 
@@ -315,16 +336,43 @@ clean:
 # Flash / Debug
 # ------------------------------------------------------------------------------
 
-ifeq ($(OS),Windows_NT)
-    OPENOCD_BIN     ?= $(SW_ROOT)/msys64/mingw64/bin/openocd.exe
-    OPENOCD_SCRIPTS ?= $(SW_ROOT)/msys64/mingw64/share/openocd/scripts
-    OPENOCD_CMD ?= $(OPENOCD_BIN) -s $(OPENOCD_SCRIPTS)                         \
-        -f target/$(TARGET_CHIP)/openocd.cfg -c "adapter speed 4000"            \
-        -c "tcl_port 0"
+PROBE_PROFILE ?= default
+OPENOCD_CONFIG = -f target/$(TARGET_CHIP)/openocd.cfg
+OPENOCD_SPEED_KHZ = $(SWD_SPEED_KHZ)
+
+ifneq ($(filter at32f407 at32f413 at32f421,$(TARGET_CHIP)),)
+    ifneq ($(strip $(AT32_OPENOCD_ROOT)),)
+        OPENOCD_BIN ?= $(AT32_OPENOCD_ROOT)/bin/openocd$(EXE_SUFFIX)
+        OPENOCD_SCRIPTS ?= $(AT32_OPENOCD_ROOT)/scripts
+    else ifeq ($(OS),Windows_NT)
+        OPENOCD_BIN ?= $(if $(MSYS2_BIN),$(MSYS2_BIN)/)openocd-at32.exe
+        ifneq ($(strip $(MSYS2_BIN)),)
+            OPENOCD_SCRIPTS ?= $(MSYS2_BIN)/../share/openocd/scripts
+        endif
+    endif
+    ifeq ($(PROBE_PROFILE),atlink-ez-winusb)
+        OPENOCD_CONFIG = -f interface/cmsis-dap.cfg                              \
+            -c "cmsis_dap_backend usb_bulk" -c "cmsis_dap_usb interface 3"     \
+            -c "cmsis_dap_vid_pid 0x2e3c 0xf000"                                \
+            $(if $(ATLINK_EZ_SERIAL),-c "adapter serial $(ATLINK_EZ_SERIAL)")   \
+            -c "transport select swd" -f target/$(TARGET_CHIP)xx.cfg
+    endif
+else ifeq ($(TARGET_CHIP),ch592)
+    ifneq ($(strip $(WCH_OPENOCD_ROOT)),)
+        OPENOCD_BIN ?= $(WCH_OPENOCD_ROOT)/bin/openocd$(EXE_SUFFIX)
+        OPENOCD_SCRIPTS ?= $(WCH_OPENOCD_ROOT)/scripts
+    endif
+    OPENOCD_SPEED_KHZ = 1000
 else
-    OPENOCD_BIN = openocd
-    OPENOCD_CMD = $(OPENOCD_BIN) -f target/$(TARGET_CHIP)/openocd.cfg
+    OPENOCD_BIN ?= $(or $(STM32_OPENOCD_BIN),openocd)
+    OPENOCD_SCRIPTS ?= $(STM32_OPENOCD_SCRIPTS)
 endif
+
+OPENOCD_BIN ?= openocd
+OPENOCD_CMD ?= "$(OPENOCD_BIN)" $(if $(OPENOCD_SCRIPTS),-s "$(OPENOCD_SCRIPTS)") \
+    $(OPENOCD_CONFIG) $(OPENOCD_TARGET_ARGS)                                      \
+    $(if $(OPENOCD_SPEED_KHZ),-c "adapter speed $(OPENOCD_SPEED_KHZ)")           \
+    $(if $(filter Windows_NT,$(OS)),-c "tcl_port 0")
 
 FLASH_CMD ?= $(OPENOCD_CMD) -c "init" -c "reset halt"                           \
     -c "sleep 200" -c "program $< verify" -c "reset run" -c "exit"
@@ -350,7 +398,7 @@ debug: $(BUILD_DIR)/$(TARGET).elf
 # ------------------------------------------------------------------------------
 ifeq ($(OS),Windows_NT)
     RTT_ADDR = $(shell powershell -NoProfile -Command                           \
-        "$$nm = & '$(NM).exe' $(BUILD_DIR)/$(TARGET).elf 2>$$null |             \
+        "$$nm = & '$(LLVM_NM)' '$(BUILD_DIR)/$(TARGET).elf' 2>$$null |           \
          Select-String '_SEGGER_RTT$$'; if ($$nm) { '0x' +                      \
          ($$nm -split ' ')[0] }" 2>nul)
 else
@@ -358,14 +406,16 @@ else
         awk '/_SEGGER_RTT$$/ {print "0x"$$1}')
 endif
 
-# 1 ms polling is required for the 20 kHz waveform path. The 10 ms default
-# measured ~220 batch frames/s (~7k samples/s), while 1 ms measured ~300
-# 64-sample batch frames/s (~19k samples/s) on STM32G431 + CMSIS-DAP.
+RTT_POLL_MS ?= 1
+RTT_SHELL_PORT ?= 9090
+RTT_WAVE_PORT ?= 9091
+RTT_SERVERS = -c "rtt server start $(RTT_SHELL_PORT) 0"                            \
+    -c "rtt server start $(RTT_WAVE_PORT) 1"
+
 RTT_CMD ?= -c "init" -c "catch { resume }"                                      \
-    -c "rtt setup $(RTT_ADDR) 0xa8 \"SEGGER RTT\""                              \
-    -c "rtt start" -c "rtt polling_interval 1"                                  \
-    -c "rtt server start 9090 0"                                                \
-    -c "rtt server start 9091 1"
+    -c "rtt setup $(or $(RTT_ADDR),$(error RTT control block missing. Use BUILD=debug or BUILD=debug-rel)) 0xa8 \"SEGGER RTT\"" \
+    -c "rtt start" -c "rtt polling_interval $(RTT_POLL_MS)"                      \
+    $(RTT_SERVERS)
 
 rtt-addr: $(BUILD_DIR)/$(TARGET).elf
 	@echo "RTT CB address: $(RTT_ADDR)"
@@ -373,6 +423,18 @@ rtt-addr: $(BUILD_DIR)/$(TARGET).elf
 rtt: $(BUILD_DIR)/$(TARGET).elf
 	@echo "RTT CB address: $(RTT_ADDR)"
 	$(OPENOCD_CMD) $(RTT_CMD)
+
+ifeq ($(OS),Windows_NT)
+.PHONY: auto
+auto:
+	$(if $(filter release,$(BUILD)),$(error auto requires BUILD=debug or BUILD=debug-rel for RTT))
+	@powershell -NoProfile -Command "if (Get-NetTCPConnection -State Listen -LocalPort 4444,$(RTT_SHELL_PORT),$(RTT_WAVE_PORT) -ErrorAction SilentlyContinue) { Write-Error 'OpenOCD or RTT port is already in use'; exit 1 }"
+	"$(MAKE)" clean
+	"$(MAKE)" all
+	"$(MAKE)" flash
+	@start "" /b "$(MAKE_COMMAND)" rtt > openocd_rtt.log 2>&1
+	@powershell -NoProfile -Command "$$deadline = (Get-Date).AddSeconds(10); do { if ((Get-NetTCPConnection -State Listen -LocalPort $(RTT_SHELL_PORT),$(RTT_WAVE_PORT) -ErrorAction SilentlyContinue | Select-Object -ExpandProperty LocalPort -Unique | Measure-Object).Count -eq 2) { exit 0 }; Start-Sleep -Milliseconds 250 } while ((Get-Date) -lt $$deadline); Write-Error 'RTT server did not start. See openocd_rtt.log'; exit 1"
+endif
 
 # Flash via already-running OpenOCD telnet (port 4444)
 flash-rtt: $(BUILD_DIR)/$(TARGET).hex

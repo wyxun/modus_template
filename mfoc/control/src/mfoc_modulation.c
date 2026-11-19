@@ -29,12 +29,11 @@ mfoc_result_t mfoc_modulation_ModelVoltageAlphaBeta(const mfoc_uvw_t *ptDuty,
     }
 #else
     {
-        /* Every intermediate is Q15 in int64; bus PU is not clamped to 1. */
-        int64_t alpha = (2 * (int64_t)ptDuty->qU - ptDuty->qV -
-                         ptDuty->qW) / 3;
+        /* Q15 duties give an alpha numerator in [-65536, 65536]. */
+        int32_t alpha = (2 * ptDuty->qU - ptDuty->qV - ptDuty->qW) / 3;
         int64_t beta = (int64_t)(ptDuty->qV - ptDuty->qW) *
                        MFOC_SCALAR(0.5773502692f) / MFOC_Q_SCALE;
-        int64_t u_alpha = alpha * qBusPu / MFOC_Q_SCALE;
+        int64_t u_alpha = (int64_t)alpha * qBusPu / MFOC_Q_SCALE;
         int64_t u_beta = beta * qBusPu / MFOC_Q_SCALE;
         ptVoltage->qAlpha = (mfoc_scalar_t)u_alpha;
         ptVoltage->qBeta = (mfoc_scalar_t)u_beta;

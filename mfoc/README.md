@@ -7,6 +7,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | 要做的事 | 阅读入口 |
 | --- | --- |
 | 理解核心架构、单拍数据流、状态所有权（持续完善） | [框架总览](docs/framework.md) |
+| 核对 PU 单位、Q15 范围、舍入与积分精度 | [数值契约](docs/numeric-contract.md) |
 | 阅读模块接口 | [Feedback 位置与速度反馈接口](docs/modules/feedback.md) · [Core](docs/framework.md#core) · [Identification](docs/framework.md#identification) |
 | 配置无感观测器，核对估算角速和有效条件 | [Flux 非线性磁链观测器](docs/modules/flux.md) · [SMO 滑模反电势观测器](docs/modules/smo.md) |
 | 接入有感位置源，理解角速如何进入 Feedback | [Encoder 位置组件](docs/modules/encoder.md) · [Hall 位置组件](docs/modules/hall.md) |
@@ -54,6 +55,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `MFOC_ISR_MEASURE` | 中断耗时统计开关 | `0`，G431 调试构建覆盖为 `1` |
 | `MFOC_ISR_BUDGET_TICKS` | 中断耗时预算，按计时器频率设置 | `8500` |
 | `MFOC_IDENTIFICATION_ENABLE` | Motor 参数辨识流程 | `0` |
+| `MFOC_MOTOR_MODEL_UPDATE_ENABLE` | 停机后显式应用 PU 电机参数 | `0` |
 | `MFOC_FEEDBACK_ENABLE_POSITION` | 板级提供的统一位置反馈；旧 `ENABLE_ENCODER` 名称兼容 | `1` |
 | `MFOC_FEEDBACK_ENABLE_SMO` | SMO 观测器 | `1` |
 | `MFOC_FEEDBACK_ENABLE_HFI` | 高频注入 | `0` |
@@ -61,7 +63,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `MFOC_FEEDBACK_ENABLE_EKF` | EKF 观测器 | `0`，仅 FLOAT |
 | `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_SMO` |
 
-使能算法与选择控制输出是两项配置：所选 backend 对应的算法必须使能。未选作 backend 的已使能算法可用于影子观察。HFI 会产生注入电压；Flux 和 EKF 的增益、噪声参数等需要针对实际电机配置及验证。文件中还包含 Rs/L 辨识、Flux 和 EKF 的参数，具体定义以配置头为准。
+使能算法与选择控制输出是两项配置：所选 backend 对应的算法必须使能。未选作 backend 的已使能算法可用于影子观察。HFI 主反馈闭环允许注入，POSITION 仅在显式 `HfiStart` 时允许注入。普通非 HFI 闭环的 `feedback.observe_hfi` 可启用无注入诊断。Flux 和 EKF 的增益、噪声参数等需要针对实际电机配置及验证。文件中还包含 Rs/L 辨识、Flux 和 EKF 的参数，具体定义以配置头为准。
 
 ### 电机与标幺值
 
@@ -70,6 +72,10 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 电流使用 `I/Ibase`，母线使用 `Vdc/Vbase`，速度使用电角速度与电角速度基值之比。当前电流基值是相电流峰值；例如 `0.02 pu` 对应 `0.02 × 3.5 A = 0.07 A`。极对数用于机械角与电角的换算。
 
 当前示例应用的电流 PI、速度 PI、运行限值、采样频率和速度环分频在 [`class/mfoc_app.c`](../class/mfoc_app.c) 的 Motor 配置中设置；修改电机参数或控制频率后应重新整定并核对这些值。
+
+电机参数辨识支持单测 Rs、连续测 Rs/Ld/Lq、测磁链和测空轴惯量，四种操作共用一套启停和结果接口，均可关闭物理位置反馈。静止实验要求轴保持在对齐位置；磁链和惯量使用电压、电流估算转子运动。[实验操作与适用条件](docs/framework.md#identification) · [双后端软件回放](docs/validation/2026-11-19-p09-identification.md)
+
+需要停机更新时，库与调用方统一定义 `MFOC_MOTOR_MODEL_UPDATE_ENABLE=1`。同一台 Motor 的辨识完成并停机后，用 `mfoc_identification_GetResult(&motor.identification, &params)` 读取结果，成功后调用 `mfoc_motor_ApplyModel(&motor, &params)`。应用从文件或其他电机导入参数时，须先按目标 Motor 的 Init 基值换算为 PU。更改基值或极对数需要重新初始化。[接口契约](motor/include/mfoc_motor.h)
 
 ## 硬件端口
 

@@ -25,6 +25,69 @@ mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
     return MFOC_RESULT_OK;
 }
 
+/** @brief Adjacent representable scalar outside a finite profile limit. */
+static mfoc_scalar_t outside_limit(mfoc_scalar_t limit, int direction)
+{
+#if defined(MFOC_NUMERIC_FIXED)
+    return limit + direction;
+#else
+    return nextafterf(limit, direction < 0 ? -INFINITY : INFINITY);
+#endif
+}
+
+static void expect_out_of_range(mfoc_feedback_t *feedback,
+                                const mfoc_motor_params_t *model)
+{
+    unsigned char saved[sizeof(*feedback)];
+    memcpy(saved, feedback, sizeof(saved));
+    assert(mfoc_feedback_SetMotorParamModel(feedback, model) ==
+           MFOC_RESULT_OUT_OF_RANGE);
+    assert(memcmp(saved, feedback, sizeof(saved)) == 0);
+}
+
+static void test_model_bounds(mfoc_feedback_t *feedback)
+{
+    const mfoc_motor_params_t low = {1U, MFOC_SCALAR(MFOC_MOTOR_RS_MIN_PU),
+        MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU), MFOC_SCALAR(MFOC_MOTOR_L_MIN_PU),
+        MFOC_SCALAR(128.0f / 32768.0f), MFOC_ZERO};
+    const mfoc_motor_params_t high = {UINT16_MAX,
+        MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU), MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU),
+        MFOC_SCALAR(MFOC_MOTOR_L_MAX_PU), MFOC_SCALAR(MFOC_MOTOR_FLUX_MAX_PU),
+        MFOC_SCALAR(MFOC_MOTOR_INERTIA_MAX_PU)};
+    for (int direction = -1; direction <= 1; direction += 2) {
+        mfoc_motor_params_t model = direction < 0 ? low : high;
+        assert(mfoc_feedback_SetMotorParamModel(feedback, &model) ==
+               MFOC_RESULT_OK);
+        mfoc_scalar_t *fields[] = {&model.rs, &model.ld, &model.lq,
+                                   &model.inertia};
+        for (size_t i = 0; i < sizeof(fields) / sizeof(fields[0]); ++i) {
+            mfoc_scalar_t limit = *fields[i];
+            *fields[i] = outside_limit(limit, direction);
+            expect_out_of_range(feedback, &model);
+            *fields[i] = limit;
+        }
+        model.flux = direction < 0 ? MFOC_ZERO : outside_limit(high.flux, 1);
+        expect_out_of_range(feedback, &model);
+    }
+
+    mfoc_motor_params_t model = low;
+    model.pole_pairs = 0U;
+    expect_out_of_range(feedback, &model);
+
+    /* Squaring 128 raw Q15 counts gives exactly half a raw count. */
+    assert(mfoc_feedback_SetMotorParamModel(feedback, &low) == MFOC_RESULT_OK);
+    model = low;
+    model.flux = MFOC_SCALAR(127.0f / 32768.0f);
+#if defined(MFOC_NUMERIC_FIXED)
+    assert(feedback->flux.c.flux_sq == 1);
+    expect_out_of_range(feedback, &model);
+#else
+    assert(feedback->flux.c.flux_sq == low.flux * low.flux);
+    assert(mfoc_feedback_SetMotorParamModel(feedback, &model) == MFOC_RESULT_OK);
+    assert(feedback->flux.c.flux_sq == model.flux * model.flux);
+#endif
+}
+
 /** @brief Verify invalid samples, reset and independent feedback selection.
  * @return Zero after all assertions pass. */
 int main(void)
@@ -67,23 +130,24 @@ int main(void)
 
     mfoc_feedback_t feedback = {0};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
-    mfoc_core_output_t previous = {
-        .duty = {MFOC_HALF, MFOC_SCALAR(0.6f), MFOC_SCALAR(0.4f)},
-        .bus = MFOC_ONE};
-    mfoc_feedback_input_t input = {&i, &previous};
+    u = (mfoc_ab_t){MFOC_SCALAR(-0.2f), MFOC_SCALAR(0.12f)};
+    mfoc_feedback_input_t input = {.i_ab_k = &i, .u_ab_previous = &u};
     mfoc_feedback_output_t output = {.angle = {123U}, .speed = MFOC_ONE};
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, &input, &output);
+    mfoc_flux_Step(&flux, &i, &u, &estimate);
     assert(feedback.flux_output.valid);
+    assert(feedback.flux.psi_s.qAlpha == flux.psi_s.qAlpha);
+    assert(feedback.flux.psi_s.qBeta == flux.psi_s.qBeta);
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK && output.angle.wBam32 == 0x70000000U);
 #else
     assert(rc == MFOC_RESULT_OK);
     assert(output.angle.wBam32 == feedback.flux_output.angle.wBam32);
 #endif
-    feedback.flux.psi_s = i;
-    input.previous_core_output = NULL;
+    input.u_ab_previous = NULL;
     rc = mfoc_feedback_Step(&feedback, &input, &output);
     assert(feedback.flux.psi_s.qAlpha == MFOC_ZERO);
+    assert(feedback.flux.psi_s.qBeta == MFOC_ZERO);
     assert(!feedback.flux_output.valid);
     mfoc_feedback_t before = feedback;
     unsigned reads = position_reads;
@@ -109,6 +173,7 @@ int main(void)
 #if MFOC_FEEDBACK_ENABLE_SMO
     assert(feedback.smo.c.kr < before.smo.c.kr);
 #endif
+    test_model_bounds(&feedback);
     model = (mfoc_motor_params_t){MFOC_MOTOR_POLE_PAIRS,
         MFOC_SCALAR(MFOC_MOTOR_RS_PU), MFOC_SCALAR(MFOC_MOTOR_LD_PU),
         MFOC_SCALAR(MFOC_MOTOR_LQ_PU), MFOC_SCALAR(MFOC_MOTOR_FLUX_PU),

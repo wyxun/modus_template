@@ -44,7 +44,8 @@ static inline bool mfoc_scalar_is_finite(mfoc_scalar_t value)
 }
 
 /** @brief Convert a boundary float. @param value Physical scalar.
- * @return FLOAT unchanged; FIXED rounded and saturated, NaN becomes zero. */
+ * @return FLOAT returns the input. FIXED rounds to the nearest Q15 count
+ * (ties away from zero), saturates to int32 limits, and maps NaN to zero. */
 mfoc_scalar_t mfoc_from_float(float value);
 
 /** @brief Decode a scalar for boundary use. @param value Backend scalar.

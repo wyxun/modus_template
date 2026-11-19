@@ -55,6 +55,7 @@ mfoc_tick_t mfoc_port_tick(void) { return motor_port_fake.time_ms; }
 /** @brief Give the injected clock scale. @return Ticks per second. */
 uint32_t mfoc_port_tick_frequency(void) { return 1000U; }
 
+#if MFOC_FEEDBACK_ENABLE_POSITION
 /** @brief Record foreground position refresh. @return Injected result. */
 mfoc_result_t mfoc_port_position_run(void)
 {
@@ -84,9 +85,11 @@ mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t angle)
     motor_port_fake.held_angle = angle;
     return motor_port_fake.calibration;
 }
+#endif
 
 #endif
 
+#if !defined(MFOC_TEST_REAL_FEEDBACK)
 /** @brief Initialize the test-only feedback service.
  * @param feedback Instance. @param cfg Captured settings.
  * @param model Motor constants. @return OK, or INVALID_ARGUMENT for a model
@@ -115,6 +118,7 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
 mfoc_result_t mfoc_feedback_HfiStart(mfoc_feedback_t *feedback)
 {
 #if MFOC_FEEDBACK_ENABLE_HFI
+    feedback->hfi_mode = MFOC_FEEDBACK_HFI_INJECT;
     feedback->hfi = (mfoc_hfi_t){.state = MFOC_HFI_ACQUIRE};
     feedback->hfi_output = (mfoc_hfi_output_t){0};
     return MFOC_RESULT_OK;
@@ -132,12 +136,18 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 {
     assert(feedback->initialized && input->i_ab_k != NULL);
     ++motor_port_fake.feedback_reads;
+    motor_port_fake.feedback_voltage_address = input->u_ab_previous;
+    if (input->u_ab_previous != NULL) {
+        motor_port_fake.feedback_voltage = *input->u_ab_previous;
+    }
     if (motor_port_fake.feedback_step != MFOC_RESULT_OK) {
         return motor_port_fake.feedback_step;
     }
     *output = motor_port_fake.feedback;
     return MFOC_RESULT_OK;
 }
+
+#endif
 
 #if !defined(MFOC_TEST_REAL_PORT)
 /** @brief Record duty without changing gate state.

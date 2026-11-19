@@ -178,42 +178,53 @@ TARGET_CHIP ?= at32f421
 
 ---
 
-## 4. 编译模式与优化等级 (Build Modes & Optimizations)
+## 4. 编译模式与优化等级
 
-为了完美应对微秒级 FOC 电机驱动的时序要求和逻辑开发，项目独创性地支持 **“双轨制构建”** 体系：
+| 构建模式 | 命令行参数 | 优化等级 | Shell、日志与 Waveform |
+| :--- | :--- | :--- | :--- |
+| Debug | `BUILD=debug` | `-O0` | 开启 |
+| Debug-Rel（默认） | `BUILD=debug-rel` | `-Os` | 开启 |
+| Release | `BUILD=release` | `-Os` | 关闭 |
 
-| 构建模式 | 命令行参数 | 优化等级 (`OPT`) | 调试模块 (`mshell/MLOG/Waveform`) | 最佳应用场景 |
-| :--- | :--- | :--- | :--- | :--- |
-| **Debug (开发轨)** | `.\make.bat` / `make` | **`-O0`** (无优化) | 🟢 开启 | 适用于纯逻辑算法调试。GDB 单步不断点、不跳行，所有局部临时变量 100% 可读，绝无 `<optimized out>` 报错。 |
-| **Debug-Rel (过渡轨)** | `.\make.bat debug-rel` | **`-Oz`** (极致体积/速度) | 🟢 开启 | **发版前黄金预检模式**。拥有与生产环境 100% 绝对一致的运行速度与指令时序，防范时序炸管，但同时保留 Shell、RTT 打印与 `mstudio` 高速波形捕获！ |
-| **Release (生产轨)** | `.\make.bat release` | **`-Oz`** (极致体积/速度) | 🔴 彻底剥离 (无开销) | 最终量产发版。所有调试逻辑、打印代码在汇编层被物理切除，获得最小的体积与最高效的硬件执行速率。 |
+## 5. 本机配置、编译与烧录
 
----
+团队共享 [config.local.mk.example](config.local.mk.example)。每个人的 `config.local.mk` 由 Git 忽略，用来指定本机的工具链目录、OpenOCD、探针和 RTT 端口。工具已在 `PATH` 时可以直接构建。使用厂商 OpenOCD 时，可执行文件和 scripts 应来自同一套发行包。
 
-## 5. 编译、烧录与一键流 (Compilation, Flashing & Workflows)
+共享台架记录或 CI 构建应显式指定芯片、构建模式和数值后端，例如 `make TARGET_CHIP=stm32g431 BUILD=debug-rel MFOC_NUMERIC=float`。命令行设置优先于本机配置。
 
-### 5.1 极简命令行流
-在任何终端（PowerShell 或 CMD）直接执行以下快捷批处理指令：
+### Windows
+
 ```powershell
-.\make.bat clean              # 清理 build 目录
-.\make.bat [BUILD_MODE]       # 执行编译，不传参数默认是 debug 模式，可传入 release / debug-rel 
-.\make.bat flash BUILD=...    # 将相应生成的 hex 直接烧录进入目标板 (默认烧录 debug 固件)
-.\make.bat download           # 🚀 免除依赖检查：直接调用 OpenOCD 刷写已有的固件 hex
+if (!(Test-Path config.local.mk)) { Copy-Item config.local.mk.example config.local.mk }
+.\make.bat                          # 按本机默认配置构建
+.\make.bat BUILD=debug              # 无优化调试构建
+.\make.bat release                  # 生产构建
+.\make.bat flash                    # 构建、烧录并校验
+.\make.bat rtt                      # 前台启动 OpenOCD 和 RTT
+.\make.bat auto                     # 清理、构建、烧录并在后台启动 RTT
 ```
 
-### 5.2 🚀 一键自动化测试流水线 (`.\make.bat auto`)
-如果你希望以 **`-Oz` 强优化时序** 进行测试（最推荐的调试电机模式），只需运行一键自动化指令：
-```powershell
-.\make.bat auto
-```
-该指令将以极速在后台自动完成以下全闭环操作：
-1. **自动强杀** 任何残留占用调试口的后台 OpenOCD 进程（杜绝端口冲突）。
-2. **清理** 并将项目编译为 **`-Oz` 极致优化的 `debug-rel`** 固件。
-3. **安全下载** 固件写入单片机 Flash。
-4. **后台静默挂载** RTT 服务器，自动将电机波形数据映射至本地 **`127.0.0.1:9091`** 端口！
-* **结果**：指令运行完毕后，不需手动运行任何程序，直接打开 **`mstudio`** 软件连接 `127.0.0.1:9091` 端口，最真实的电机高速 SVPWM、正余弦波形即刻直观呈现！
+`make.bat` 可从环境变量 `MAKE_EXE` 或本机配置的 `MSYS2_BIN` 找到 GNU Make。
+`auto` 使用所选芯片和调试构建模式，启动输出写入 `openocd_rtt.log`。
+调试端口已占用时会报错，退出现有会话后即可重试。Shell 和 Waveform 端口以
+`RTT_SHELL_PORT` 和 `RTT_WAVE_PORT` 为准。
 
----
+AT32 的 `atlink-ez-winusb` 配置只选择 AT-Link-EZ 的 USB Bulk 接口。
+连接多支同型号探针时，可用 `ATLINK_EZ_SERIAL` 指定其中一支。
+
+### Linux
+
+直接使用同一份 Makefile。将带 ARM 裸机头文件和运行库的 Embedded LLVM 工具链
+加入 `PATH`，或设置 `ARM_LLVM_BIN`。烧录与 RTT 使用相应芯片的 OpenOCD。
+Linux 上的工具路径填写 Linux 可执行文件和目录。
+
+```sh
+test -e config.local.mk || cp config.local.mk.example config.local.mk
+make TARGET_CHIP=at32f407 BUILD=debug
+make TARGET_CHIP=at32f407 release
+make TARGET_CHIP=at32f407 BUILD=debug flash
+make TARGET_CHIP=at32f407 BUILD=debug rtt
+```
 
 ## 6. VSCode Cortex-Debug 调试说明
 

@@ -110,6 +110,8 @@ static void lifecycle(void)
     assert(motor.state == MFOC_MOTOR_IDLE && motor.openloop.gain == 0);
     cfg = config();
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
+    const mfoc_dq_t command = {MFOC_ZERO, -MFOC_HALF};
+    assert(mfoc_motor_SetCurrent(&motor, &command) == MFOC_RESULT_OK);
     assert(mfoc_motor_OpenLoopStart(&motor, MFOC_ONE, MFOC_HALF) ==
         MFOC_RESULT_OUT_OF_RANGE);
     assert(motor.state == MFOC_MOTOR_IDLE);
@@ -135,8 +137,9 @@ static void lifecycle(void)
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.openloop.angle.wBam32 > 0U);
     assert(motor_port_fake.feedback_reads == 11U);
-    assert(motor.i_ref.qD == MFOC_HALF);
-    assert(motor.i_ref.qQ == MFOC_ZERO);
+    assert(motor.fixed_id == MFOC_HALF);
+    assert(motor.previous_core_output.u.qQ == MFOC_ZERO);
+    assert(motor.current_cmd.qQ == command.qQ);
     /* A different observer phase must not enter the forced current frame. */
     motor_port_fake.feedback_step = MFOC_RESULT_OK;
     motor_port_fake.feedback.angle = (mfoc_angle_t){UINT32_C(0x40000000)};

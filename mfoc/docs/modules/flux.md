@@ -7,7 +7,7 @@ Flux 用本拍定子电流和上一区间的模型电压估算转子磁链，再
 | 量 | 单位与时刻 | 来源或用途 |
 | --- | --- | --- |
 | `i[k]` | αβ 电流，除以相电流峰值基值 `Ib` | 本拍采样，经幅值不变 Clarke 变换 |
-| `u[k-1]` | αβ 电压，除以电压基值 `Vb` | Feedback 用上一拍成功提交的三相 duty 和该拍母线快照重建，覆盖从上次到本次采样的区间 |
+| `u[k-1]` | αβ 电压，除以电压基值 `Vb` | Motor 用上一拍成功提交的三相 duty 和该拍母线快照重建，覆盖从上次到本次采样的区间 |
 | `out.angle` | 本拍电角度，BAM32 每电周回绕一次 | 当前采样时刻的 PLL 角度 |
 | `out.speed` | 带符号的电速度 PU，`ωe/ωb` | PLL 在本拍更新的速度 |
 | `out.valid` | 布尔值 | 修正后的转子磁链至少有一个分量非零时为真，也可能同时给出零速度 |
@@ -34,11 +34,11 @@ Flux 用本拍定子电流和上一区间的模型电压估算转子磁链，再
 
 低速时，永磁磁链转动产生的电压减小，电阻压降的估算误差、逆变器死区和器件压降对 `u − Rs × i` 的相对影响增大。模长修正只沿已有的磁链方向作用，静止且初始磁链为零时，算法无法仅靠模长约束确定转子方位。即使 `valid` 已置位，接管仍需经过 Motor 的速度窗与角度捕获判据。[无感接管](feedback.md#handover)
 
-缺少本拍电流、缺少上一拍输出或电压重建失败时，Feedback 调用 `mfoc_flux_Reset()` 并清零缓存的 `flux_output`。Reset 保留系数，清除定子磁链、PLL 积分和角度历史。输入齐备后重新估算。若仅是本拍算出的转子磁链为零，Flux 清零本拍输出和 PLL 历史，保留本拍更新后的定子磁链。[Feedback 调度](../../motor/src/mfoc_feedback.c) · [Flux 实现](../../position/src/mfoc_flux.c)
+缺少本拍电流或上一区间模型电压时，Feedback 调用 `mfoc_flux_Reset()` 并清零缓存的 `flux_output`。Reset 保留系数，清除定子磁链、PLL 积分和角度历史。输入齐备后重新估算。若仅是本拍算出的转子磁链为零，Flux 清零本拍输出和 PLL 历史，保留本拍更新后的定子磁链。[Feedback 调度](../../motor/src/mfoc_feedback.c) · [Flux 实现](../../position/src/mfoc_flux.c)
 
 ## 接线与验证
 
-Flux 默认关闭。编译时设 `MFOC_FEEDBACK_ENABLE_FLUX=1` 即可运行观测器。做编码器对照时，同时启用物理位置并选 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。若选 `MFOC_FEEDBACK_FLUX`，Feedback 在电压重建成功且 `flux_output.valid` 为真时发布 Flux 的角速。[反馈配置](../../mfoc_config.h)
+Flux 默认关闭。编译时设 `MFOC_FEEDBACK_ENABLE_FLUX=1` 即可运行观测器。做编码器对照时，同时启用物理位置并选 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。若选 `MFOC_FEEDBACK_FLUX`，Feedback 在本拍电流和前区间电压齐备且 `flux_output.valid` 为真时发布 Flux 的角速。[反馈配置](../../mfoc_config.h)
 
 从仓库根目录运行 `./mfoc/tests/scripts/run_flux_tests.ps1`。FLOAT、FIXED 都用等电感 PMSM 合成波形回放 ±0.05、±0.3 和 ±0.7 PU 的恒速段，以及 +0.3 到 −0.3 PU 的换向。测试在预热后检查最大角差和速度误差，另行覆盖零磁链、模长修正、复位、后端选择和停机更新模型。[主机脚本](../../tests/scripts/run_flux_tests.ps1) · [数值回放](../../tests/position/flux_algorithm_test.c) · [Feedback 接线用例](../../tests/position/flux_test.c)
 

@@ -22,14 +22,14 @@ flowchart TB
     MDI["MDI 资源<br/>ADC · PWM · I2C"]
 
     APP --> MOTOR
-    MOTOR --> FB
+    MOTOR -->|前区间模型电压| FB
     MOTOR --> CORE
-    MOTOR --> ID
+    MOTOR -->|前区间模型电压| ID
     MOTOR --> PORT
     FB --> OBS
     FB -->|mfoc_port_position| PORT
     PORT -->|G431 Update / Step| ENC
-    CORE -.->|上一拍成功提交的输出| FB
+    MOTOR -->|从已提交 duty 重建电压| MATH
     CORE --> MATH
     OBS --> MATH
     ENC --> MATH
@@ -37,7 +37,7 @@ flowchart TB
     PORT --> MDI
 ```
 
-实线表示调用或依赖。虚线表示 Motor 将上一拍成功提交的 Core 输出传给 Feedback，供观测器重建前一区间的模型电压。物理位置的前台更新与中断读取共用板级持有的位置实例。见 [Encoder 模块](modules/encoder.md)。
+Motor 在 PWM 提交成功后用最终占空比和本拍母线快照重建模型电压，供下一拍的 Feedback 或辨识使用。物理位置的前台更新与中断读取共用板级持有的位置实例。见 [Encoder 模块](modules/encoder.md)。
 
 | 层 | 代表文件 | 允许依赖 | 禁止 |
 | --- | --- | --- | --- |
@@ -51,16 +51,16 @@ flowchart TB
 - **可替换模块**有两个。Feedback 内部是算法组合，换观测器只改它；Port 是板级实现，换板子只改它。两者对外接口不变。
 - **框架内置模块**有两个。Core（电流环）与 Identification（电机参数辨识）没有外部实现，框架直接调用；它们只需遵守各自的输入输出接口，不接受替换。
 
-两点例外，写在这里以免读代码时误判：
+两处接线细节：
 
-- 辨识叶子接受 `const mfoc_core_output_t *` 作为只读入参（复用结构，不调用 Core API），见 [`mfoc_identification_algorithms.h`](../identification/include/mfoc_identification_algorithms.h)。
+- 辨识叶子按需要读取 `u_ab_previous`。磁链辨识把这份电压投影到区间中点的 dq 坐标系，见 [`mfoc_identification_algorithms.h`](../identification/include/mfoc_identification_algorithms.h)。
 - G431 的 [中断入口](../../target/stm32g431/mfoc_motor_irq.c) 绑定应用实例与 ADC 帧握手，按配置执行应用波形和耗时统计。库通过 `mfoc_motor_Step()` 提供单拍控制入口。
 
 ## 2. 三条全局约定
 
 ### 2.1 标幺与基值
 
-所有跨模块数值都是标幺值，基值来自 [`mfoc_motor_config.h`](../mfoc_motor_config.h)，可由辨识结果替换。电流基值是**相电流峰值**，Clarke 为幅值不变形式。
+电机模型和控制量使用 Motor 初始化时约定的标幺基值。G431 的基值取自工程配置。辨识可以更新这套基值上的电机参数。电流基值是**相电流峰值**，Clarke 为幅值不变形式。[G431 电机配置](../mfoc_motor_config.h)
 
 | 量 | 基值 | PU 定义 | 说明 |
 | --- | --- | --- | --- |
@@ -76,7 +76,7 @@ flowchart TB
 | 惯量 | `Jb = Tb·tb/ωmb` | `J/Jb` | |
 | 占空比 | — | `[0,1]` | Core 输出，Port 提交 |
 
-`mfoc_motor_params_t` 是这套基值上的模型常数载体：`pole_pairs`、`rs`、`ld`、`lq`、`flux`、`inertia`。它在 Init 时一次性换算、运行期不变；要变更必须停机后走 `mfoc_feedback_SetMotorParamModel` 重建。
+`mfoc_motor_params_t` 保存极对数、Rs、Ld、Lq、磁链和惯量。应用在 Init 前完成物理量到 PU 的换算。开启 `MFOC_MOTOR_MODEL_UPDATE_ENABLE` 后，停机时可将同一套基值上的新参数直接交给 `mfoc_motor_ApplyModel`。Motor 核对极对数，等 Feedback 的所有模型观测器接受后才更新自己的参数。电流 PI 和速度 PI 继续使用已有整定值。
 
 ### 2.2 角度、速度、时间
 
@@ -91,7 +91,7 @@ flowchart TB
 | --- | --- | --- |
 | 控制中断 | `mfoc_motor_Step` → `feedback_Step` / `core_Step` | 最高优先级、不可重入；只做运算，不访问总线、不打印、不等待 |
 | 前台 | `mfoc_motor_Run`、`mfoc_port_position_run`、命令类 API | 可以有界阻塞；负责慢速外设（I2C）与阶段推进 |
-| 停止态前台 | `Init`、`SetMotorParamModel`、辨识准备 | 允许预计算系数、重建状态 |
+| 停止态前台 | `Init`、`mfoc_motor_ApplyModel`、辨识准备 | 允许预计算系数、重建状态 |
 
 所有权：应用拥有 `mfoc_motor_t` 实例；Motor 拥有 Feedback、Core、OpenLoop、SensorlessStart、Identification 子对象；板级 Port 持有物理位置组件（G431 为 Encoder），Feedback 只持有无感观测器；算法只拥有自己的状态。**没有任何模块保存 ADC/PWM/I2C 句柄**，硬件只在 Port 内部按编译期 MDI 绑定访问。
 
@@ -123,7 +123,7 @@ Feedback 持有启用的无感观测器实例。物理位置启用时，它调�
 | # | 物理量 | 载体 | 单位/定义 | 来源 | 何时不可用 |
 | --- | --- | --- | --- | --- | --- |
 | 1 | 定子电流 `iα`、`iβ`（采样拍 k） | `mfoc_feedback_input_t::i_ab_k` | `I/Ib`，幅值不变 Clarke | Port 三相帧 → Motor `mfoc_clarke` | Motor 取帧失败直接 Trip；单独调用 Feedback 可传 NULL 表示缺流 |
-| 2 | 定子电压 `uα`、`uβ`（区间 k-1→k） | 由 `previous_core_output` 反解，见下 | `V/Vbase`，理想平均电压 | 上一拍**成功提交**的 Core 输出（`duty` + `bus`） | 首拍、上一拍提交失败、上一拍是辨识电压直出 |
+| 2 | 定子电压 `uα`、`uβ`（区间 k-1→k） | `mfoc_feedback_input_t::u_ab_previous`，可为 NULL | `V/Vbase`，理想平均电压 | Motor 用成功提交的 duty 和对应母线快照重建 | 启动首拍、Stop 或 Trip 后 |
 | 3 | 电机模型常数 | `mfoc_motor_params_t`（Init 传入） | `Rs/Ld/Lq/ψ/J` 均为 PU | 配置或辨识结果 | 运行期不可变 |
 | 4 | 时基与基值 | `*_cfg.sample_hz`、`speed_base_hz` | Hz | 编译配置 | Init 时固定 |
 | 5 | 算法私有配置 | `mfoc_feedback_cfg_t::<algo>` | 各自定义 | 应用 | Init 时固定 |
@@ -132,12 +132,13 @@ Feedback 持有启用的无感观测器实例。物理位置启用时，它调�
 第 2 项是理解整个无感框架的关键：框架**没有相电压采样通道**，`uαβ[k-1]` 由上一拍的占空比和母线快照按理想逆变器重算：
 
 ```c
-mfoc_modulation_ModelVoltageAlphaBeta(&previous->duty, previous->bus, &u);
+mfoc_modulation_ModelVoltageAlphaBeta(&output.duty, output.bus,
+                                      &motor->previous_voltage_ab);
 ```
 
 它不含死区、管压降、母线纹波，允许超过 1 PU。因此观测器的模型误差等于"实际器件行为"与"理想平均电压"之差，这一项误差必须在算法专题里单独评估，不能指望框架补偿。
 
-缺少上一区间电压时，Feedback 复位 SMO、Flux、EKF 的历史并清零各自的输出缓存。选中这些后端时，本拍返回 `INVALID_STATE`。POSITION 仍按 Port 的结果发布，HFI 有本拍电流即可开始注入。
+缺少上一区间电压时，Feedback 复位 SMO、Flux、EKF 的历史并清零各自的输出缓存。选中这些后端时，本拍返回 `INVALID_STATE`。POSITION 仍按 Port 的结果发布，HFI 获准注入且有本拍电流时，可在首拍生成载波。
 
 ### 3.3 算法必须交回的量
 
@@ -171,8 +172,8 @@ void          mfoc_X_Step(X_t *x, const mfoc_ab_t *i_k,
 
 ### 3.4 仲裁、影子观测与失败语义
 
-- **每次调用 Feedback** 都处理全部已使能的位置源和观测器。backend 决定哪一路角速可发布，其他启用的观测器各自维护历史及影子输出。
-- POSITION 须由 Port 返回 `OK`。SMO、Flux、EKF 须有模型输入且叶子输出 `valid`。HFI 须有本拍电流且未进入 `FAILED`，获取位置时可带 `acquiring` 发布注入。所选后端未满足条件时，`mfoc_feedback_Step` 返回非 `OK`，调用方的整份 `output` 保留原值。
+- 每次调用 Feedback 时，已编入的物理位置源提供本拍角速，已编入的模型观测器按输入更新或复位。HFI 还须有本次运行的许可。backend 决定发布哪一路角速。
+- POSITION 须由 Port 返回 `OK`。SMO、Flux、EKF 须有模型输入且叶子输出 `valid`。HFI 须获准注入、有本拍电流且未进入 `FAILED`，获取位置时可带 `acquiring` 发布注入。所选后端未满足条件时，`mfoc_feedback_Step` 返回非 `OK`，调用方的整份 `output` 保留原值。
 - Motor 的处置按所处阶段不同，这是最容易读错的一处：
 
 | 阶段 | Feedback 返回非 OK 时 |
@@ -182,8 +183,8 @@ void          mfoc_X_Step(X_t *x, const mfoc_ab_t *i_k,
 | 无感 RAMP / 尚未捕获的 ACQUIRE | 仅诊断；返回码交给接管状态机判断是否继续等待 |
 
 - 影子输出目前没有公开访问器（`mfoc_feedback.h` 不提供 getter），诊断代码直接读 `motor.feedback.<algo>_output`。这是"框架内可见、非稳定 API"；若要把影子观测做成产品功能，应补只读访问器而不是继续暴露结构体。
-- HFI 使能后，即使在编码器闭环下也会计算注入请求。只有 Feedback 成功发布整份输出时，Motor 才将本拍 `u_inject_ab` 交给 Core。
-- HFI 作为 backend 且尚未锁定时会置 `acquiring`：Motor 强制 `i_ref = 0` 并暂停速度环，把整拍让给注入，直到算法报 `valid`。
+- Motor 在启动 PWM 前选定 HFI 许可。普通 HFI 主反馈闭环启用注入，保留电流或速度模式。POSITION 仅在显式 `HfiStart` 时获准注入，控制角仍取自 Port。普通非 HFI 闭环可配置 `feedback.observe_hfi` 只计算诊断结果。对齐、强拖和辨识关闭 HFI。
+- HFI 作为 backend 且尚未锁定时会置 `acquiring`：Motor 将本拍 `core_input.ref` 置零并暂停速度分频。电流 PI 继续执行，Core 仍叠加 Feedback 发布的注入电压。
 
 ### 3.5 调用节奏
 
@@ -192,7 +193,7 @@ void          mfoc_X_Step(X_t *x, const mfoc_ab_t *i_k,
 | 慢速采样（G431 编码器） | Motor_Run → `mfoc_port_position_run` → Encoder_Update | 前台 | 板级 1 ms | 板级 I2C 读取，Encoder 计算速度、滤波并发布双缓冲 |
 | 每拍观测与仲裁 | `mfoc_feedback_Step` | 控制 ISR | 每个有效电流帧 | 仅运算 |
 | 系数预计算 | `mfoc_feedback_Init` | 停止态前台 | 一次 | 三角表、离散系数 |
-| 模型重建 | `mfoc_feedback_SetMotorParamModel` | 停机时 | 参数更新时 | 全部模型类算法重算；编码器零位与 HFI 保留 |
+| 模型重建 | `mfoc_motor_ApplyModel` → `mfoc_feedback_SetMotorParamModel` | 停机前台 | 显式更新时 | 重算已启用的模型观测器，保留编码器零位和 HFI 状态 |
 | HFI 序列复位 | `mfoc_feedback_HfiStart` | 停止态前台 | 调用 Motor 的 HfiStart 时 | 清载波序列 |
 | 零位标定 | Motor_Run → `mfoc_port_position_calibrate_zero` | 固定角保持期间 | 一次 | 板级读取，再调用位置组件标定 |
 
@@ -254,9 +255,9 @@ void          mfoc_X_Step(X_t *x, const mfoc_ab_t *i_k,
 
 Identification 是电机参数辨识模块，用受控激励测出 `Rs`、`Ld`、`Lq`、`ψ`、`J`，产出一个 `mfoc_motor_params_t`。作为框架内置模块，它没有外部实现、也不接受替换，只在实验期间占用控制通路。
 
-实验有两条激励通路，由 stage 的 bit4/bit5 选择（低 4 位标识具体阶段）：
+辨识模块每拍读取一次已发布的阶段，由 `mfoc_identification_BeginFrame` 给出本拍控制方式。Motor 按该方式执行，同一份阶段快照用于辨识采样。
 
-| 通路 | 标志 | 怎么驱动电机 | 测什么 |
+| 通路 | 本拍控制方式 | 怎么驱动电机 | 测什么 |
 | --- | --- | --- | --- |
 | 电压直出 | `CONTROL_VOLTAGE` | 算法给 `modulation_ab`（`V/Vdc`），直接进 SVPWM，**绕过 Core** | Rs、Ld、Lq |
 | 虚拟闭环 | `CONTROL_VIRTUAL` | 算法给 `i_ref` 和自己的虚拟角度，走正常 Core | 磁链、惯量 |
@@ -264,18 +265,29 @@ Identification 是电机参数辨识模块，用受控激励测出 `Rs`、`Ld`�
 | 方向 | 内容 | 载体 |
 | --- | --- | --- |
 | 入 | 本拍电流 `i[k]` | `mfoc_identification_input_t::i_ab_k` |
-| 入 | 上一拍请求电压 `u[k-1]` | `...::u_ab_previous`（Motor 由 duty×bus 记录） |
+| 入 | 上一区间模型电压 `u[k-1]` | `...::u_ab_previous`（与 Feedback 共用同一份只读 αβ 电压，单位 V/Vbase） |
 | 出 | `i_ref` / `angle`（VIRTUAL） | `mfoc_identification_output_t` |
 | 出 | `modulation_ab`（VOLTAGE） | 同上 |
 | 出 | 结果模型 | `mfoc_identification_GetResult` → `mfoc_motor_params_t` |
 
-它与框架其余部分的关系：
+四种实验共用 `mfoc_identification_Start(&motor.identification, &params, operation, bus)`。调用方在 Motor 停机时发起实验，检查返回值后调用 `mfoc_motor_Start`。采样中断照常调用 `mfoc_motor_Step`，前台轮询 `mfoc_motor_Run`。四种实验均可在 `MFOC_FEEDBACK_ENABLE_POSITION=0` 下运行。
 
-- 实验激活时 **Feedback 完全不运行**，观测器历史随之失效；回到常规控制后由"电压缺失 → Reset"机制自动重建，这是有意为之而不是副作用。
-- VOLTAGE 阶段会把 `previous_core_output_valid` 置 false：电压直出没有 Core 输出，不能拿它当模型输入。
-- 前台 `Run` 推进阶段（带超时），ISR 只消费当前阶段；`stage_done` 是两者唯一的握手。
-- 结果只在 `DONE` 后由 `GetResult` 拷贝；拿到结果后停机、调 `mfoc_feedback_SetMotorParamModel` 才是"生效"——辨识只产出参数，不负责让参数进入控制通路。
-- 现状：Rs 流程完整；Ld/Lq 的脉冲调度与旋转准备仍为 TODO；磁链有独立叶子但尚未接到经 Motor 启动的路径。本文只描述已实现的边界。
+| operation | 轴的条件 | 激励和测量 |
+| --- | --- | --- |
+| `RESISTANCE` | 静止 | 对齐后施加两档 α 电压，以两档平均电压差除以平均电流差得到 Rs。 |
+| `ELECTRICAL` | 静止，转子保持在对齐后的 d 轴位置 | 依次测 Rs、Ld、Lq。d 轴沿 α 反向加短脉冲，q 轴沿 β 正向加短脉冲。首拍记录起始电流，随后逐拍积累已施加的电压，前台扣除电阻压降后除以电流变化量。 |
+| `FLUX` | 自由空轴，已有 Rs/Ld/Lq | 缓慢旋转电流矢量，从电压、电流估算反电动势的相位和电速度。转子持续跟随且电流稳定后才采集磁链，按 Ld/Lq 的差异修正有载电流产生的磁链。 |
+| `INERTIA` | 自由空轴，另需已知磁链 | 在同一段正向转速范围内先制动再加速。用实测电流求两段平均电磁转矩，与观测到的速度变化求轴侧等效惯量。两次通过同一速度区间可抵消恒定阻力矩。 |
+
+Motor 开 PWM 前把实验电流上限压到本实例的 `i_max` 以内。采样用 `|iα| + |iβ|` 检查上限，默认 0.12 PU。任一实验越限时，当拍丢弃样本、直接提交三相 50% 中性占空比，下一次前台轮询关断 PWM。直压拍只发布实际提交的模型电压，`previous_core_output_valid` 为 false。转轴静止且已对齐是电感实验的机械前提，软件无法在零速仅靠反电动势确认转轴已固定。
+
+旋转实验按 **200 电气 rad/s** 封顶，约为 31.83 电 Hz。Motor 的正 `speed_max` 更小时取较低值。速度估计每个反电动势观测窗更新一次；观测到越速即撤压。转子停转不能建立有效反电动势，程序在限定时间内退出。启动角仅用于施加激励。采样频率、电速度基值按编译时 profile 计算；使用另一电速度基值或显式指定不同强拖频率的 Motor 不能直接启动这三项带时间系数的实验。
+
+电感脉冲结束后当拍回中性，等待前台求值。旋转锁定到采样的切换在同一 ISR 连续进行，最后一窗采满也当拍回中性。前台验算并停机后，用 `mfoc_identification_GetResult` 读取成功结果；如需应用，由调用方显式调用 `mfoc_motor_ApplyModel`。分别保存实测 Ld、Lq。已启用的观测器如只接受等电感模型，应用返回错误并保留原模型。实验中止、超时或失败不会覆盖调用方保存的结果；求值成功后如关 PWM 失败，结果仍可读取，Motor 单独锁存故障。
+
+独立调度器可从 `mfoc_identification_Step` 的返回值直接取得本拍有效控制方式，异常时按中性直压路径输出。输入是本拍电流和上一已提交区间的模型电压。Rs 在缺电压时跳过采样，电感脉冲或旋转积分中途缺失区间则结束该轮。[软件回放与计算量](validation/2026-11-19-p09-identification.md)
+
+独立 Ld/Lq 实验默认调用三参数的 `mfoc_identification_inductance_Finish`，使用编译期电频率基值和采样频率。需要运行时配置时，在实验初始化中调用一次 `mfoc_identification_inductance_InitTiming(&dt_pu, sample_hz, electrical_base_hz)`。成功后由前台保存 `dt_pu`；d、q 两轴各自完成脉冲采集后，用同一个系数调用 `mfoc_identification_inductance_FinishPrepared(&capture, rs, dt_pu, &result)`。采样函数和采集状态均不需要时间系数。[电感接口](../identification/include/mfoc_identification_algorithms.h) · [两轴复用示例](../tests/identification/identification_inductance_test.c)
 
 ## 6. 模块 D：Port（硬件适配）
 
@@ -298,18 +310,20 @@ Identification 是电机参数辨识模块，用受控激励测出 `Rs`、`Ld`�
 
 ## 7. 角度源仲裁：这一拍用谁的角度
 
-Motor 在每个 Step 里按固定优先级决定角度来源，顺序就是代码里的分支顺序：
+Motor 在每个采样拍按以下顺序选定控制角和最终 dq 电流参考。[参考选择与 PWM 提交](../motor/src/mfoc_motor.c)
 
-| 优先级 | 条件 | 本拍角度来自 | Feedback 是否运行 |
+| 优先级 | 控制阶段 | 本拍控制角和 dq 参考 | Feedback 的用途 |
 | --- | --- | --- | --- |
-| 1 | 辨识阶段标志非 INACTIVE | 辨识虚拟角或直接调制 | 不运行 |
-| 2 | `openloop_active`（强拖） | OpenLoop 积分角 | 运行（仅诊断） |
-| 3 | `sensorless_start.state != NONE` | RAMP 用 OpenLoop 角；ACQUIRE 捕获前用 OpenLoop 角，捕获后用 `feedback.angle + offset` | 运行（提供观测角） |
-| 4 | `hold_active` 且非强拖、非无感 | OpenLoop 固定角 | **不运行**（纯对齐） |
-| 5 | 正常闭环 | `feedback.angle`（所配置 backend） | 运行（决定控制角） |
-| 6 | `acquiring`（HFI 未锁定） | `feedback.angle` | 运行；`i_ref` 强制清零、速度环暂停 |
+| 1 | 辨识采样或等待前台交接 | 直压由辨识给出调制量，等待时提交中性 PWM；虚拟 dq 使用辨识的角与参考，等待时保持上一拍 | 跳过 |
+| 2 | 纯对齐 | OpenLoop 固定角，`(fixed_id, 0)` | 跳过；启用物理位置时，前台在保持结束时标定零位 |
+| 3 | 手动强拖 | OpenLoop 保持角或积分角，`(fixed_id, 0)` | 运行，编码器与观测器仅供观察 |
+| 4 | 无感启动与交接 | 捕获当拍仍用强拖角；随后用反馈角加递减偏移。参考为 `(0, 启动 Iq)`，偏移归零后由速度环接管 Iq | 所选观测器参与捕获和稳定判定 |
+| 5 | HFI 主反馈获取期 | HFI 当前估计角，`(0, 0)`；两个电流 PI 继续运行并叠加载波 | HFI 发布注入请求。速度 PI 与分频冻结 |
+| 6 | 正常闭环（含 HFI 锁定首拍） | 所选主反馈的角；电流模式用 `current_cmd`，速度模式用 `(0, speed_iq)` | 主反馈供控制，速度 PI 仅在分频到期时使用反馈速度 |
 
 ACQUIRE 捕获成功后，Motor 按 `MFOC_START_BLEND_TURNS_S` 将 `forced - observed` 的偏移量逐拍缩至零，随后用 `mfoc_pi_Track` 衔接速度环。速度连续处于窗口内满 `MFOC_START_STABLE_MS` 后，启动状态回到 NONE。[捕获判据与超时处置](modules/feedback.md#handover) · [接管参数](../mfoc_motor_config.h)
+
+后续接入 MTPA 或弱磁时，参考生成放在 Motor 正常闭环选定电流命令或速度 PI 的 Iq 之后、向 Core 交付 `core_input.ref` 之前。在这里组合 Id 与 Iq 并施加电流约束。外部命令保存在 `current_cmd`，启动、获取和辨识各自使用表中的参考。[编码器与 SMO 的使用方](modules/feedback.md#feedback-consumers)
 
 ## 8. 一拍 Step 的时序
 
@@ -326,14 +340,14 @@ sequenceDiagram
     M->>P: mfoc_port_current()
     P-->>M: U/V/W（PU）
     M->>M: Clarke → iαβ[k]
-    M->>F: Step(i_ab_k, previous_core_output)
-    F->>F: 全部使能算法各跑一次
+    M->>F: Step(i_ab_k, u_ab_previous)
+    F->>F: 按输入更新观测器，HFI 按本次启动许可运行
     F-->>M: angle, speed, u_inject_ab, acquiring
     M->>M: 角度仲裁 + dq 参考选择（§7）
     M->>C: Step(iαβ, ref, angle, u_inject)
     C-->>M: duty, m, u, limited, bus
     M->>P: mfoc_port_pwm(duty)
-    M->>M: 成功后发布 previous_core_output
+    M->>M: 成功后由 duty 和本拍 bus 发布模型电压
 ```
 
 编号版（与代码一一对应）：
@@ -341,11 +355,11 @@ sequenceDiagram
 1. `state != RUNNING` → 返回 `INVALID_STATE`，不读帧。
 2. 读新鲜三相帧，Clarke 成 `iαβ[k]`；读失败 → Trip(`SAMPLE`)。
 3. 辨识激活则走 §5 分支，跳过 4–6 的常规控制，直接到 PWM 提交。
-4. （非纯对齐时）`mfoc_feedback_Step`：模型类先用 `previous_core_output` 反解 `uαβ[k-1]`，再逐算法运行，最后由 backend 门控。
+4. （非纯对齐时）`mfoc_feedback_Step`：各模型使用 Motor 提供的 `uαβ[k-1]`，随后由 backend 选择本拍输出。
 5. 角度仲裁与参考选择：速度环每 `speed_divider` 拍执行一次。
 6. `mfoc_core_Step`：Park → PI → 注入 → 限幅 → iPark → SVPWM。
 7. `mfoc_port_pwm(duty)` 提交。
-8. **提交成功后**才发布 `previous_core_output`；失败则 Trip(`PWM`) 且不发布。
+8. **提交成功后**发布下一区间的模型电压，经过 Core 的分支同时保存 Core 输出。提交失败触发 Trip(`PWM`) 并使历史失效。
 9. 速度环分频计数递减；返回状态，`irq_result` 记录诊断。
 
 启动首拍没有上一拍电压。无感强拖路径允许模型观测器复位，并以 OpenLoop 角完成首次 PWM 提交。下一拍才有可用的模型电压，估计何时有效取决于具体算法。直接用模型后端进入常规闭环时，首拍无效会触发反馈故障。
@@ -391,9 +405,12 @@ ALIGN、强拖、无感启动阶段不是主状态，而是 `hold_active`、`ope
 | 字段 | 写者 | 读者 | 说明 |
 | --- | --- | --- | --- |
 | `state`、`faults` | Motor API / ISR | 应用 | volatile，但两者不是原子对 |
-| `i_ref` | 命令、速度环、辨识 | Core | 模式切换时保留上一次值 |
-| `previous_core_output(_valid)` | Step 提交成功后 | Feedback | Stop/Trip 置无效 |
-| `previous_voltage_ab` | Step（辨识使能时） | 辨识 | 上一拍请求电压 |
+| `current_cmd` | `SetCurrent` | 普通电流模式 | 保存外部 dq 命令。Stop、Trip、ClearFault 和成功进入显式 HFI 启动时清零 |
+| `fixed_id` / `speed_iq` | 对齐与强拖写 Id，无感启动与速度 PI 写 Iq | Motor | 两者复用一个标量。交接时以当前 Iq 跟踪速度 PI，分频间拍沿用该 Iq |
+| `identification.work.rotating.i_ref` | 虚拟辨识采样 | 虚拟辨识的 Core 路径 | 等待前台期间保持 dq 和辨识角，直压等待提交三相 50% 占空比 |
+| `core_input.ref` | Motor 按当前控制状态选择 | Core | 本拍局部 dq 参考，进入 Core 前两轴均已确定 |
+| `previous_core_output(_valid)` | Core 路径 PWM 提交成功后 | 应用诊断 | 辨识直出、启动、Stop/Trip 时无效 |
+| `previous_voltage_ab(_valid)` | Motor 每次成功提交 PWM 后 | Feedback、HFI 和辨识 | 有历史但电压为零时传有效零向量，缺历史时传 NULL |
 | `core`（PI 积分、限幅半径） | Core | — | 只有 Core 自己改 |
 | `feedback.*` | Feedback 与各算法 | 应用诊断 | 影子输出无访问器（§3.4） |
 | `speed`、`speed_count` | 速度环 | Motor | 分频控制 |

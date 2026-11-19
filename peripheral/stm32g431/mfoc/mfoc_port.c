@@ -8,6 +8,9 @@
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_encoder.h"
+#if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
+#include "mfoc_debug.h"
+#endif
 #include "mdi/instance.h"
 #include "mdi/service.h"
 #include "perf_counter.h"
@@ -234,8 +237,19 @@ mfoc_result_t mfoc_port_position_run(void)
  * @return Snapshot status. ISR only; output pointers must be valid. */
 mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 {
-    if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    return mfoc_encoder_Step(&s_port.encoder, mfoc_port_tick(), angle, speed);
+    mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
+    if (s_port.configured) {
+        rc = mfoc_encoder_Step(&s_port.encoder, mfoc_port_tick(), angle, speed);
+    }
+#if MFOC_DEBUG_POSITION_WAVEFORM
+    if (rc == MFOC_RESULT_OK) {
+        mfoc_debug_position.angle = *angle;
+        mfoc_debug_position.state = MFOC_DEBUG_POSITION_VALID;
+    } else {
+        mfoc_debug_position.state = MFOC_DEBUG_POSITION_INVALID;
+    }
+#endif
+    return rc;
 }
 
 /** @brief Set board position zero from a rotor held at a known field angle.
@@ -307,9 +321,9 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
     if (status != MDI_OK) {
         return status == MDI_BUSY ? MFOC_RESULT_INVALID_STATE : MFOC_RESULT_IO;
     }
-    int64_t delta_u = (int64_t)frame.u - (int64_t)s_port.offset_u;
-    int64_t delta_v = (int64_t)frame.v - (int64_t)s_port.offset_v;
-    int64_t delta_w = (int64_t)frame.w - (int64_t)s_port.offset_w;
+    int32_t delta_u = (int32_t)frame.u - (int32_t)s_port.offset_u;
+    int32_t delta_v = (int32_t)frame.v - (int32_t)s_port.offset_v;
+    int32_t delta_w = (int32_t)frame.w - (int32_t)s_port.offset_w;
     mfoc_uvw_t next = {0};
 #if defined(MFOC_NUMERIC_FIXED)
     next.qU = (mfoc_scalar_t)(delta_u * (int64_t)s_port.gain_q30 /

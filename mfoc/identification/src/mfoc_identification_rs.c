@@ -1,6 +1,6 @@
 /**
  * @file mfoc_identification_rs.c
- * @brief Fixed-voltage current capture and foreground resistance slope.
+ * @brief Paired voltage/current capture and foreground resistance slope.
  * @author wyxun
  * @date 2026-10-25
  */
@@ -19,18 +19,15 @@
 #error "Bounded Q15 window sums must fit in the int32 accumulator"
 #endif
 
-/** @brief Validate frozen currents and calculate delta(m)*bus/delta(i).
- * @param state Captured windows. @param bus Startup Vdc/Vbase.
+/** @brief Validate frozen windows and calculate delta(mean u)/delta(mean i).
+ * @param state Captured voltage/current pairs for the two levels.
  * @param rs Result, unchanged on failure. @return Complete or error.
- * @note Foreground only. Supply must remain stable during both levels;
- * ideal commanded voltage excludes deadtime and current-dependent drops. */
+ * @note Foreground only. Model voltage excludes deadtime and device drops. */
 mfoc_fsm_rt_t mfoc_identification_rs_Finish(
-    const mfoc_identification_rs_t *state, mfoc_scalar_t bus,
-    mfoc_scalar_t *rs)
+    const mfoc_identification_rs_t *state, mfoc_scalar_t *rs)
 {
     if (state == NULL || rs == NULL ||
-        state->level != MFOC_IDENTIFICATION_RS_DONE ||
-        bus <= MFOC_ZERO) { return MFOC_FSM_FAILED; }
+        state->level != MFOC_IDENTIFICATION_RS_DONE) { return MFOC_FSM_FAILED; }
     mfoc_scalar_t delta_i = MFOC_ZERO;
     for (uint32_t level = 0U; level < 2U; ++level) {
         mfoc_scalar_t current = state->sum_i[level] /
@@ -48,13 +45,14 @@ mfoc_fsm_rt_t mfoc_identification_rs_Finish(
     if (delta_i < MFOC_SCALAR(MFOC_IDENTIFICATION_RS_DELTA_MIN)) {
         return MFOC_FSM_FAILED;
     }
-    mfoc_scalar_t delta_u = mfoc_mul_wide(bus,
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH) -
-        MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW));
 #if defined(MFOC_NUMERIC_FLOAT)
+    mfoc_scalar_t delta_u = (state->sum_u[MFOC_IDENTIFICATION_RS_HIGH] -
+        state->sum_u[MFOC_IDENTIFICATION_RS_LOW]) / (mfoc_scalar_t)RS_SAMPLES;
     mfoc_scalar_t value = delta_u / delta_i;
 #else
-    int64_t value = (int64_t)delta_u * MFOC_Q_SCALE / delta_i;
+    int64_t delta_u = (state->sum_u[MFOC_IDENTIFICATION_RS_HIGH] -
+        state->sum_u[MFOC_IDENTIFICATION_RS_LOW]) / (int64_t)RS_SAMPLES;
+    int64_t value = delta_u * MFOC_Q_SCALE / delta_i;
 #endif
     if (value < MFOC_SCALAR(MFOC_MOTOR_RS_MIN_PU) ||
         value > MFOC_SCALAR(MFOC_MOTOR_RS_MAX_PU)) {
@@ -64,18 +62,22 @@ mfoc_fsm_rt_t mfoc_identification_rs_Finish(
     return MFOC_FSM_COMPLETE;
 }
 
-/** @brief Discard settling samples, then accumulate each level's current.
+/** @brief Discard settling samples, then accumulate paired alpha-axis values.
  * @param state Experiment. @param current Present alpha-beta current.
+ * @param u_ab_previous Model voltage from the preceding PWM interval.
  * @return Ongoing or complete; caller owns voltage application.
- * @note Settling restarts at each level. Valid pointers are preconditions. */
+ * @note Missing voltage holds the level and excludes the sample. */
 mfoc_fsm_rt_t mfoc_identification_rs_Step(
-    mfoc_identification_rs_t *state, const mfoc_ab_t *current)
+    mfoc_identification_rs_t *state, const mfoc_ab_t *current,
+    const mfoc_ab_t *u_ab_previous)
 {
     if (state->level == MFOC_IDENTIFICATION_RS_DONE) {
         return MFOC_FSM_COMPLETE;
     }
+    if (u_ab_previous == NULL) { return MFOC_FSM_ONGOING; }
     state->count++;
     if (state->count <= RS_SETTLE) { return MFOC_FSM_ONGOING; }
+    state->sum_u[state->level] += u_ab_previous->qAlpha;
     state->sum_i[state->level] += current->qAlpha;
     if (state->count == RS_SETTLE + RS_SAMPLES / 2U) {
         state->half_i[state->level] = state->sum_i[state->level];

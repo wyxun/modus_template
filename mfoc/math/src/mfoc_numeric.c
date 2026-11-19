@@ -15,8 +15,13 @@ mfoc_scalar_t mfoc_from_float(float value)
     if (isnan(value)) { return MFOC_ZERO; }
     if (value >= 65536.0f) { return INT32_MAX; }
     if (value <= -65536.0f) { return INT32_MIN; }
-    return (mfoc_scalar_t)(value * 32768.0f +
-        (value >= 0.0f ? 0.5f : -0.5f));
+    /* Adding 0.5f first can round a value just below a tie onto it. */
+    const float scaled = value * (float)MFOC_Q_SCALE;
+    const mfoc_scalar_t whole = (mfoc_scalar_t)scaled;
+    const float fraction = scaled - (float)whole;
+    if (fraction >= 0.5f) { return whole + 1; }
+    if (fraction <= -0.5f) { return whole - 1; }
+    return whole;
 #endif
 }
 

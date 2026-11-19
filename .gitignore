@@ -12,3 +12,4 @@ docs/superpowers/*
 artifacts
 *.csv
 docs/reports/*
+/config.local.mk

@@ -93,8 +93,7 @@ void mfoc_openloop_Step(mfoc_openloop_t *loop)
         if (loop->delta > loop->target) { loop->delta = loop->target; }
     } else if (loop->delta > loop->target) {
         loop->delta -= loop->delta_step;
-        if (loop->mode == MFOC_OPENLOOP_ALIGN) { return; }
-    if (loop->delta < loop->target) { loop->delta = loop->target; }
+        if (loop->delta < loop->target) { loop->delta = loop->target; }
     } else { /* Target reached; hold the phase increment. */ }
     loop->angle.wBam32 += (uint32_t)loop->delta;
 }

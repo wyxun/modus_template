@@ -24,10 +24,14 @@ typedef struct {
 /** @brief One PI instance, owning its configuration and integral output.
  * Initialize before use; serialize operations on the same instance.
  * Caller supplies finite values and keeps FLOAT intermediate math in range.
- * PI does not check NaN/Inf. FIXED arithmetic saturates its int32 carrier. */
+ * FIXED keeps the exact Q30 integral as ui * 32768 + remainder.
+ * Both ui and the bounded Q15 output truncate toward zero. */
 typedef struct {
     mfoc_pi_params_t cfg;
-    mfoc_scalar_t ui;
+    mfoc_scalar_t ui; /**< Integral output for readback; Q15 in FIXED. */
+#if defined(MFOC_NUMERIC_FIXED)
+    int16_t remainder; /**< Signed Q30 counts left after truncating ui. */
+#endif
 } mfoc_pi_t;
 
 /** @brief Copy configuration and reset ui; failure leaves p unchanged.

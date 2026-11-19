@@ -160,11 +160,15 @@ static void lifecycle(void)
 
 /** @brief Verify zero-innovation model propagation across both angle wraps.
  * @return None. */
-static void dynamics(void)
+static void dynamics(const mfoc_ekf_cfg_t *tuning)
 {
+    const float kt = tuning->speed_base_hz / (float)tuning->sample_hz;
+    const float ku = 6.283185307179586f * kt / model.ld;
+    const float ki = 1.0f - model.rs * ku;
+    const float ke = model.flux * ku;
     for (int sign = -1; sign <= 1; sign += 2) {
         mfoc_ekf_t ekf = {0};
-        assert(mfoc_ekf_Init(&ekf, &cfg, &model) == MFOC_RESULT_OK);
+        assert(mfoc_ekf_Init(&ekf, tuning, &model) == MFOC_RESULT_OK);
         ekf.has_sample = true;
         ekf.i_hat = (mfoc_ab_t){0.2f, -0.3f};
         ekf.speed = (float)sign * 0.5f;
@@ -173,13 +177,11 @@ static void dynamics(void)
         mfoc_angle_sincos(ekf.angle, &sine, &cosine);
         mfoc_ab_t u = {0.13f, -0.07f};
         mfoc_ab_t i = {
-            ekf.c.ki * 0.2f + ekf.c.ku * u.qAlpha +
-                ekf.c.ke * ekf.speed * sine,
-            ekf.c.ki * -0.3f + ekf.c.ku * u.qBeta -
-                ekf.c.ke * ekf.speed * cosine,
+            ki * 0.2f + ku * u.qAlpha + ke * ekf.speed * sine,
+            ki * -0.3f + ku * u.qBeta - ke * ekf.speed * cosine,
         };
         mfoc_angle_t expected = mfoc_angle_add_scalar(ekf.angle,
-            ekf.c.kt * ekf.speed);
+            kt * ekf.speed);
         mfoc_ekf_output_t out = {0};
         mfoc_ekf_Step(&ekf, &i, &u, &out);
         assert(fabsf(ekf.i_hat.qAlpha - i.qAlpha) < 1.0e-7f);
@@ -295,7 +297,11 @@ int main(void)
 {
     init_validation();
     lifecycle();
-    dynamics();
+    dynamics(&cfg);
+    mfoc_ekf_cfg_t alternate = cfg;
+    alternate.sample_hz = 16000U;
+    alternate.speed_base_hz = 250.0f;
+    dynamics(&alternate);
     interleaved_instances();
     numerical_failure();
     qualification();

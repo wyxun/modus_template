@@ -118,7 +118,3 @@ CHIP_SOURCES = $(DRV_SOURCES) \
 
 # 启用 MODUS 默认内置的 perf_counter 移植
 MODUS_USE_DEFAULT_PERFC_PORT = 1
-
-# OpenOCD (AT32 custom v0.11)
-OPENOCD_BIN     = $(SW_ROOT)/msys64/mingw64/bin/openocd-at32.exe
-OPENOCD_SCRIPTS = $(SW_ROOT)/msys64/mingw64/share/openocd/scripts

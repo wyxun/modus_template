@@ -19,30 +19,26 @@ static void near(mfoc_scalar_t value, float expected)
     assert(fabsf(mfoc_to_float(value) - expected) < 0.0004f);
 }
 
-/** @brief Exercise the old FOC profile using shared PU motor parameters.
- * @return Zero after all assertions pass. */
-int main(void)
+/** @brief Check coefficients and signed speed against this time base. */
+static void exercise_profile(uint32_t sample_hz, float speed_base)
 {
     mfoc_motor_params_t model = {
         .pole_pairs = 7U, .rs = MFOC_SCALAR(4.0f * 3.5f / 12.0f),
         .ld = MFOC_SCALAR(0.0012f * 2513.274123f * 3.5f / 12.0f),
         .lq = MFOC_SCALAR(0.0012f * 2513.274123f * 3.5f / 12.0f)};
     mfoc_smo_cfg_t cfg = {
-        .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ, .speed_base_hz = MFOC_SCALAR(400.0f),
+        .sample_hz = sample_hz, .speed_base_hz = mfoc_from_float(speed_base),
         .cutoff_rad_s = 4000U, .h = MFOC_SCALAR(5.0f / 12.0f),
         .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE};
     mfoc_smo_t smo = {0};
     assert(mfoc_smo_Init(NULL, &cfg, &model) == MFOC_RESULT_NULL);
     assert(mfoc_smo_Init(&smo, &cfg, &model) == MFOC_RESULT_OK);
-    /* Expectations follow MFOC_MOTOR_RUN_FREQ_HZ, so the same case also runs
-     * at other control rates; span keeps the observer's own 32-step cap. */
-    const float fs = (float)MFOC_MOTOR_RUN_FREQ_HZ;
-    const float speed_base = 400.0f;
+    const float fs = (float)sample_hz;
     const float cutoff = 4000.0f;
     const float rs_pu = 4.0f * 3.5f / 12.0f;
     const float ld_pu = 0.0012f * 2513.274123f * 3.5f / 12.0f;
     const float ku = 6.28318530718f * speed_base / fs / ld_pu;
-    unsigned span = (MFOC_MOTOR_RUN_FREQ_HZ + 500U) / 1000U;
+    unsigned span = (sample_hz + 500U) / 1000U;
     if (span == 0U) { span = 1U; }
     if (span > 127U) { span = 127U; }
     near(smo.c.ku, ku);
@@ -79,7 +75,7 @@ int main(void)
             float phase = (0.99f + (float)direction * (float)j * step_turns) *
                           6.28318530718f;
             float lag = atanf((float)direction * 0.05f *
-                              400.0f * 6.28318530718f / 4000.0f);
+                              speed_base * 6.28318530718f / cutoff);
             smo.axis[0].e_hat = mfoc_from_float(
                 -(float)direction * 0.2f * sinf(phase - lag));
             smo.axis[1].e_hat = mfoc_from_float(
@@ -100,9 +96,15 @@ int main(void)
     cfg.sample_hz = 0U;
     assert(mfoc_smo_Init(&smo, &cfg, &model) != MFOC_RESULT_OK);
     assert(memcmp(&smo, &saved, sizeof(smo)) == 0);
-    cfg.sample_hz = MFOC_MOTOR_RUN_FREQ_HZ;
+    cfg.sample_hz = sample_hz;
     model.lq += 1;
     assert(mfoc_smo_Init(&smo, &cfg, &model) != MFOC_RESULT_OK);
-    puts("SMO coefficients, boundary layer and reset passed");
+}
+
+int main(void)
+{
+    exercise_profile(MFOC_MOTOR_RUN_FREQ_HZ, 400.0f);
+    exercise_profile(16000U, 250.0f);
+    puts("SMO coefficients, signed speed window and reset passed");
     return 0;
 }

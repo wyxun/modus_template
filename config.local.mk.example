@@ -1,0 +1,41 @@
+# Copy to config.local.mk and uncomment the settings for this computer.
+# Pass NAME=value on the make command line to override local preferences.
+# Use forward slashes in paths and omit surrounding quotes.
+
+# Optional personal board preference. Use explicit chip, BUILD and
+# MFOC_NUMERIC arguments for a shared bench build or CI.
+# TARGET_CHIP ?= at32f407
+
+ifeq ($(OS),Windows_NT)
+# make.bat can bootstrap from this literal directory. Keep the assignment
+# format shown here and put comments on their own lines.
+# MSYS2_BIN ?= C:/msys64/mingw64/bin
+# ARM_LLVM_BIN ?= C:/tools/llvm-embedded-arm/bin
+# RISCV_LLVM_BIN ?= C:/msys64/mingw64/bin
+
+# Use the executable and scripts from the same OpenOCD distribution.
+# AT32_OPENOCD_ROOT ?= C:/tools/artery-openocd
+# STM32_OPENOCD_BIN ?= C:/msys64/mingw64/bin/openocd.exe
+# STM32_OPENOCD_SCRIPTS ?= C:/msys64/mingw64/share/openocd/scripts
+# WCH_OPENOCD_ROOT ?= C:/tools/wch-openocd
+else
+# On Linux you can put the tools on PATH, or set directories explicitly.
+# ARM_LLVM_BIN ?= /opt/llvm-embedded-arm/bin
+# RISCV_LLVM_BIN ?= /usr/bin
+# AT32_OPENOCD_ROOT ?= /opt/artery-openocd
+# STM32_OPENOCD_BIN ?= /usr/bin/openocd
+# STM32_OPENOCD_SCRIPTS ?= /usr/share/openocd/scripts
+# WCH_OPENOCD_ROOT ?= /opt/wch-openocd
+endif
+
+# For AT32, use default (board config, HID) or atlink-ez-winusb (USB Bulk).
+ifneq ($(filter at32%,$(TARGET_CHIP)),)
+# PROBE_PROFILE ?= atlink-ez-winusb
+# Optionally pin one AT-Link-EZ when multiple units are connected.
+# ATLINK_EZ_SERIAL ?= your-probe-serial
+# SWD_SPEED_KHZ ?= 8000
+endif
+# WCH OpenOCD only supports setting the RTT ports.
+# RTT_POLL_MS ?= 1
+# RTT_SHELL_PORT ?= 9090
+# RTT_WAVE_PORT ?= 9091

@@ -58,3 +58,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         if ($LASTEXITCODE -ne 0) { throw 'HFI shadow test failed' }
     }
 }
+
+foreach ($backend in @(1, 3)) {
+    & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests hfi_permission `
+        -Backend $backend -Hfi 1 -Identify 1
+}
