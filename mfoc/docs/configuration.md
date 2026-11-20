@@ -18,6 +18,8 @@
 
 同一个位置提供者也可用于观察。保留 `ENABLE_POSITION=1`，将 backend 设为已启用的 SMO，Encoder 仍会更新，常规闭环取 SMO 的输出。纯无感板可设 `ENABLE_POSITION=0` 并选择相应的已启用无感后端，此时公共 Port 头只声明采样、时钟、初始化和 PWM 接口。旧项目的 `MFOC_FEEDBACK_ENABLE_ENCODER`、`MFOC_FEEDBACK_ENCODER` 是兼容名称。
 
+启动、SMO、Flux 和 EKF 可在同一构建里使用各自 Init 配置中的采样率和基值。HFI 和 Motor 辨识的时序与基值仍来自库的编译期 profile。使用这两项功能时，应用应将实际采样率、基值与该 profile 对齐。
+
 | 头文件 | 使用方式 |
 | --- | --- |
 | [mfoc_config.h](../mfoc_config.h) | 查功能开关及默认值。移植项目可用构建宏覆盖提供默认值的用户选项。 |

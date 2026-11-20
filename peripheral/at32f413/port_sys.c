@@ -92,6 +92,7 @@ void peripheral_Init(void)
     halled_Init();
     halpwm_Init();
     haladc_Init();
+    halpwm_StartSampling();
     halusart_Init();
 
     /* 最后初始化按键以防其他外设初始化对其造成覆盖 */

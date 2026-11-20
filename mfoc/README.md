@@ -31,7 +31,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 各模块的公共头文件位于其 `include/`，实现位于 `src/`。`mfoc.h` 汇集基础数学及控制接口；使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供本工程使用的源码与头文件路径清单。
 
-独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和本工程实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。主机示例使用 GCC、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[独立工程 Makefile](tests/standalone/Makefile) · [Port 接入指南](docs/port-contract.md)
+独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和自行实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。主机示例使用 C11、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[主机回放示例](examples/host_replay/README.md) · [Port 接入指南](docs/port-contract.md)
 
 ## 配置 MFOC
 
@@ -57,11 +57,11 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `MFOC_IDENTIFICATION_ENABLE` | Motor 参数辨识流程 | `0` |
 | `MFOC_MOTOR_MODEL_UPDATE_ENABLE` | 停机后显式应用 PU 电机参数 | `0` |
 | `MFOC_FEEDBACK_ENABLE_POSITION` | 板级提供的统一位置反馈；旧 `ENABLE_ENCODER` 名称兼容 | `1` |
-| `MFOC_FEEDBACK_ENABLE_SMO` | SMO 观测器 | `1` |
+| `MFOC_FEEDBACK_ENABLE_SMO` | SMO 观测器 | `0` |
 | `MFOC_FEEDBACK_ENABLE_HFI` | 高频注入 | `0` |
-| `MFOC_FEEDBACK_ENABLE_FLUX` | 磁链观测器 | `0` |
+| `MFOC_FEEDBACK_ENABLE_FLUX` | 磁链观测器 | `1` |
 | `MFOC_FEEDBACK_ENABLE_EKF` | EKF 观测器 | `0`，仅 FLOAT |
-| `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_SMO` |
+| `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_FLUX` |
 
 使能算法与选择控制输出是两项配置：所选 backend 对应的算法必须使能。未选作 backend 的已使能算法可用于影子观察。HFI 主反馈闭环允许注入，POSITION 仅在显式 `HfiStart` 时允许注入。普通非 HFI 闭环的 `feedback.observe_hfi` 可启用无注入诊断。Flux 和 EKF 的增益、噪声参数等需要针对实际电机配置及验证。文件中还包含 Rs/L 辨识、Flux 和 EKF 的参数，具体定义以配置头为准。
 
@@ -111,8 +111,12 @@ motor clear
 
 在仓库根目录可使用 `mingw32-make TARGET_CHIP=stm32g431` 构建；`make.bat auto` 会清理、构建、烧录并启动 RTT，请在目标和硬件配置确认后使用。
 
+### AT32F413 第二功率板
+
+仓库现有的 `at32f413` 目标接入 AT-MOTOR-EVB V1.1 和 AT32F413RCT7。调试构建可用 `.\make.bat TARGET_CHIP=at32f413 BUILD=debug-rel MFOC_NUMERIC=fixed`。基线采用 Flux，Hall 配置需提供电机实测扇区表。门极和采样时序须在这块板上验证。[AT32F413 接入与验收](docs/validation/2026-11-20-p12-at32f413.md)
+
 ## 测试入口
 
-从仓库根目录运行 `.\mfoc\tests\scripts\run_standalone_tests.ps1`，脚本会把库和主机示例复制到仓库外的临时目录，分别构建并运行 FLOAT、FIXED 的辨识关闭和开启配置。开启时，模拟功率级按上一拍实际提交的 duty 产生电流，经 Motor 完成 Rs 辨识并校验结果。[独立验收脚本](tests/scripts/run_standalone_tests.ps1)
+从仓库根目录运行 `.\mfoc\tests\scripts\check_standalone.ps1`。脚本把库和主机示例复制到仓库外的临时目录，再构建、链接并执行反馈与辨识配置。开启辨识时，模拟功率级按上一拍实际提交的 duty 产生电流，经 Motor 完成 Rs 辨识并校验结果。[独立验收脚本](tests/scripts/check_standalone.ps1)
 
-主机测试入口为 `tests/scripts/run_tests.ps1`，ARM 编译检查入口为 `tests/scripts/check_arm.ps1`；各算法也有独立脚本。测试是软件验证，实际采样时序、电流极性、中断耗时和无感接管仍需台架验证。
+主机回归入口 `tests/scripts/run_tests.ps1` 包含各算法、启动交接、PU 换算和独立构建。ARM 入口 `tests/scripts/check_arm.ps1` 负责链接和符号审计。实际采样时序、电流极性、中断耗时和无感接管在台架上验收。

@@ -27,6 +27,29 @@ endif
 C_DEFS += -DMFOC_ISR_MEASURE=$(MFOC_ISR_MEASURE)
 C_DEFS += -DMDI_MAIN_STREAM_RESOURCE=board_stream
 
+# Bench-only probe, with the release optimizer and no waveform sampling.
+MFOC_P10_TIMING ?= 0
+ifeq ($(MFOC_P10_TIMING),1)
+    ifneq ($(BUILD)/$(MWAVEFORM_ENABLE)/$(MFOC_ISR_MEASURE),debug-rel/0/0)
+        $(error P10 requires BUILD=debug-rel MWAVEFORM_ENABLE=0 MFOC_ISR_MEASURE=0)
+    endif
+    MFOC_P10_PROFILE ?= flux
+    ifeq ($(MFOC_P10_PROFILE),flux)
+        C_DEFS += -DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_FLUX
+    else ifeq ($(MFOC_P10_PROFILE),smo)
+        C_DEFS += -DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_SMO \
+            -DMFOC_FEEDBACK_ENABLE_SMO=1 -DMFOC_FEEDBACK_ENABLE_FLUX=0
+    else ifeq ($(MFOC_P10_PROFILE),hfi)
+        C_DEFS += -DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_HFI \
+            -DMFOC_FEEDBACK_ENABLE_HFI=1 -DMFOC_FEEDBACK_ENABLE_FLUX=0
+    else
+        $(error MFOC_P10_PROFILE must be flux, smo, or hfi)
+    endif
+    C_DEFS += -DMFOC_P10_TIMING=1
+    MFOC_P10_SOURCE = target/stm32g431/mfoc_p10_timing.c
+    TARGET_CONFIG_SIGNATURE += -p10_$(MFOC_P10_PROFILE)
+endif
+
 # CMSIS paths
 CMSIS_CORE = vendor/cortex-m/cmsis_core
 CMSIS_DEV  = vendor/cortex-m/cmsis_device_g4/Include
@@ -89,7 +112,7 @@ CHIP_SOURCES = $(HAL_SOURCES) $(LL_SOURCES)
 
 include mfoc/mfoc.mk
 MFOC_TARGET_SOURCES = target/stm32g431/mfoc_motor_irq.c \
-    peripheral/stm32g431/mfoc/mfoc_port.c
+    peripheral/stm32g431/mfoc/mfoc_port.c $(MFOC_P10_SOURCE)
 CLASS_SOURCES = class/mfoc_app.c class/mfoc_debug.c
 
 # 启用 MODUS 默认内置的 perf_counter 移植

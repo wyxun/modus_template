@@ -10,6 +10,26 @@ CPU_FLAGS = -mcpu=cortex-m4 -mthumb -mfloat-abi=hard -mfpu=fpv4-sp-d16
 C_DEFS += -DAT32F413RCT7 -DUSE_STDPERIPH_DRIVER                                \
     -DAT_MOTOR_EVB_V1 -DCORE_DEBUG_OVERRIDE_FAULT_HANDLER
 
+# The second board validates the FIXED control path by default.
+MFOC_NUMERIC ?= fixed
+AT32F413_MFOC_HALL ?= 0
+TARGET_CONFIG_SIGNATURE = -hall_$(AT32F413_MFOC_HALL)
+C_DEFS += -DMFOC_APP_ENABLED=1 -DMFOC_APP_ENCODER_DIAGNOSTIC=0 \
+    -DMFOC_USE_PERFC_FSM=1 -DMFOC_TRIG_BACKEND=1 -DMFOC_PERFC_HZ=200000000U \
+    -DMFOC_CORE_M_MAX=0.35f
+ifeq ($(AT32F413_MFOC_HALL),1)
+    ifeq ($(strip $(AT32F413_HALL_CONFIG_DIR)),)
+        $(error Set AT32F413_HALL_CONFIG_DIR to the measured Hall table directory)
+    endif
+    TARGET_CONFIG_SIGNATURE += -hallcfg_$(AT32F413_HALL_CONFIG_DIR)
+    C_DEFS += -DMFOC_FEEDBACK_ENABLE_POSITION=1 -DMFOC_FEEDBACK_ENABLE_FLUX=0 \
+        -DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION
+else ifeq ($(AT32F413_MFOC_HALL),0)
+    C_DEFS += -DMFOC_FEEDBACK_ENABLE_POSITION=0
+else
+    $(error AT32F413_MFOC_HALL must be 0 or 1)
+endif
+
 # CMSIS / peripheral library paths
 CHIPLIB_ROOT = vendor/cortex-m/AT32F413_Firmware_Library/libraries
 CMSIS_CORE   = vendor/cortex-m/cmsis_core
@@ -26,6 +46,9 @@ IT_C         = target/at32f413/at32f413_it.c
 
 # Chip-specific include paths
 TARGET_INCLUDES = -I$(DRV_INC) -Itarget/at32f413
+ifeq ($(AT32F413_MFOC_HALL),1)
+    TARGET_INCLUDES += -I"$(AT32F413_HALL_CONFIG_DIR)"
+endif
 
 # ------------------------------------------------------------------
 # AT32F413 peripheral driver selection
@@ -104,6 +127,12 @@ ifeq ($(USE_DRV_PWC),1)
 endif
 
 CHIP_SOURCES = $(DRV_SOURCES)
+
+include mfoc/mfoc.mk
+# Both ADC vectors use the same compile-time bound Motor IRQ body.
+MFOC_TARGET_SOURCES = target/stm32g431/mfoc_motor_irq.c \
+    peripheral/at32f413/mfoc/mfoc_port.c
+CLASS_SOURCES = class/mfoc_app.c class/mfoc_debug.c
 
 # 启用 MODUS 默认内置的 perf_counter 移植
 MODUS_USE_DEFAULT_PERFC_PORT = 1

@@ -5,6 +5,7 @@
  * @date 2026-11-19
  */
 #include "mfoc_motor.h"
+#include "mfoc_motor_config.h"
 #include "motor_port_fake.h"
 #include <assert.h>
 #include <math.h>
@@ -12,9 +13,11 @@
 
 /* Independent SI fixture. Mild saliency distinguishes swapped pulse axes. */
 #define POLE_PAIRS 7U
-#define IB_A 3.5
-#define VB_V 12.0
-#define WB_RAD_S (6.283185307179586 * 400.0)
+#define IB_A ((double)MFOC_MOTOR_BASE_CURRENT_MILLIAMP / 1000.0)
+#define VB_V ((double)MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT / 1000.0)
+#define WB_RAD_S (6.283185307179586 * MFOC_MOTOR_BASE_ELECTRICAL_HZ)
+#define VDC_V 12.0
+#define CURRENT_LIMIT_A (0.12 * 3.5)
 #define RB_OHM (VB_V / IB_A)
 #define LB_H (RB_OHM / WB_RAD_S)
 #define PSIB_WB (VB_V / WB_RAD_S)
@@ -145,7 +148,7 @@ static void check_locked_windings(void)
 {
     plant_t p = {.motor = &salient, .shaft = SHAFT_LOCKED};
     /* Fixed duties give vd = 3 V, vq = sqrt(3) V at theta = 0. */
-    motor_port_fake = (motor_port_fake_t){.bus = MFOC_ONE,
+    motor_port_fake = (motor_port_fake_t){.bus = pu(VDC_V / VB_V),
         .duty = {pu(0.75), pu(0.5), pu(0.25)}};
     const unsigned intervals = 8U;
     for (unsigned n = 0U; n < intervals; ++n) { plant_interval(&p); }
@@ -183,17 +186,22 @@ static mfoc_motor_params_t seed_model(mfoc_identification_operation_t op,
  * @param s Test session with the initial model. @return None. */
 static void init(session_t *s)
 {
-    const mfoc_pi_params_t pi = {pu(0.472810), pu(0.070097),
-        pu(-0.55), pu(0.55), -MFOC_HALF, MFOC_HALF};
+    const double pi_scale = (IB_A / 3.5) * (12.0 / VB_V);
+    const mfoc_pi_params_t pi = {pu(0.472810 * pi_scale),
+        pu(0.070097 * pi_scale), pu(-6.6 / VB_V), pu(6.6 / VB_V),
+        pu(-6.0 / VB_V), pu(6.0 / VB_V)};
     const mfoc_motor_cfg_t cfg = {
-        .current_base_milliamp = 3500U, .voltage_base_millivolt = 12000U,
-        .electrical_speed_base_hz = MFOC_SCALAR(400.0f), .params = s->model,
-        .limits = {.i_max = pu(0.12), .speed_max = pu(200.0 / WB_RAD_S)},
-        .core = {pi, pi, MFOC_ONE},
+        .current_base_milliamp = MFOC_MOTOR_BASE_CURRENT_MILLIAMP,
+        .voltage_base_millivolt = MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT,
+        .electrical_speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
+        .params = s->model, .limits = {.i_max = pu(CURRENT_LIMIT_A / IB_A),
+            .speed_max = pu(200.0 / WB_RAD_S)},
+        .core = {pi, pi, pu(VDC_V / VB_V)},
     };
     motor_port_fake = (motor_port_fake_t){
         .position_run = MFOC_RESULT_IO, .position_step = MFOC_RESULT_IO,
-        .feedback_step = MFOC_RESULT_IO,
+        .feedback_step = MFOC_RESULT_IO, .bus = pu(VDC_V / VB_V),
+        .bus_configured = true,
     };
     assert(mfoc_motor_Init(&s->motor, &cfg) == MFOC_RESULT_OK);
 }
@@ -263,7 +271,7 @@ static mfoc_result_t run(session_t *s, mfoc_identification_operation_t op,
         names[op], plant->motor->rs, plant->state.angle_e,
         plant->state.omega_m * POLE_PAIRS);
     assert(mfoc_identification_Start(&motor->identification, &s->model, op,
-        MFOC_ONE) == MFOC_RESULT_OK);
+        motor_port_fake.bus) == MFOC_RESULT_OK);
     assert(mfoc_motor_Start(motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_Run(motor) == MFOC_RESULT_OK);
     mfoc_result_t rc = MFOC_RESULT_OK;
@@ -335,7 +343,8 @@ static void measure(session_t *s, mfoc_identification_operation_t op,
     assert(s->motor.state == MFOC_MOTOR_IDLE);
     assert(mfoc_identification_GetResult(&s->motor.identification,
         &s->model) == MFOC_RESULT_OK);
-    assert(plant.peak_current_pu <= 0.12 && plant.peak_speed_e <= 200.0);
+    assert(plant.peak_current_pu * IB_A <= CURRENT_LIMIT_A &&
+        plant.peak_speed_e <= 200.0);
     if (plant.shaft == SHAFT_FREE) { assert(plant.peak_speed_e > 40.0); }
     check_result(s->model, op, seed, plant.motor);
 }
@@ -397,6 +406,10 @@ static void measure_chain(plant_t locked, plant_t free_rotor)
     assert(s.motor.params.rs == original.rs && s.motor.params.ld == original.ld);
     assert(s.motor.params.lq == original.lq && s.motor.params.flux ==
         original.flux && s.motor.params.inertia == original.inertia);
+    printf("SI %.10g %.10g %.10g %.10g %.10g\n",
+        mfoc_to_float(s.model.rs) * RB_OHM, mfoc_to_float(s.model.ld) * LB_H,
+        mfoc_to_float(s.model.lq) * LB_H, mfoc_to_float(s.model.flux) * PSIB_WB,
+        mfoc_to_float(s.model.inertia) * JB_KGM2);
 }
 
 /** @brief Exercise the four public operations and rejected rotor conditions.

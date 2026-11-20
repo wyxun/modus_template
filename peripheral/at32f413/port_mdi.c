@@ -114,17 +114,15 @@ int32_t port_mdi_MotorPwmSetDuty3(uint32_t wDutyU,
                                   uint32_t wDutyV,
                                   uint32_t wDutyW)
 {
-    tmr_channel_value_set(TMR1, TMR_SELECT_CHANNEL_1, wDutyU);
-    tmr_channel_value_set(TMR1, TMR_SELECT_CHANNEL_2, wDutyV);
-    tmr_channel_value_set(TMR1, TMR_SELECT_CHANNEL_3, wDutyW);
+    halpwm_SetDuty(wDutyU, wDutyV, wDutyW);
     return 0;
 }
 
 static int32_t pwm_enable(void *pPriv, bool bEn)
 {
     (void)pPriv;
-    if (bEn) halpwm_Start();
-    else     halpwm_Stop();
+    if (bEn) { return halpwm_Start() ? 0 : -1; }
+    halpwm_Stop();
     return 0;
 }
 
@@ -137,8 +135,10 @@ static mdi_pwm_t s_tPwmW = { .pPriv = (void *)3U, .fnSetDuty = pwm_setduty, .fnE
 static int32_t adc_read_busv(void *pPriv)
 {
     (void)pPriv;
-    haladc_StartRegular();
-    return (int32_t)haladc_GetOrdinary(HALADC_ORD_BUS_VOLT);
+    uint16_t sample = 0U;
+    bool ready = haladc_ReadBusRaw(&sample);
+    haladc_RequestBus();
+    return ready ? (int32_t)sample : -1;
 }
 
 static int32_t adc_read_temp(void *pPriv)

@@ -1,6 +1,7 @@
 /**
  * @file mfoc.h
- * @brief First-stage mfoc pure computation library.
+ * @brief Public numerical and current-control utilities.
+ * @note Include mfoc_motor.h and mfoc_port.h for a complete Motor setup.
  * @author wyxun
  * @date 2026-10-19
  */

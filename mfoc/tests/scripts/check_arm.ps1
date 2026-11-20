@@ -1,7 +1,18 @@
 param([string]$Toolchain = (Split-Path (Get-Command clang).Source))
 $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
-$library = Split-Path -Parent $testsRoot
+$repo = Split-Path -Parent (Split-Path -Parent $testsRoot)
+$suffix = if ($env:OS -eq 'Windows_NT') { '.exe' } else { '' }
+$clang = Join-Path $Toolchain "clang$suffix"
+$nm = Join-Path $Toolchain "llvm-nm$suffix"
+$size = Join-Path $Toolchain "llvm-size$suffix"
+$linker = Join-Path $Toolchain "ld.lld$suffix"
+$objdump = Join-Path $Toolchain "llvm-objdump$suffix"
+$output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-arm-' + [guid]::NewGuid())
+$consumer = Join-Path $output 'consumer'
+& (Join-Path $PSScriptRoot 'check_standalone.ps1') -ExportOnly `
+    -OutputDirectory $consumer
+$library = Join-Path $consumer 'mfoc'
 $math = Join-Path $library 'math'
 $sources = @(Get-ChildItem (Join-Path $math 'src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'control/src') -Filter '*.c') +
@@ -9,24 +20,23 @@ $sources = @(Get-ChildItem (Join-Path $math 'src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'motor/src') -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'identification/src') -Recurse -File -Filter '*.c') +
     @(Get-ChildItem (Join-Path $library 'position/src') -Filter '*.c')
-$repo = Split-Path -Parent $library
-$clang = Join-Path $Toolchain 'clang.exe'
-$nm = Join-Path $Toolchain 'llvm-nm.exe'
-$size = Join-Path $Toolchain 'llvm-size.exe'
-$output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-arm-' + [guid]::NewGuid())
-New-Item -ItemType Directory -Path $output | Out-Null
+$port = Join-Path $library 'port/template/mfoc_port_template.c'
+$fixture = Join-Path $consumer 'link_smoke.c'
+Copy-Item -LiteralPath (Join-Path $testsRoot 'arm/link_smoke.c') -Destination $fixture
 $profiles = @(
     @('FIXED', 'cortex-m0', 'soft', 'FIXED'),
+    @('FIXED', 'cortex-m0', 'soft', 'FIXED-all-observers'),
     @('FLOAT', 'cortex-m4', 'hard', 'FLOAT'),
-    @('FIXED', 'cortex-m0', 'soft', 'FIXED-all-observers')
+    @('FIXED', 'cortex-m4', 'hard', 'M4F-FIXED')
 )
 foreach ($profile in $profiles) {
     $numeric, $cpu, $abi, $build = $profile
-    $arguments = @('--target=arm-none-eabi', "-mcpu=$cpu", '-mthumb',
-        "-mfloat-abi=$abi", '-std=gnu11', '-O2', '-ffp-contract=off',
-        '-Wall', '-Wextra', '-Werror', '-ffunction-sections',
-        "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
-        '-DMFOC_IDENTIFICATION_ENABLE=1',
+    $arch = @('--target=arm-none-eabi', "-mcpu=$cpu", '-mthumb', "-mfloat-abi=$abi")
+    if ($abi -eq 'hard') { $arch += '-mfpu=fpv4-sp-d16' }
+    $arguments = $arch + @('-std=c11', '-O2', '-ffp-contract=off',
+        '-Wall', '-Wextra', '-Werror', '-ffunction-sections', '-fdata-sections',
+        '-fstack-usage', "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
+        '-DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION',
         "-I$library", "-I$(Join-Path $math 'include')",
         "-I$(Join-Path $library 'control/include')",
         "-I$(Join-Path $library 'core/include')",
@@ -34,20 +44,72 @@ foreach ($profile in $profiles) {
         "-I$(Join-Path $library 'position/include')",
         "-I$(Join-Path $library 'identification/include')",
         "-I$(Join-Path $library 'port/include')")
-    if ($abi -eq 'hard') { $arguments += '-mfpu=fpv4-sp-d16' }
-    if ($build -eq 'FIXED-all-observers') {
-        $arguments += @('-DMFOC_FEEDBACK_ENABLE_HFI=1', '-DMFOC_FEEDBACK_ENABLE_FLUX=1')
+    if ($build -ne 'FIXED') {
+        $arguments += @('-DMFOC_IDENTIFICATION_ENABLE=1',
+            '-DMFOC_MOTOR_MODEL_UPDATE_ENABLE=1', '-DMFOC_FEEDBACK_ENABLE_SMO=1',
+            '-DMFOC_FEEDBACK_ENABLE_HFI=1', '-DMFOC_FEEDBACK_ENABLE_FLUX=1')
     }
-    foreach ($source in $sources) {
+    if ($numeric -eq 'FLOAT') { $arguments += '-DMFOC_FEEDBACK_ENABLE_EKF=1' }
+    $objects = @(foreach ($source in $sources) {
         $object = Join-Path $output "$build-$($source.BaseName).o"
         & $clang @arguments -c $source.FullName -o $object
         if ($LASTEXITCODE -ne 0) { throw "ARM build failed: $object" }
+        $object
+    })
+    # Exclude the Port and fixture from the library's writable-symbol audit.
+    $symbols = @(& $nm --defined-only --format=posix @objects)
+    if ($LASTEXITCODE -ne 0) { throw "Cannot inspect library symbols: $build" }
+    $writable = @($symbols -cmatch '^\S+\s+[bBdDsScCgGvV]\s+[0-9a-fA-F]')
+    if ($writable) { throw "Writable symbols in MFOC library: $writable" }
+
+    foreach ($source in @($port, $fixture)) {
+        $object = Join-Path $output "$build-$([IO.Path]::GetFileNameWithoutExtension($source)).o"
+        & $clang @arguments -c $source -o $object
+        if ($LASTEXITCODE -ne 0) { throw "ARM consumer build failed: $object" }
+        $objects += $object
     }
-    Write-Output "$build / $cpu object compilation passed"
+    $archives = @(foreach ($name in @('libc.a', 'libm.a', 'libclang_rt.builtins.a')) {
+        $path = & $clang @arch "--print-file-name=$name"
+        if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath $path -PathType Leaf)) {
+            throw "Embedded LLVM runtime archive missing for ${cpu}: $name"
+        }
+        $path
+    })
+    $elf = Join-Path $output "$build.elf"
+    $map = Join-Path $output "$build.map"
+    # Keep all compiled sections so unused APIs still have to resolve.
+    & $clang @arch -nostdlib "--ld-path=$linker" '-Wl,-e,main' "-Wl,-Map=$map" `
+        @objects '-Wl,--start-group' @archives '-Wl,--end-group' -o $elf
+    if ($LASTEXITCODE -ne 0) { throw "ARM complete link failed: $build" }
+    $undefined = @(& $nm --undefined-only --just-symbol-name $elf)
+    if ($LASTEXITCODE -ne 0 -or $undefined) {
+        throw "Undefined symbols in ${build}: $undefined"
+    }
+    $definedElf = @(& $nm --defined-only --just-symbol-name $elf)
+    if ($LASTEXITCODE -ne 0) { throw "Cannot inspect complete link: $build" }
+    if ($definedElf -match '^_?(malloc|calloc|realloc|free|sbrk)(?:_r)?$') {
+        throw "Unexpected heap functions linked into $build"
+    }
+    Write-Output "$build / $cpu complete link passed; no unresolved or writable library symbols"
+    & $size $elf
+    if ($LASTEXITCODE -ne 0) { throw "Cannot measure sections: $build" }
+    $motor = & $nm --print-size --radix=d $elf |
+        Select-String '^\d+\s+(\d+)\s+[bB]\s+s_motor$'
+    if ($LASTEXITCODE -ne 0 -or !$motor) {
+        throw "Cannot measure Motor storage: $build"
+    }
+    Write-Output "Motor instance: $([int]$motor.Matches[0].Groups[1].Value) bytes"
+    $frames = @(Get-Content (Join-Path $output "$build-mfoc_motor.su") |
+        Select-String ':(mfoc_motor_Init|mfoc_motor_Run|mfoc_motor_Step)\s+(\d+)')
+    if ($frames.Count -ne 3) { throw "Missing Motor stack usage data: $build" }
+    foreach ($frame in $frames) {
+        $function = $frame.Matches[0].Groups[1].Value
+        $bytes = $frame.Matches[0].Groups[2].Value
+        Write-Output "Motor local stack: $function $bytes bytes"
+    }
 }
 # Encoder/Hall and the standalone flux capture have independent callers.
 # Keep the Motor path and discard unrelated foreground sections.
-$linker = Join-Path $Toolchain 'ld.lld.exe'
 $fixedObjects = @($sources | ForEach-Object {
     Join-Path $output "FIXED-all-observers-$($_.BaseName).o"
 })
@@ -68,7 +130,7 @@ $external = @(& $nm --undefined-only --just-symbol-name $hotPath)
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect linked FIXED sampling dependencies' }
 # Cortex-M0 can use __aeabi_idiv for the signed duty numerator divided by 3.
 # Keep wide division out of the per-PWM voltage reconstruction.
-$modelAsm = & (Join-Path $Toolchain 'llvm-objdump.exe') -dr `
+$modelAsm = & $objdump -dr `
     --section=.text.mfoc_modulation_ModelVoltageAlphaBeta `
     (Join-Path $output 'FIXED-mfoc_modulation.o')
 if ($LASTEXITCODE -ne 0 -or !($modelAsm -match '<mfoc_modulation_ModelVoltageAlphaBeta>:')) {

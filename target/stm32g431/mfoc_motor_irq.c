@@ -5,6 +5,9 @@
  * @date 2026-10-21
  */
 #include "mfoc_motor_irq.h"
+#if MFOC_P10_TIMING
+#include "mfoc_p10_timing.h"
+#endif
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
 #include "mfoc_debug.h"
 #endif
@@ -29,10 +32,16 @@ void mfoc_motor_IRQHandler(void)
     uint32_t start = (uint32_t)get_system_ticks();
 #endif
     if (MFOC_MOTOR_IRQ_READY()) {
+#if MFOC_P10_TIMING
+        mfoc_p10_Begin(&MFOC_MOTOR_IRQ_INSTANCE);
+#endif
         MFOC_MOTOR_IRQ_BEGIN();
         MFOC_MOTOR_IRQ_INSTANCE.irq_result = mfoc_motor_Step(
             &MFOC_MOTOR_IRQ_INSTANCE);
         MFOC_MOTOR_IRQ_END();
+#if MFOC_P10_TIMING
+        mfoc_p10_End(&MFOC_MOTOR_IRQ_INSTANCE);
+#endif
 #if MFOC_DEBUG_POSITION_WAVEFORM
         mfoc_debug_WaveformStep();
 #endif

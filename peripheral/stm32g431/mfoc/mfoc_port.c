@@ -8,6 +8,9 @@
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_encoder.h"
+#if MFOC_P10_TIMING
+#include "mfoc_p10_timing.h"
+#endif
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
 #include "mfoc_debug.h"
 #endif
@@ -366,6 +369,9 @@ mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
     if (status != MDI_OK) {
         return status == MDI_RANGE ? MFOC_RESULT_OUT_OF_RANGE : MFOC_RESULT_IO;
     }
+#if MFOC_P10_TIMING
+    mfoc_p10_PwmWritten();
+#endif
     return MFOC_RESULT_OK;
 }
 

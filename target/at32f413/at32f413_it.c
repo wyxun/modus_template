@@ -3,7 +3,7 @@
  * @brief  Interrupt handlers (AT32F413 Motor EVB V1)
  *
  * SysTick_Handler drives perf_counter + modus + USART 1ms tick.
- * USART1 / TMR1 / ADC1_2 have real handlers; the rest are stubs.
+ * ADC1_2 is bound separately to the MFOC control IRQ.
  */
 
 #ifndef CORE_DEBUG_OVERRIDE_FAULT_HANDLER
@@ -52,9 +52,7 @@ void USART1_IRQHandler(void)        { at32_usart_irq_handler(&s_tUsart1Priv); }
 /* ---- TMR1 (motor PWM) ---- */
 void TMR1_BRK_TMR9_IRQHandler(void)
 {
-    if (tmr_flag_get(TMR1, TMR_BRK_FLAG) != RESET) {
-        tmr_flag_clear(TMR1, TMR_BRK_FLAG);
-    }
+    /* Break interrupt is masked; the physical gate and flag latch. */
 }
 
 void TMR1_OVF_TMR10_IRQHandler(void)

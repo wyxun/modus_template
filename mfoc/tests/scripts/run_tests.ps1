@@ -40,6 +40,8 @@ foreach ($enabled in @(0, 1)) {
 # Exercise the supported sensorless startup with an identification owner.
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 0 -Backend 2 -Identify 1 `
     -Tests @('motor_identification', 'motor_handover')
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 0 -Backend 4 -Position 0 `
+    -Tests motor_handover
 # Identification uses electrical samples even when position is compiled out.
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 0 -Backend 0 -Identify 1 `
     -Position 0 -Tests motor_identification_plant
@@ -53,6 +55,13 @@ foreach ($backend in @(0, 2, 3, 4, 5)) {
 & (Join-Path $PSScriptRoot 'run_encoder_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_hall_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_smo_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_flux_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_ekf_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_hfi_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_port_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_g431_p10_window_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_at32f413_port_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_app_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_debug_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_per_unit_tests.ps1')
+& (Join-Path $PSScriptRoot 'check_standalone.ps1')

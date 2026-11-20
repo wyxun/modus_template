@@ -24,6 +24,9 @@
 #include "stm32g4xx_hal.h"
 #include "stm32g4xx_ll_tim.h"
 #include "stm32g4xx_ll_bus.h"
+#if MFOC_P10_TIMING
+#include "mfoc_p10_timing.h"
+#endif
 
 /* Timer clock, then a center-aligned period that follows the MFOC control
  * rate: PWM rate == ADC trigger rate == current-loop rate.
@@ -155,6 +158,9 @@ void haltim1_Init(void)
     /* Start counter (phase outputs disabled until MDI_PWM_Enable) */
     LL_TIM_GenerateEvent_UPDATE(TIM1);
     LL_TIM_EnableCounter(TIM1);
+#if MFOC_P10_TIMING
+    mfoc_p10_Init();
+#endif
 }
 
 void haltim1_EnableISR(void)

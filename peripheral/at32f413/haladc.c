@@ -130,24 +130,14 @@ void haladc_Init(void)
     /* adc_voltage_monitor_threshold_value_set(ADC1, 0xFFF, 0x000); */
     /* adc_interrupt_enable(ADC1, ADC_VMOR_INT, TRUE); */
 
-    /* ---- Preempt conversion-complete interrupt:
-       control step entry (handled in ADC1_2_IRQHandler) ---- */
-    adc_interrupt_enable(ADC1, ADC_PCCE_INT, TRUE);
-
-    /* ---- NVIC ---- */
-    nvic_irq_enable(ADC1_2_IRQn, 1, 0);
-
     /* ---- ADC enable + calibrate ---- */
     adc_enable(ADC1, TRUE);
     adc_calibration_init(ADC1);
     while (adc_calibration_init_status_get(ADC1));
     adc_calibration_start(ADC1);
     while (adc_calibration_status_get(ADC1));
-}
 
-void haladc_StartRegular(void)
-{
-    adc_ordinary_software_trigger_enable(ADC1, TRUE);
+    haladc_RequestBus();
 }
 
 uint16_t haladc_GetOrdinary(uint8_t chIndex)
@@ -156,9 +146,45 @@ uint16_t haladc_GetOrdinary(uint8_t chIndex)
     return s_ahwAdcOrdBuf[chIndex];
 }
 
+/** @brief Read the three ranks of a completed preempt frame.
+ * @param phwU U rank, valid output. @param phwV V rank, valid output.
+ * @param phwW W rank, valid output. @return None. */
 void haladc_GetPreemptRaw(uint16_t *phwU, uint16_t *phwV, uint16_t *phwW)
 {
-    if (phwU) *phwU = adc_preempt_conversion_data_get(ADC1, ADC_PREEMPT_CHANNEL_1);
-    if (phwV) *phwV = adc_preempt_conversion_data_get(ADC1, ADC_PREEMPT_CHANNEL_2);
-    if (phwW) *phwW = adc_preempt_conversion_data_get(ADC1, ADC_PREEMPT_CHANNEL_3);
+    *phwU = (uint16_t)ADC1->pdt1;
+    *phwV = (uint16_t)ADC1->pdt2;
+    *phwW = (uint16_t)ADC1->pdt3;
+}
+
+/** @brief Let the first explicit start transfer ownership from polling.
+ * @return None. Later starts retain the already-armed IRQ. */
+void haladc_EnableControlIRQ(void)
+{
+    if (ADC1->ctrl1_bit.pcceien == 0U) {
+        haladc_DiscardPreempt();
+        NVIC_ClearPendingIRQ(ADC1_2_IRQn);
+        adc_interrupt_enable(ADC1, ADC_PCCE_INT, TRUE);
+        nvic_irq_enable(ADC1_2_IRQn, 1, 0);
+    }
+}
+
+/** @brief Request an ordinary conversion group from the foreground.
+ * @return None. Only one requester owns the DMA group at a time. */
+void haladc_RequestBus(void)
+{
+    dma_flag_clear(DMA1_FDT1_FLAG | DMA1_DTERR1_FLAG);
+    adc_ordinary_software_trigger_enable(ADC1, TRUE);
+}
+
+/** @brief Read the latest complete, foreground-independent bus sample.
+ * @param sample Output ADC code, valid only if true is returned.
+ * @return True if there is an available sample. */
+bool haladc_ReadBusRaw(uint16_t *sample)
+{
+    if (dma_flag_get(DMA1_DTERR1_FLAG) == SET ||
+        dma_flag_get(DMA1_FDT1_FLAG) == RESET) {
+        return false;
+    }
+    *sample = s_ahwAdcOrdBuf[HALADC_ORD_BUS_VOLT];
+    return true;
 }

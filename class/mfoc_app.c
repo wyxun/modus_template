@@ -1,6 +1,6 @@
 /**
  * @file mfoc_app.c
- * @brief Stopped G431 MFOC application with one owned Motor.
+ * @brief Stopped MFOC application with one owned Motor.
  * @author Codex
  * @date 2026-10-21
  */
@@ -9,8 +9,14 @@
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_motor_config.h"
-#if MSHELL_ENABLE
+#ifndef MFOC_APP_ENCODER_DIAGNOSTIC
+#define MFOC_APP_ENCODER_DIAGNOSTIC 1
+#endif
+#if MSHELL_ENABLE && MFOC_APP_ENCODER_DIAGNOSTIC
 #include "mdi/service.h"
+#endif
+#if MSHELL_ENABLE && !MFOC_APP_ENCODER_DIAGNOSTIC && MFOC_FEEDBACK_ENABLE_POSITION
+#include "mfoc_port.h"
 #endif
 #include "mdebug/mshell.h"
 #if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
@@ -171,10 +177,12 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
 )
 
 #if MSHELL_ENABLE
+#if MFOC_APP_ENCODER_DIAGNOSTIC
+#define MFOC_APP_POSITION_COMMAND "encoder"
 /** @brief Print one mechanical encoder sample without changing Motor state.
  * @return None.
  * @note Foreground I2C access only; degrees use integer output. */
-static void _mfoc_app_PrintEncoder(void)
+static void _mfoc_app_PrintPosition(void)
 {
     uint16_t raw = 0U;
     mdi_status_t rc = mdi_g431_encoder_ReadRaw(&raw);
@@ -187,6 +195,37 @@ static void _mfoc_app_PrintEncoder(void)
         (unsigned long)raw, (unsigned long)(degrees100 / 100U),
         (unsigned long)(degrees100 % 100U));
 }
+#elif MFOC_FEEDBACK_ENABLE_POSITION
+#define MFOC_APP_POSITION_COMMAND "position"
+/** @brief Inspect the board's current electrical feedback in the shell.
+ * @return None.
+ */
+static void _mfoc_app_PrintPosition(void)
+{
+    mfoc_angle_t angle = {0U};
+    mfoc_scalar_t speed = MFOC_ZERO;
+    mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
+    if (tMfocApp.state == MFOC_APP_IDLE) {
+        __IRQ_SAFE {
+            rc = mfoc_port_position(&angle, &speed);
+        }
+    }
+    if (rc != MFOC_RESULT_OK) {
+        MLOGF(W, "position read failed result=%d\r\n", (int)rc);
+        return;
+    }
+    MLOGF(I, "position angle_bam=0x%08lx speed_mpu=%ld\r\n",
+        (unsigned long)angle.wBam32,
+        (long)(1000.0f * mfoc_to_float(speed)));
+}
+#endif
+#ifdef MFOC_APP_POSITION_COMMAND
+#define MFOC_APP_POSITION_HELP MFOC_APP_POSITION_COMMAND " | "
+#define MFOC_APP_POSITION_LIST MFOC_APP_POSITION_COMMAND "/"
+#else
+#define MFOC_APP_POSITION_HELP ""
+#define MFOC_APP_POSITION_LIST ""
+#endif
 
 /** @brief Apply dq current and start only from IDLE.
  * @param d d-axis PU. @param q q-axis PU. @return Command/start result. */
@@ -364,12 +403,14 @@ static void _mfoc_app_CmdMotor(const char *args)
             MLOGF(W, "invalid motor arguments\r\n");
         }
         return;
-    } else if (mshell_ConsumeWord(&cursor, "encoder")) {
+#ifdef MFOC_APP_POSITION_COMMAND
+    } else if (mshell_ConsumeWord(&cursor, MFOC_APP_POSITION_COMMAND)) {
         valid = mshell_AtEnd(cursor);
         if (valid) {
-            _mfoc_app_PrintEncoder();
+            _mfoc_app_PrintPosition();
             return;
         }
+#endif
     } else if (mshell_ConsumeWord(&cursor, "current")) {
         valid = mshell_Parse(&cursor, &d) == MSHELL_PARSE_OK &&
             mshell_Parse(&cursor, &q) == MSHELL_PARSE_OK &&
@@ -444,7 +485,8 @@ static void _mfoc_app_CmdMotor(const char *args)
             "       motor sensorless <speed_pu> <current_pu>\r\n"
             "       motor hfi [start|status]; motor stop to end\r\n"
             "       motor flux [status]; observer only\r\n"
-            "       motor encoder | stop | clear | status | help\r\n");
+            "       motor " MFOC_APP_POSITION_HELP
+            "stop | clear | status | help\r\n");
         return;
     }
     if (valid) {
@@ -455,5 +497,6 @@ static void _mfoc_app_CmdMotor(const char *args)
 }
 
 MODUS_SHELL_CMD(motor, _mfoc_app_CmdMotor,
-    "MFOC: current/speed/openloop/sensorless/hfi/flux/encoder/align/stop/status");
+    "MFOC: current/speed/openloop/sensorless/hfi/flux/"
+    MFOC_APP_POSITION_LIST "align/stop/status");
 #endif

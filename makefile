@@ -279,7 +279,7 @@ endif
 # Triggers recompile whenever target, flags, or numeric backend changes
 # ------------------------------------------------------------------------------
 BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC)\
-                        -mod_$(MODUS_ENABLE)
+                        -mod_$(MODUS_ENABLE)$(TARGET_CONFIG_SIGNATURE)
 
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp
 
