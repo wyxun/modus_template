@@ -5,7 +5,8 @@ $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-wave-' + [guid]::NewGuid()
 New-Item -ItemType Directory -Path $output | Out-Null
 $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     'modus/src/arch', 'modus/lib/plooc', 'modus/lib/perf_counter',
-    'vendor/cortex-m/cmsis_core', 'class', 'mfoc', 'mfoc/math/include', 'mfoc/control/include',
+    'vendor/cortex-m/cmsis_core', 'class', 'mfoc', 'mfoc/include',
+    'mfoc/math/include', 'mfoc/control/include',
     'mfoc/core/include', 'mfoc/motor/include', 'mfoc/position/include',
     'mfoc/port/include', 'mfoc/identification/include') |
     ForEach-Object { '-I' + (Join-Path $repo $_) }

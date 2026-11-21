@@ -37,7 +37,7 @@ foreach ($profile in $profiles) {
         '-Wall', '-Wextra', '-Werror', '-ffunction-sections', '-fdata-sections',
         '-fstack-usage', "-DMFOC_NUMERIC_$numeric=1", '-DMFOC_TRIG_BACKEND=1',
         '-DMFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION',
-        "-I$library", "-I$(Join-Path $math 'include')",
+        "-I$library", "-I$library/include", "-I$(Join-Path $math 'include')",
         "-I$(Join-Path $library 'control/include')",
         "-I$(Join-Path $library 'core/include')",
         "-I$(Join-Path $library 'motor/include')",
@@ -146,7 +146,8 @@ $expected = @('mfoc_port_current', 'mfoc_port_position', 'mfoc_port_pwm',
 $unexpected = @($external | Where-Object { $_ -cnotin $expected })
 if ($unexpected) { throw "Unexpected FIXED sampling dependencies: $unexpected" }
 Write-Output "Cortex-M0 FIXED linked sampling paths passed; external references: $external"
-$portIncludes = @('mfoc', 'mfoc/math/include', 'mfoc/control/include',
+$portIncludes = @('mfoc', 'mfoc/include', 'mfoc/math/include',
+    'mfoc/control/include',
     'mfoc/port/include', 'mfoc/position/include',
     'mfoc/motor/include', 'modus/src',
     'modus/lib/perf_counter',

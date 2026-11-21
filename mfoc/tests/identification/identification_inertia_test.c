@@ -4,7 +4,7 @@
  * @author Codex
  * @date 2026-11-19
  */
-#include "mfoc_identification_rotation.h"
+#include "mfoc_identification_internal.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

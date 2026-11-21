@@ -9,6 +9,18 @@
 #include "mfoc_angle.h"
 #include "mfoc_motor_params.h"
 
+/* Initial observer tuning. Gain uses normalized time and PLL Ki uses
+ * speed PU per error per second. Override when tuning the application. */
+#ifndef MFOC_FLUX_GAIN
+#define MFOC_FLUX_GAIN 0.1f
+#endif
+#ifndef MFOC_FLUX_PLL_KP
+#define MFOC_FLUX_PLL_KP 0.5f
+#endif
+#ifndef MFOC_FLUX_PLL_KI
+#define MFOC_FLUX_PLL_KI 100.0f
+#endif
+
 /** @brief Init-only PU tuning; caller supplies finite representable values.
  * gain uses normalized time tau=omega_base*t. PLL kp has units speed PU
  * per normalized phase error; ki has units speed PU per error per second. */

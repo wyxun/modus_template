@@ -82,6 +82,22 @@ static void halbutton_Init(void)
     gpio_init(GPIOA, &gpio_init_struct);
 }
 
+#if AT32F413_BOARD_HALL
+/** @brief Configure the J1 Hall pads to use the board's external pulls. */
+static inline void halhall_Init(void)
+{
+    crm_periph_clock_enable(CRM_IOMUX_PERIPH_CLOCK, TRUE);
+    crm_periph_clock_enable(CRM_GPIOB_PERIPH_CLOCK, TRUE);
+    gpio_pin_remap_config(SWJTAG_GMUX_010, TRUE);
+    gpio_init_type pins = {0};
+    gpio_default_para_init(&pins);
+    pins.gpio_pins = GPIO_PINS_4 | GPIO_PINS_5 | GPIO_PINS_0;
+    pins.gpio_mode = GPIO_MODE_INPUT;
+    pins.gpio_pull = GPIO_PULL_NONE;
+    gpio_init(GPIOB, &pins);
+}
+#endif
+
 void peripheral_Init(void)
 {
     /* NVIC: 4-bit preemption priority, 0-bit sub-priority */
@@ -97,6 +113,9 @@ void peripheral_Init(void)
 
     /* 最后初始化按键以防其他外设初始化对其造成覆盖 */
     halbutton_Init();
+#if AT32F413_BOARD_HALL
+    halhall_Init();
+#endif
 
     /* SysTick 1ms interrupt */
     SysTick_Config(SystemCoreClock / 1000U);

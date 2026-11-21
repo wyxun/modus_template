@@ -4,7 +4,8 @@ $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-ekf-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
-$includes = @('', 'math/include', 'control/include', 'core/include', 'motor/include',
+$includes = @('', 'include', 'math/include', 'control/include', 'core/include',
+    'motor/include',
     'position/include', 'port/include') |
     ForEach-Object { '-I' + (Join-Path $library $_) }
 $base = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" |

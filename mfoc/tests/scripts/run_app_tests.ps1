@@ -9,18 +9,24 @@ New-Item -ItemType Directory -Path $output | Out-Null
 $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     'modus/src/arch',
     'modus/lib/plooc', 'modus/lib/perf_counter', 'vendor/cortex-m/cmsis_core',
-    'class', 'peripheral/stm32g431', 'mfoc', 'mfoc/math/include',
+    'class', 'peripheral/stm32g431', 'mfoc', 'mfoc/include', 'mfoc/math/include',
     'mfoc/control/include', 'mfoc/core/include',
     'mfoc/motor/include', 'mfoc/identification/include',
     'mfoc/position/include', 'mfoc/port/include') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 $numerics = if ($Ekf) { @('FLOAT') } else { @('FLOAT', 'FIXED') }
+$alternateConfig = (Join-Path $testsRoot 'motor/motor_config_test.h').Replace('\', '/')
 foreach ($numeric in $numerics) {
-  foreach ($case in @(@(0, 0), @(1, 0), @(1, 1))) {
-    $shell, $timing = $case
-    $exe = Join-Path $output "app-$numeric-shell-$shell-timing-$timing.exe"
+  foreach ($case in @(@(0, 0, 0), @(1, 0, 0), @(1, 1, 0), @(0, 0, 1))) {
+    $shell, $timing, $alternate = $case
+    $exe = Join-Path $output "app-$numeric-$shell-$timing-$alternate.exe"
     $logFlags = @()
     if ($shell -eq 0) { $logFlags = @('-D__NO_USE_LOG__') }
+    $profileFlags = @()
+    if ($alternate) {
+        $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$alternateConfig>",
+            '-DMFOC_TEST_ALTERNATE_MOTOR=1', '-DMFOC_IDENTIFICATION_ENABLE=1')
+    }
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror @includes `
         "-DMFOC_NUMERIC_$numeric=1" -DMODUS_ENABLE=1 -DFOC_APP=2 `
         -DMFOC_USE_PERFC_FSM=1 `
@@ -30,7 +36,7 @@ foreach ($numeric in $numerics) {
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$Flux" `
         "-DMFOC_FEEDBACK_ENABLE_EKF=$Ekf" `
         "-DMSHELL_ENABLE=$shell" `
-        @logFlags -D__NO_USE_ASSERT `
+        @logFlags @profileFlags -D__NO_USE_ASSERT `
         -D__PERFC_USE_USER_CUSTOM_PORTING__=1 `
         '-D__PERFC_CFG_PORTING_INCLUDE__=<perfc_port.h>' `
         -D__COMPILER_HAS_GNU_EXTENSIONS__=1 `
@@ -40,6 +46,6 @@ foreach ($numeric in $numerics) {
     if ($LASTEXITCODE -ne 0) { throw "App build failed: $numeric" }
     & $exe
     if ($LASTEXITCODE -ne 0) { throw "App test failed: $numeric" }
-    Write-Output "$numeric app / shell=$shell timing=$timing passed"
+    Write-Output "$numeric app / shell=$shell timing=$timing alternate=$alternate passed"
   }
 }

@@ -14,7 +14,7 @@ Flux 用本拍定子电流和上一区间的模型电压估算转子磁链，再
 
 ## 磁链递推与 PLL
 
-设 `fs = sample_hz`、`ωb = 2π × speed_base_hz`，归一化步长 `Δτ = ωb/fs`。以下磁链用 `ψb = Vb/ωb` 归一化，`ψm` 为 `model.flux`，`Ls` 为等值的 `model.ld` 和 `model.lq`。每拍依次执行下列运算。[递推实现](../../position/src/mfoc_flux.c) · [电机模型基值](../../mfoc_motor_config.h)
+设 `fs = sample_hz`、`ωb = 2π × speed_base_hz`，归一化步长 `Δτ = ωb/fs`。以下磁链用 `ψb = Vb/ωb` 归一化，`ψm` 为 `model.flux`，`Ls` 为等值的 `model.ld` 和 `model.lq`。每拍依次执行下列运算。[递推实现](../../position/src/mfoc_flux.c) · [电机配置选择](../configuration.md#motor-profile)
 
 1. 从上拍定子磁链积分电压，得到 `ψs_pred = ψs[k-1] + Δτ × (u[k-1] − Rs × i[k])`。扣去电感磁链后，`r = ψs_pred − Ls × i[k]` 是转子磁链预测值。
 2. 比较 `r` 的模长平方与永磁体磁链平方。修正量沿 `r` 方向，`ψr = r + gain × Δτ × (ψm² − |r|²) × r`。磁链偏小时修正量朝外，偏大时朝内。将 `ψr + Ls × i[k]` 保存为下一拍积分所需的定子磁链。这里的电机模型采用常量电感和永磁磁链。FIXED 中间运算到达数值载体边界时会饱和，模型未描述铁芯随电流变化的磁饱和特性。
@@ -30,7 +30,7 @@ Flux 用本拍定子电流和上一区间的模型电压估算转子磁链，再
 | `MFOC_FLUX_PLL_KP` | 0.5 | 相位误差对本拍速度的比例修正 |
 | `MFOC_FLUX_PLL_KI` | 100 | 相位误差在每秒内累积的速度修正，Init 按采样率折算到每拍 |
 
-这组值是影子观察的起始配置。磁链幅值接近 `ψm`、相差很小时，`e` 近似为弧度相差。由上式的连续近似，PLL 自然角频率为 `ωn ≈ √(ωb × pll_ki)`，阻尼比为 `ζ ≈ ωb × pll_kp/(2ωn)`。这两个量可用来选择响应速度与阻尼，实际跟踪带宽还受采样率和磁链估计误差影响。[增益默认值](../../mfoc_config.h) · [应用配置](../../../class/mfoc_app.c)
+这组值是影子观察的起始配置。磁链幅值接近 `ψm`、相差很小时，`e` 近似为弧度相差。由上式的连续近似，PLL 自然角频率为 `ωn ≈ √(ωb × pll_ki)`，阻尼比为 `ζ ≈ ωb × pll_kp/(2ωn)`。这两个量可用来选择响应速度与阻尼，实际跟踪带宽还受采样率和磁链估计误差影响。[增益默认值](../../position/include/mfoc_flux.h) · [应用配置](../../../class/mfoc_app.c)
 
 低速时，永磁磁链转动产生的电压减小，电阻压降的估算误差、逆变器死区和器件压降对 `u − Rs × i` 的相对影响增大。模长修正只沿已有的磁链方向作用，静止且初始磁链为零时，算法无法仅靠模长约束确定转子方位。即使 `valid` 已置位，接管仍需经过 Motor 的速度窗与角度捕获判据。[无感接管](feedback.md#handover)
 
@@ -38,7 +38,7 @@ Flux 用本拍定子电流和上一区间的模型电压估算转子磁链，再
 
 ## 接线与验证
 
-Flux 默认关闭。编译时设 `MFOC_FEEDBACK_ENABLE_FLUX=1` 即可运行观测器。做编码器对照时，同时启用物理位置并选 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。若选 `MFOC_FEEDBACK_FLUX`，Feedback 在本拍电流和前区间电压齐备且 `flux_output.valid` 为真时发布 Flux 的角速。[反馈配置](../../mfoc_config.h)
+项目默认启用 Flux 并将其选作主反馈。做编码器对照时，同时启用物理位置并选 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。选用 `MFOC_FEEDBACK_FLUX` 时，Feedback 在本拍电流和前区间电压齐备且 `flux_output.valid` 为真时发布 Flux 的角速。[反馈配置](../../mfoc_config.h)
 
 从仓库根目录运行 `./mfoc/tests/scripts/run_flux_tests.ps1`。FLOAT、FIXED 都用等电感 PMSM 合成波形回放 ±0.05、±0.3 和 ±0.7 PU 的恒速段，以及 +0.3 到 −0.3 PU 的换向。测试在预热后检查最大角差和速度误差，另行覆盖零磁链、模长修正、复位、后端选择和停机更新模型。[主机脚本](../../tests/scripts/run_flux_tests.ps1) · [数值回放](../../tests/position/flux_algorithm_test.c) · [Feedback 接线用例](../../tests/position/flux_test.c)
 

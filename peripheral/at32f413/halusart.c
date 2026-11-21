@@ -6,7 +6,7 @@
 #include "at32f413.h"
 #include "halusart.h"
 
-#define USART1_BAUDRATE  115200
+#define USART1_BAUDRATE 115200U
 
 void halusart_Init(void)
 {
@@ -33,23 +33,12 @@ void halusart_Init(void)
     /* Remap USART1 to PB6/7: USART1_GMUX_0001 */
     gpio_pin_remap_config(USART1_GMUX_0001, TRUE);
 
-    nvic_irq_enable(USART1_IRQn, 8, 0);
-
     usart_init(USART1, USART1_BAUDRATE, USART_DATA_8BITS, USART_STOP_1_BIT);
     usart_transmitter_enable(USART1, TRUE);
     usart_receiver_enable(USART1, TRUE);
     usart_parity_selection_config(USART1, USART_PARITY_NONE);
     usart_hardware_flow_control_set(USART1, USART_HARDWARE_FLOW_NONE);
 
-    usart_interrupt_enable(USART1, USART_RDBF_INT, TRUE);
     usart_enable(USART1, TRUE);
-
-    usart_flag_clear(USART1, USART_TDBE_FLAG);
-    usart_flag_clear(USART1, USART_TDC_FLAG);
-    usart_flag_clear(USART1, USART_RDBF_FLAG);
-    usart_interrupt_enable(USART1, USART_TDC_INT, TRUE);
-
-    /* Bind USART1 to MDI stream instance */
-    extern void at32_usart1_init(void);
-    at32_usart1_init();
+    /* mdi_Init enables RX IRQ after the stream queues are ready. */
 }

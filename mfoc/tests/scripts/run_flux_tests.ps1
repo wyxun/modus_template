@@ -25,7 +25,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     $leaf = Join-Path $output "identification-$numeric.exe"
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
         "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
-        "-I$library" "-I$library/math/include" "-I$library/control/include" `
+        "-I$library" "-I$library/include" "-I$library/math/include" `
+        "-I$library/control/include" `
         "-I$library/motor/include" "-I$library/identification/include" `
         "$testsRoot/identification/identification_flux_test.c" `
         "$library/identification/src/mfoc_identification_flux.c" `
@@ -43,7 +44,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
             "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `
             "-DMFOC_FEEDBACK_ENABLE_HFI=$hfi" `
             "-DMFOC_FEEDBACK_BACKEND=$backend" `
-            "-I$library" "-I$library/math/include" `
+            "-I$library" "-I$library/include" "-I$library/math/include" `
             "-I$library/control/include" `
             "-I$library/core/include" "-I$library/motor/include" `
             "-I$library/position/include" "-I$library/port/include" `

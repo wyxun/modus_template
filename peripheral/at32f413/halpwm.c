@@ -15,6 +15,10 @@
 
 #include "at32f413.h"
 #include "halpwm.h"
+#include "mdi/instance.h"
+
+#define DEADTIME_CLK_DIV TMR_CLOCK_DIV2
+#define DEADTIME_VAL     100U /* 1 us at a 100 MHz dead-time clock. */
 
 void halpwm_Init(void)
 {
@@ -115,55 +119,14 @@ void halpwm_Init(void)
     tmr_event_sw_trigger(TMR1, TMR_OVERFLOW_SWTRIG);
     tmr_flag_clear(TMR1, TMR_OVF_FLAG | TMR_C4_FLAG);
     tmr_one_cycle_mode_enable(TMR1, FALSE);
-    halpwm_Stop();
+    (void)MDI_PWM_SafeStop(bridge);
 }
 
 /** @brief Start the ADC trigger only after ADC self-calibration.
  * @return None. No phase outputs are enabled by this operation. */
 void halpwm_StartSampling(void)
 {
-    if (SystemCoreClock == AT32F413_TMR1_HZ) {
+    if (mdi_at32f413_control_clock_ready()) {
         tmr_counter_enable(TMR1, TRUE);
     }
-}
-
-/** @brief Apply all startup compares before enabling the power stage.
- * @param duty_u U compare. @param duty_v V compare. @param duty_w W compare.
- * @return True if the timer clock and hardware Break permit startup. */
-bool halpwm_Arm(uint32_t duty_u, uint32_t duty_v, uint32_t duty_w)
-{
-    halpwm_Stop();
-    if (SystemCoreClock != AT32F413_TMR1_HZ ||
-        gpio_input_data_bit_read(GPIOB, GPIO_PINS_12) == RESET) {
-        return false;
-    }
-    halpwm_SetDuty(duty_u, duty_v, duty_w);
-    tmr_event_sw_trigger(TMR1, TMR_OVERFLOW_SWTRIG);
-    tmr_flag_clear(TMR1, TMR_BRK_FLAG);
-    tmr_output_enable(TMR1, TRUE);
-    return halpwm_OutputsEnabled();
-}
-
-/** @brief Arm existing compare values for the board's legacy PWM service.
- * @return True if the output gate was enabled. */
-bool halpwm_Start(void)
-{
-    return halpwm_Arm(TMR1->c1dt, TMR1->c2dt, TMR1->c3dt);
-}
-
-/** @brief Close the phase gates while retaining the ADC trigger counter.
- * @return None. */
-void halpwm_Stop(void)
-{
-    tmr_output_enable(TMR1, FALSE);
-}
-
-/** @brief Submit three preloaded compares for the next timer update.
- * @param wDutyU U compare. @param wDutyV V compare. @param wDutyW W compare.
- * @return None. */
-void halpwm_SetDuty(uint32_t wDutyU, uint32_t wDutyV, uint32_t wDutyW)
-{
-    TMR1->c1dt = wDutyU;
-    TMR1->c2dt = wDutyV;
-    TMR1->c3dt = wDutyW;
 }

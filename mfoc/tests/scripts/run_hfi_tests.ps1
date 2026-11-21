@@ -7,13 +7,20 @@ $sources = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c",
     "$library/core/src/*.c" |
     ForEach-Object { $_.FullName }) + @(
     "$library/position/src/mfoc_hfi.c", "$library/motor/src/mfoc_feedback.c")
+$alternateConfig = (Join-Path $testsRoot 'motor/motor_config_test.h').Replace('\', '/')
 foreach ($numeric in @('FLOAT', 'FIXED')) {
-    foreach ($polarity in @(0, 1)) {
-        $exe = Join-Path $output "algorithm-$numeric-$polarity.exe"
+    foreach ($case in @(@(0, 0), @(1, 0), @(0, 1))) {
+        $polarity, $alternate = $case
+        $exe = Join-Path $output "algorithm-$numeric-$polarity-$alternate.exe"
+        $profileFlags = @()
+        if ($alternate) {
+            $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$alternateConfig>",
+                '-DMFOC_TEST_ALTERNATE_MOTOR=1')
+        }
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
-            "-DMFOC_HFI_ENABLE_POLARITY=$polarity" `
-            "-I$library" "-I$library/math/include" `
+            "-DMFOC_HFI_ENABLE_POLARITY=$polarity" @profileFlags `
+            "-I$library" "-I$library/include" "-I$library/math/include" `
             "-I$library/control/include" `
             "-I$library/position/include" `
             "$testsRoot/position/hfi_algorithm_test.c" `
@@ -23,7 +30,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         if ($LASTEXITCODE -ne 0) { throw 'HFI algorithm build failed' }
         & $exe
         if ($LASTEXITCODE -ne 0) { throw 'HFI algorithm test failed' }
-        Write-Output "$numeric HFI algorithm polarity=$polarity passed"
+        Write-Output "$numeric HFI polarity=$polarity alternate=$alternate passed"
     }
     $exe = Join-Path $output "$numeric.exe"
     & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
@@ -31,7 +38,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         -DMFOC_FEEDBACK_ENABLE_POSITION=0 -DMFOC_FEEDBACK_ENABLE_SMO=0 `
         -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
         -DMFOC_FEEDBACK_ENABLE_HFI=1 -DMFOC_FEEDBACK_BACKEND=3 `
-        "-I$library" "-I$library/math/include" "-I$library/control/include" `
+        "-I$library" "-I$library/include" "-I$library/math/include" `
+        "-I$library/control/include" `
         "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/position/include" `
         "-I$library/port/include" "$testsRoot/position/hfi_channel_test.c" `
@@ -47,7 +55,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
             -DMFOC_FEEDBACK_ENABLE_POSITION=1 -DMFOC_FEEDBACK_ENABLE_SMO=1 `
             -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
             -DMFOC_FEEDBACK_ENABLE_HFI=1 "-DMFOC_FEEDBACK_BACKEND=$backend" `
-            "-I$library" "-I$library/math/include" `
+            "-I$library" "-I$library/include" "-I$library/math/include" `
             "-I$library/control/include" `
             "-I$library/core/include" "-I$library/motor/include" `
             "-I$library/position/include" "-I$library/port/include" `

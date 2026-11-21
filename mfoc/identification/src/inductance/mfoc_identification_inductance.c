@@ -5,6 +5,7 @@
  * @date 2026-10-26
  */
 #include "mfoc_identification_inductance_internal.h"
+#include "mfoc_motor_config_internal.h"
 
 #define L_SAMPLES MFOC_IDENTIFICATION_L_SAMPLES
 #define L_DT_PU MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_RAD_S /                 \

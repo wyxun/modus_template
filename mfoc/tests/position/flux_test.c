@@ -6,7 +6,7 @@
  */
 #include "mfoc_feedback.h"
 #include "mfoc_port.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_motor_config_internal.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

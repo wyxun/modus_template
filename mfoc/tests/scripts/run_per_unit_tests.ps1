@@ -6,7 +6,7 @@ New-Item -ItemType Directory -Path $output | Out-Null
 Write-Output "PU test artifacts: $output"
 
 $modules = @('math', 'control', 'core', 'motor', 'port', 'position')
-$includes = @("-I$library") + @($modules | ForEach-Object {
+$includes = @("-I$library", "-I$library/include") + @($modules | ForEach-Object {
     "-I$library/$_/include"
 })
 $sources = @(Get-ChildItem -File ($modules | ForEach-Object {
@@ -28,45 +28,22 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     if ($LASTEXITCODE -ne 0) { throw "PU replay failed: $numeric" }
 }
 
-# Ld/Lq and rotating identification use a shared build-time timing profile.
-# Reuse the P09 PMSM fixture under both physical base sets in a private copy.
-$isolated = Join-Path $output 'mfoc'
-New-Item -ItemType Directory -Path $isolated | Out-Null
-Get-ChildItem -LiteralPath $library -File -Filter '*.h' | Copy-Item -Destination $isolated
-foreach ($module in $modules + 'identification') {
-    $destination = Join-Path $isolated $module
-    New-Item -ItemType Directory -Path $destination | Out-Null
-    Copy-Item -LiteralPath "$library/$module/include" -Destination $destination -Recurse
-    $sourceDir = "$library/$module/src"
-    if (Test-Path -LiteralPath $sourceDir) {
-        Copy-Item -LiteralPath $sourceDir -Destination $destination -Recurse
-    }
-}
-New-Item -ItemType Directory -Path "$isolated/tests/scripts", "$isolated/tests/motor" | Out-Null
-Copy-Item -LiteralPath "$tests/scripts/run_core_tests.ps1" -Destination "$isolated/tests/scripts"
-Copy-Item -LiteralPath "$tests/motor/motor_port_fake.c", "$tests/motor/motor_port_fake.h", `
-    "$tests/motor/motor_identification_plant_test.c" -Destination "$isolated/tests/motor"
-$profileHeader = Join-Path $isolated 'mfoc_motor_config.h'
-$template = Get-Content -LiteralPath $profileHeader -Raw -Encoding UTF8
+# Reuse the independent P09 PMSM fixture under both compile-time profiles.
 $profiles = @(
-    @{ CURRENT_MILLIAMP = 3500; VOLTAGE_MILLIVOLT = 12000; ELECTRICAL_HZ = 400 },
-    @{ CURRENT_MILLIAMP = 4000; VOLTAGE_MILLIVOLT = 14000; ELECTRICAL_HZ = 320 }
+    @{ Name = '2804'; Path = ''; Bases = 'BASES 3500 12000 400' },
+    @{ Name = 'alternate'; Path = (Join-Path $tests 'motor/motor_config_test.h');
+        Bases = 'BASES 4000 14000 320' }
 )
 $results = @()
 foreach ($profile in $profiles) {
-    $config = $template
-    foreach ($base in $profile.Keys) {
-        $macro = "MFOC_MOTOR_BASE_$base"
-        $definition = "(?m)^#define $macro[ \t]+[0-9]+U(?=\r?$)"
-        if ([regex]::Matches($config, $definition).Count -ne 1) {
-            throw "Expected one literal definition of $macro"
-        }
-        $config = $config -replace $definition, "#define $macro $($profile[$base])U"
+    $log = & (Join-Path $PSScriptRoot 'run_core_tests.ps1') `
+        -Tests motor_identification_plant -Backend 0 -Position 0 -Hfi 0 `
+        -Identify 1 -MotorConfig $profile.Path
+    $log | Set-Content -LiteralPath (Join-Path $output "plant-$($profile.Name).log")
+    $bases = @($log | Where-Object { $_ -match '^BASES ' })
+    if ($bases.Count -ne 2 -or ($bases | Where-Object { $_ -ne $profile.Bases })) {
+        throw "Plant did not compile with the $($profile.Name) profile bases"
     }
-    Set-Content -LiteralPath $profileHeader -Value $config -Encoding UTF8
-    $log = & (Join-Path $isolated 'tests/scripts/run_core_tests.ps1') `
-        -Tests motor_identification_plant -Backend 0 -Position 0 -Hfi 0 -Identify 1
-    $log | Set-Content -LiteralPath (Join-Path $output "plant-$($profile.ELECTRICAL_HZ).log")
     $rows = @($log | Where-Object { $_ -match '^SI ' })
     if ($rows.Count -ne 2) { throw 'Expected FLOAT and FIXED SI results' }
     $results += ,$rows

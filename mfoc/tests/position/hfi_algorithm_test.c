@@ -9,6 +9,11 @@
 #include <math.h>
 #include <stdio.h>
 
+#if defined(MFOC_TEST_ALTERNATE_MOTOR)
+_Static_assert(MFOC_HFI_SPEED_BASE_HZ == 320U,
+               "HFI must use the selected motor's electrical speed base");
+#endif
+
 /** @brief Compare scalar values within fixed-point rounding tolerance.
  * @param actual Measured scalar. @param expected Reference scalar.
  * @return None. */

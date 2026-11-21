@@ -5,10 +5,7 @@
  * @date 2026-11-20
  */
 #include "mfoc_port.h"
-#include "at32f413.h"
-#include "haladc.h"
-#include "halpwm.h"
-#include "perf_counter.h"
+#include "mdi/instance.h"
 #if MFOC_FEEDBACK_ENABLE_POSITION
 #include "mfoc_at32_hall_config.h"
 #include "mfoc_hall.h"
@@ -43,7 +40,7 @@ static at32_mfoc_port_t s_port = {0};
 /** @brief Read board time for Port users. @return Full perf-counter ticks. */
 mfoc_tick_t mfoc_port_tick(void)
 {
-    return (mfoc_tick_t)get_system_ticks();
+    return MDI_TICK_Now(raw_tick);
 }
 
 /** @brief Read the initialized Port clock rate. @return Ticks per second. */
@@ -62,14 +59,6 @@ static mfoc_hall_t s_hall = {0};
 static mfoc_scalar_t s_hall_speed_base = MFOC_ZERO;
 static uint8_t s_hall_code = UINT8_MAX;
 
-/** @brief Read the three J1 Hall inputs in one GPIO snapshot.
- * @return Raw code with H1 in bit zero, H2 in bit one and H3 in bit two. */
-static uint8_t _mfoc_port_HallCode(void)
-{
-    const uint32_t levels = GPIOB->idt;
-    return (uint8_t)(((levels >> 4U) & 3U) | ((levels & 1U) << 2U));
-}
-
 /** @brief Validate the measured Hall map and acquire the present sector.
  * @param base Electrical frequency in hertz.
  * @return Map validation and initial Hall level status. */
@@ -84,7 +73,7 @@ static mfoc_result_t _mfoc_port_HallSeed(mfoc_scalar_t base)
     mfoc_result_t rc = mfoc_hall_Init(&next, &cfg,
         mfoc_port_tick_frequency());
     if (rc != MFOC_RESULT_OK) { return rc; }
-    uint8_t code = _mfoc_port_HallCode();
+    const uint8_t code = (uint8_t)MDI_IO_Read(hall_inputs);
     rc = mfoc_hall_OnEdge(&next, code, mfoc_port_tick());
     if (rc != MFOC_RESULT_OK) { return rc; }
     uint32_t irq_mask = __get_PRIMASK();
@@ -95,29 +84,12 @@ static mfoc_result_t _mfoc_port_HallSeed(mfoc_scalar_t base)
     return MFOC_RESULT_OK;
 }
 
-/** @brief Configure the J1 Hall inputs; use the board's external pulls.
- * @param base Electrical frequency in hertz.
- * @return Hall map and initial acquisition status. */
-static mfoc_result_t _mfoc_port_HallInit(mfoc_scalar_t base)
-{
-    crm_periph_clock_enable(CRM_IOMUX_PERIPH_CLOCK, TRUE);
-    crm_periph_clock_enable(CRM_GPIOB_PERIPH_CLOCK, TRUE);
-    gpio_pin_remap_config(SWJTAG_GMUX_010, TRUE);
-    gpio_init_type pins = {0};
-    gpio_default_para_init(&pins);
-    pins.gpio_pins = GPIO_PINS_4 | GPIO_PINS_5 | GPIO_PINS_0;
-    pins.gpio_mode = GPIO_MODE_INPUT;
-    pins.gpio_pull = GPIO_PULL_NONE;
-    gpio_init(GPIOB, &pins);
-    return _mfoc_port_HallSeed(base);
-}
-
 /** @brief Publish a new Hall sector when the foreground sees a change.
  * @return Transition status. The foreground must service every sector. */
 mfoc_result_t mfoc_port_position_run(void)
 {
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    const uint8_t code = _mfoc_port_HallCode();
+    const uint8_t code = (uint8_t)MDI_IO_Read(hall_inputs);
     if (code == s_hall_code) { return MFOC_RESULT_OK; }
     s_hall_code = code;
     return mfoc_hall_OnEdge(&s_hall, code, mfoc_port_tick());
@@ -138,7 +110,7 @@ mfoc_result_t mfoc_port_position(mfoc_angle_t *angle, mfoc_scalar_t *speed)
 mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t held_angle)
 {
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    const uint8_t code = _mfoc_port_HallCode();
+    const uint8_t code = (uint8_t)MDI_IO_Read(hall_inputs);
     for (unsigned int i = 0U; i < 6U; ++i) {
         if (s_hall_sectors[i].code != code) { continue; }
         const unsigned int next = (i + 1U) % 6U;
@@ -162,21 +134,19 @@ static mfoc_result_t _mfoc_port_Calibrate(at32_mfoc_port_t *port)
     uint32_t sum_v = 0U;
     uint32_t sum_w = 0U;
     int64_t timeout = 0;
-    haladc_DiscardPreempt();
+    mdi_at32_adc_AckCurrentFrame();
     for (uint32_t i = 0U; i < OFFSET_SAMPLES; ++i) {
-        while (!haladc_PreemptReady()) {
+        while (!MDI_Sample_IsReady(phase_current)) {
             if (perfc_is_time_out_ms(20U, &timeout, false)) {
                 return MFOC_RESULT_IO;
             }
         }
-        uint16_t u = 0U;
-        uint16_t v = 0U;
-        uint16_t w = 0U;
-        haladc_GetPreemptRaw(&u, &v, &w);
-        haladc_DiscardPreempt();
-        sum_u += u;
-        sum_v += v;
-        sum_w += w;
+        MDI_Sample_Frame(phase_current) frame;
+        MDI_Sample_Read(phase_current, &frame);
+        mdi_at32_adc_AckCurrentFrame();
+        sum_u += frame.u;
+        sum_v += frame.v;
+        sum_w += frame.w;
     }
     port->offset_u = (sum_u + OFFSET_SAMPLES / 2U) / OFFSET_SAMPLES;
     port->offset_v = (sum_v + OFFSET_SAMPLES / 2U) / OFFSET_SAMPLES;
@@ -202,9 +172,9 @@ mfoc_result_t mfoc_port_init(const mfoc_port_cfg_t *cfg)
         cfg->voltage_base_millivolt == 0U) {
         return MFOC_RESULT_INVALID_ARGUMENT;
     }
-    if (halpwm_OutputsEnabled()) { return MFOC_RESULT_INVALID_STATE; }
+    if (MDI_PWM_IsEnabled(bridge)) { return MFOC_RESULT_INVALID_STATE; }
     /* An HEXT failure leaves the board on the incompatible HICK timebase. */
-    if (SystemCoreClock != 200000000U) { return MFOC_RESULT_SAFETY; }
+    if (!mdi_at32f413_control_clock_ready()) { return MFOC_RESULT_SAFETY; }
     at32_mfoc_port_t next = {
         .voltage_base_millivolt = cfg->voltage_base_millivolt,
     };
@@ -225,7 +195,7 @@ mfoc_result_t mfoc_port_init(const mfoc_port_cfg_t *cfg)
     mfoc_result_t rc = _mfoc_port_Calibrate(&next);
     if (rc != MFOC_RESULT_OK) { return rc; }
 #if MFOC_FEEDBACK_ENABLE_POSITION
-    rc = _mfoc_port_HallInit(cfg->electrical_speed_base_hz);
+    rc = _mfoc_port_HallSeed(cfg->electrical_speed_base_hz);
     if (rc != MFOC_RESULT_OK) { return rc; }
     s_hall_speed_base = cfg->electrical_speed_base_hz;
 #endif
@@ -253,24 +223,22 @@ static inline mfoc_scalar_t _mfoc_port_ConvertCurrent(int32_t delta)
 mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 {
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    uint16_t raw_u = 0U;
-    uint16_t raw_v = 0U;
-    uint16_t raw_w = 0U;
-    haladc_GetPreemptRaw(&raw_u, &raw_v, &raw_w);
+    MDI_Sample_Frame(phase_current) frame;
+    MDI_Sample_Read(phase_current, &frame);
     *current = (mfoc_uvw_t){
-        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_u - (int32_t)raw_u),
-        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_v - (int32_t)raw_v),
-        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_w - (int32_t)raw_w),
+        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_u - (int32_t)frame.u),
+        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_v - (int32_t)frame.v),
+        _mfoc_port_ConvertCurrent((int32_t)s_port.offset_w - (int32_t)frame.w),
     };
     return MFOC_RESULT_OK;
 }
 
 /** @brief Undo the Vbus divider and ADC quantization.
  * @param raw ADC count. @return Rounded millivolts. */
-static uint32_t _mfoc_port_BusMillivolt(uint16_t raw)
+static uint32_t _mfoc_port_BusMillivolt(uint32_t raw)
 {
     const uint32_t full_scale_mv = ADC_REFERENCE_MV * BUS_DIVIDER_X100 / 100U;
-    return ((uint32_t)raw * full_scale_mv + ADC_SCALE / 2U) / ADC_SCALE;
+    return (raw * full_scale_mv + ADC_SCALE / 2U) / ADC_SCALE;
 }
 
 /** @brief Return a completed DC-link sample in Motor voltage units.
@@ -279,12 +247,14 @@ mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
 {
     if (bus == NULL) { return MFOC_RESULT_NULL; }
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    uint16_t raw = 0U;
-    if (!haladc_ReadBusRaw(&raw)) { return MFOC_RESULT_INVALID_STATE; }
-    if (raw == 0U || raw >= ADC_SCALE - 1U) {
+    mdi_adc_value_t sample;
+    if (MDI_ADC_Read(adc_bus_voltage, &sample) != MDI_OK) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+    if (sample.wCode == 0U || sample.wCode >= ADC_SCALE - 1U) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    const uint32_t mv = _mfoc_port_BusMillivolt(raw);
+    const uint32_t mv = _mfoc_port_BusMillivolt(sample.wCode);
 #if defined(MFOC_NUMERIC_FIXED)
     const uint64_t base = s_port.voltage_base_millivolt;
     const uint64_t pu = ((uint64_t)mv * MFOC_Q_SCALE + base / 2U) / base;
@@ -312,10 +282,13 @@ static inline uint32_t _mfoc_port_Compare(mfoc_scalar_t duty)
  * @param duty Valid phase duties. @return OK or gate fault. */
 mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
 {
-    if (!halpwm_OutputsEnabled()) { return MFOC_RESULT_SAFETY; }
-    halpwm_SetDuty(_mfoc_port_Compare(duty->qU),
-                  _mfoc_port_Compare(duty->qV),
-                  _mfoc_port_Compare(duty->qW));
+    if (!MDI_PWM_IsEnabled(bridge)) { return MFOC_RESULT_SAFETY; }
+    const MDI_PWM_Frame(bridge) frame = {
+        .u = _mfoc_port_Compare(duty->qU),
+        .v = _mfoc_port_Compare(duty->qV),
+        .w = _mfoc_port_Compare(duty->qW),
+    };
+    MDI_PWM_StageFast(bridge, &frame);
     return MFOC_RESULT_OK;
 }
 
@@ -324,26 +297,35 @@ mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
 mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
 {
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
-    haladc_RequestBus();
+    (void)MDI_ADC_Start(adc_bus_voltage);
     int64_t timeout = 0;
-    uint16_t raw = 0U;
-    while (!haladc_ReadBusRaw(&raw)) {
+    mdi_adc_value_t sample;
+    while (MDI_ADC_Read(adc_bus_voltage, &sample) != MDI_OK) {
         if (perfc_is_time_out_ms(2U, &timeout, false)) {
             return MFOC_RESULT_IO;
         }
     }
-    uint32_t mv = _mfoc_port_BusMillivolt(raw);
+    const uint32_t mv = _mfoc_port_BusMillivolt(sample.wCode);
     if (mv < BUS_MIN_MV || mv > BUS_MAX_MV) { return MFOC_RESULT_SAFETY; }
 #if MFOC_FEEDBACK_ENABLE_POSITION
     mfoc_result_t rc = _mfoc_port_HallSeed(s_hall_speed_base);
     if (rc != MFOC_RESULT_OK) { return rc; }
 #endif
-    if (!halpwm_Arm(_mfoc_port_Compare(initial_duty->qU),
-                    _mfoc_port_Compare(initial_duty->qV),
-                    _mfoc_port_Compare(initial_duty->qW))) {
+    (void)MDI_PWM_SafeStop(bridge);
+    if (!mdi_at32f413_control_clock_ready() ||
+        MDI_PWM_ClearFault(bridge) != MDI_OK) {
         return MFOC_RESULT_SAFETY;
     }
-    haladc_EnableControlIRQ();
+    const MDI_PWM_Frame(bridge) frame = {
+        .u = _mfoc_port_Compare(initial_duty->qU),
+        .v = _mfoc_port_Compare(initial_duty->qV),
+        .w = _mfoc_port_Compare(initial_duty->qW),
+    };
+    MDI_PWM_StageFast(bridge, &frame);
+    if (MDI_PWM_Enable(bridge, true) != MDI_OK) {
+        return MFOC_RESULT_SAFETY;
+    }
+    mdi_at32_adc_EnableControlIRQ();
     return MFOC_RESULT_OK;
 }
 
@@ -351,6 +333,6 @@ mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
  * @return OK after the gate request. */
 mfoc_result_t mfoc_port_pwm_stop(void)
 {
-    halpwm_Stop();
+    (void)MDI_PWM_SafeStop(bridge);
     return MFOC_RESULT_OK;
 }

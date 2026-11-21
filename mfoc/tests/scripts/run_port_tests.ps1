@@ -4,7 +4,7 @@ $library = Split-Path -Parent $testsRoot
 $repo = Split-Path -Parent $library
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-port-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
-$includes = @('mfoc', 'mfoc/math/include', 'mfoc/port/include',
+$includes = @('mfoc', 'mfoc/include', 'mfoc/math/include', 'mfoc/port/include',
     'mfoc/position/include',
     'modus/lib/perf_counter', 'modus/src',
     'modus/src/utilities', 'peripheral/stm32g431',

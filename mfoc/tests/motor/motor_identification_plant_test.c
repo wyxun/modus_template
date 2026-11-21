@@ -416,6 +416,9 @@ static void measure_chain(plant_t locked, plant_t free_rotor)
  * @return Zero after successful verification. */
 int main(void)
 {
+    printf("BASES %lu %lu %lu\n", (unsigned long)MFOC_MOTOR_BASE_CURRENT_MILLIAMP,
+        (unsigned long)MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT,
+        (unsigned long)MFOC_IDENTIFICATION_SPEED_BASE_HZ);
     check_locked_windings();
     const plant_t stock = {.motor = &stock_2804, .shaft = SHAFT_LOCKED};
     const plant_t locked = {.motor = &salient, .shaft = SHAFT_LOCKED};

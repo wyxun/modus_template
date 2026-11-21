@@ -18,6 +18,48 @@
 #define MFOC_IDENTIFICATION_SAMPLE_HZ MFOC_MOTOR_RUN_FREQ_HZ
 #define MFOC_IDENTIFICATION_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
 
+/* Standstill alpha modulation relative to the DC bus. The default levels
+ * leave current margin on the 2.55 ohm motor at 12 V. ALIGN uses low. */
+#ifndef MFOC_IDENTIFICATION_RS_MODULATION_LOW
+#define MFOC_IDENTIFICATION_RS_MODULATION_LOW 0.04f
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_MODULATION_HIGH
+#define MFOC_IDENTIFICATION_RS_MODULATION_HIGH 0.08f
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_CURRENT_MAX
+#define MFOC_IDENTIFICATION_RS_CURRENT_MAX 0.12f
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_CURRENT_MIN
+#define MFOC_IDENTIFICATION_RS_CURRENT_MIN 0.01f
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_STABILITY
+#define MFOC_IDENTIFICATION_RS_STABILITY 0.003f
+#endif
+/* Preserve the qualified nominal-bus slope range at the smaller step. */
+#ifndef MFOC_IDENTIFICATION_RS_DELTA_MIN
+#define MFOC_IDENTIFICATION_RS_DELTA_MIN 0.016f
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_ALIGN_MS
+#define MFOC_IDENTIFICATION_RS_ALIGN_MS 300U
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_SETTLE_MS
+#define MFOC_IDENTIFICATION_RS_SETTLE_MS 200U
+#endif
+#ifndef MFOC_IDENTIFICATION_RS_AVERAGE_MS
+#define MFOC_IDENTIFICATION_RS_AVERAGE_MS 100U
+#endif
+
+/* Locked-rotor pulse (V/Vdc), capture intervals and minimum current step. */
+#ifndef MFOC_IDENTIFICATION_L_PULSE
+#define MFOC_IDENTIFICATION_L_PULSE 0.04f
+#endif
+#ifndef MFOC_IDENTIFICATION_L_SAMPLES
+#define MFOC_IDENTIFICATION_L_SAMPLES 8U
+#endif
+#ifndef MFOC_IDENTIFICATION_L_DELTA_MIN
+#define MFOC_IDENTIFICATION_L_DELTA_MIN 0.001f
+#endif
+
 /** @brief Stage control flags; inactive uses normal Motor control. */
 typedef enum {
     MFOC_IDENTIFICATION_CONTROL_INACTIVE = 0,

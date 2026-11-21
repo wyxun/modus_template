@@ -17,7 +17,10 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         }
         & gcc -std=c11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" "-DMFOC_FEEDBACK_ENABLE_POSITION=$hall" `
-            "-I$fixture" "-I$board" "-I$library" "-I$library/math/include" `
+            "-DAT32F413_BOARD_HALL=$hall" -DAT32F413_CONTROL_HZ=20000U `
+            "-I$fixture" "-I$board" "-I$repo/modus/src" `
+            "-I$repo/modus/src/utilities" `
+            "-I$library" "-I$library/math/include" `
             "-I$library/port/include" "-I$library/position/include" `
             "$fixture/port_test.c" "$board/mfoc/mfoc_port.c" `
             "$library/math/src/mfoc_numeric.c" @hallSources -lm -o $exe

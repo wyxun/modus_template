@@ -10,7 +10,7 @@ Port 相电流按相电流峰值基准取 `I/Ibase`，母线使用 `Vdc/Vbase`�
 
 ## Feedback 模型更新的边界
 
-停机调用 `mfoc_feedback_SetMotorParamModel` 时，调用方提供有限的 PU 参数。当前 profile 的 Rs 范围为 [0.05, 8]，Ld 和 Lq 各为 [0.0001, 16]，磁链为 (0, 16]，惯量为 [0, 1024]，极对数为 1 至 65535。FIXED 按转换后的 Q15 端点比较，Rs、L 的下端点原始计数分别为 1638、3。启用的观测器还要能从这组模型与自己的配置生成系数，SMO 和 Flux 都要求 Ld 等于 Lq。[模型单位](../motor/include/mfoc_motor_params.h) · [profile 端点](../mfoc_motor_config.h) · [模型更新](../motor/src/mfoc_feedback.c)
+停机调用 `mfoc_feedback_SetMotorParamModel` 时，调用方提供有限的 PU 参数。默认 2804 配置的 Rs 范围为 [0.05, 8]，Ld 和 Lq 各为 [0.0001, 16]，磁链为 (0, 16]，惯量为 [0, 1024]，极对数为 1 至 65535。FIXED 按转换后的 Q15 端点比较，Rs、L 的下端点原始计数分别为 1638、3。启用的观测器还要能从这组模型与自己的配置生成系数，SMO 和 Flux 都要求 Ld 等于 Lq。[模型单位](../motor/include/mfoc_motor_params.h) · [2804 模型更新边界](../config/motors/motor_2804.h) · [模型更新](../motor/src/mfoc_feedback.c)
 
 以 Flux 的磁链平方系数为例，输入 127/32768 PU 时，FIXED 的平方舍入为零，模型更新返回 `OUT_OF_RANGE`。128/32768 PU 的平方恰为半个 Q15 计数，舍入为 1，测试配置下更新成功。FLOAT 在这两点都能精确保存平方。主机回归对 Rs、Ld、Lq、惯量逐项检查紧邻端点的越界值，另测磁链零值、上界及其外侧、极对数边界，每次拒绝都核对整个 Feedback 实例逐字节保持原值。[两后端真实接口用例](../tests/position/flux_test.c) · [三种 Feedback 配置](../tests/scripts/run_flux_tests.ps1)
 

@@ -2,7 +2,7 @@
  * @file   at32f413_it.c
  * @brief  Interrupt handlers (AT32F413 Motor EVB V1)
  *
- * SysTick_Handler drives perf_counter + modus + USART 1ms tick.
+ * SysTick_Handler drives perf_counter and MODUS.
  * ADC1_2 is bound separately to the MFOC control IRQ.
  */
 
@@ -12,14 +12,9 @@
 #include "at32f413.h"
 #include "perf_counter.h"
 #include "mdebug_cm.h"
+#include "mdi/instance.h"
 
-/* Exported by main.c */
 extern void modus_Clock(void);
-extern void peripheral_Clock(void);
-
-/* USART private instance (defined in port_mdi.c) */
-#include "port_mdi.h"
-extern at32_usart_priv_t s_tUsart1Priv;
 
 /* --------------------------------------------------------------------------
  *  Cortex-M4 Core Exceptions
@@ -39,7 +34,6 @@ void SysTick_Handler(void)
 {
     perfc_port_insert_to_system_timer_insert_ovf_handler();
     modus_Clock();
-    at32_usart_timer_1ms(&s_tUsart1Priv);
 }
 
 /* --------------------------------------------------------------------------
@@ -47,7 +41,7 @@ void SysTick_Handler(void)
  * -------------------------------------------------------------------------- */
 
 /* ---- USART1 (debug shell) ---- */
-void USART1_IRQHandler(void)        { at32_usart_irq_handler(&s_tUsart1Priv); }
+void USART1_IRQHandler(void)        { MDI_UART_STREAM_IRQ(board_stream); }
 
 /* ---- TMR1 (motor PWM) ---- */
 void TMR1_BRK_TMR9_IRQHandler(void)

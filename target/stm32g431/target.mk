@@ -18,6 +18,13 @@ C_DEFS += -DMFOC_APP_ENABLED=1
 C_DEFS += -DMFOC_USE_PERFC_FSM=1
 # Numeric backend is selected once by the top-level MFOC_NUMERIC setting.
 C_DEFS += -DMFOC_TRIG_BACKEND=1
+
+# TIM1 PWM and ADC sampling share the current-loop rate.
+STM32G431_CONTROL_HZ ?= 20000
+TARGET_CONFIG_SIGNATURE = -hz_$(STM32G431_CONTROL_HZ)
+C_DEFS += -DMFOC_MOTOR_RUN_FREQ_HZ=$(STM32G431_CONTROL_HZ)U \
+    -DMFOC_PERFC_HZ=170000000U -DMFOC_CORE_M_MAX=0.55f
+
 # Timing is enabled for debug builds and compiled out of release builds.
 ifeq ($(BUILD),release)
 MFOC_ISR_MEASURE ?= 0

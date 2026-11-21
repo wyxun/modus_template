@@ -8,7 +8,7 @@
 #include "mfoc_debug.h"
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_motor_config_internal.h"
 #ifndef MFOC_APP_ENCODER_DIAGNOSTIC
 #define MFOC_APP_ENCODER_DIAGNOSTIC 1
 #endif

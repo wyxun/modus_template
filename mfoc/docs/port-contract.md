@@ -173,7 +173,7 @@ mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t held_angle)
 
 旧的 `MFOC_FEEDBACK_ENCODER`、`MFOC_FEEDBACK_ENABLE_ENCODER` 保留为 POSITION 的兼容名称；新旧使能值冲突会报错。若位置已启用但主反馈选无感，它仍可被前台服务和 ISR 读取；其失败不替代所选无感反馈的状态。
 
-当前默认配置为 POSITION 使能、SMO 使能、Flux 关闭，主反馈选择 SMO。实际能力和主反馈始终以 `mfoc_config.h` 及构建宏覆盖值为准。
+G431 默认启用 POSITION 和 Flux，主反馈选择 Flux。实际能力和主反馈由项目设置及目标构建宏决定。[配置说明](configuration.md)
 
 G431 本次保留以下设置：
 

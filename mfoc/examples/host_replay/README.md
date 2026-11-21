@@ -18,6 +18,11 @@ The default trig implementation is `TRIG=LUT`. `TRIG=LIBM` needs FLOAT, and
 The same preprocessor settings apply to the example and every library
 translation unit.
 
+The motor defaults to the bundled 2804. To use a project profile, pass
+`MFOC_MOTOR_CONFIG=path/to/my_motor.h` to Make from this directory. The path
+can also be absolute. The replay and library use the selected header in the
+same build. [Motor configuration template](../../config/motors/motor_template.h)
+
 The single-threaded Port simulates a star-connected resistive load for one
 interval per submitted PWM frame. It supplies fresh current, a stationary
 position for POSITION builds, a clock, and PWM gate state. POSITION additionally

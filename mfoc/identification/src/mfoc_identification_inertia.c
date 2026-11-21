@@ -4,7 +4,7 @@
  * @author Codex
  * @date 2026-11-19
  */
-#include "mfoc_identification_rotation.h"
+#include "mfoc_identification_internal.h"
 
 enum { SEEK_TOP, SEEK_DOWN, CAPTURE_DOWN, SEEK_BOTTOM, SEEK_UP, CAPTURE_UP,
        CAPTURE_DONE };

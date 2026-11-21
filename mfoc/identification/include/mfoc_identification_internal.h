@@ -1,12 +1,22 @@
 /**
  * @file mfoc_identification_internal.h
- * @brief ISR dispatch shared by Motor and the standalone Step entry.
+ * @brief Internal experiment constants and sampling dispatch.
  * @author Codex
  * @date 2026-11-15
  */
 #ifndef MFOC_IDENTIFICATION_INTERNAL_H
 #define MFOC_IDENTIFICATION_INTERNAL_H
 #include "mfoc_identification.h"
+#include "mfoc_motor_config_internal.h"
+
+/* Compile-time conversions for encoderless rotating experiments. */
+#define MFOC_IDENTIFICATION_SPEED_CAP_PU                                        \
+    MFOC_SCALAR(200.0f / MFOC_MOTOR_BASE_ELECTRICAL_RAD_S)
+#define MFOC_IDENTIFICATION_SPEED_MIN_PU                                        \
+    MFOC_SCALAR(45.0f / MFOC_MOTOR_BASE_ELECTRICAL_RAD_S)
+#define MFOC_ROTATION_BLOCK_DT                                                  \
+    MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_RAD_S * (float)MFOC_ROTATION_BLOCK /  \
+        (float)MFOC_IDENTIFICATION_SAMPLE_HZ)
 
 /** @brief Control for Motor and the stage for this frame. Identification
  * uses the matching stage for dispatch without a second volatile read. */

@@ -8,10 +8,6 @@
 #define MFOC_IDENTIFICATION_ROTATION_H
 #include "mfoc_identification_algorithms.h"
 
-#define MFOC_IDENTIFICATION_SPEED_CAP_PU                                        \
-    MFOC_SCALAR(200.0f / MFOC_MOTOR_BASE_ELECTRICAL_RAD_S)
-#define MFOC_IDENTIFICATION_SPEED_MIN_PU                                        \
-    MFOC_SCALAR(45.0f / MFOC_MOTOR_BASE_ELECTRICAL_RAD_S)
 #define MFOC_IDENTIFICATION_ROTATION_CURRENT_MIN 0.012f
 
 /* A power-of-two block spanning 1..2 ms makes FIXED block means exact shifts.
@@ -28,10 +24,6 @@ enum {
         (MFOC_ROTATION_2MS >= 128U) + (MFOC_ROTATION_2MS >= 256U) +
         (MFOC_ROTATION_2MS >= 512U) + (MFOC_ROTATION_2MS >= 1024U))
 };
-#define MFOC_ROTATION_BLOCK_DT                                                  \
-    MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_RAD_S * (float)MFOC_ROTATION_BLOCK /  \
-        (float)MFOC_IDENTIFICATION_SAMPLE_HZ)
-
 typedef enum {
     MFOC_ROTATION_SPINUP = MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 5U,
     MFOC_ROTATION_FLUX = MFOC_IDENTIFICATION_CONTROL_VIRTUAL | 6U,

@@ -1,13 +1,13 @@
-# Port 相关配置和头文件
+# 配置与头文件
 
-移植一块板时，应用定义控制系统采用的单位，构建配置选择位置源，板级实现负责把测量值转换到这些单位。下面列出这条数据流用到的设置。
+项目选择环路与反馈功能，电机配置定义模型与基值，板级实现按同一控制频率采样并将测量值转换成相应单位。
 
 | 谁设置 | 设置位置 | 内容 |
 | --- | --- | --- |
-| 项目构建者 | 构建参数、`mfoc_config.h` 中的用户选项 | `MFOC_NUMERIC=float/fixed` 是本工程的 make 参数。位置功能用 `MFOC_FEEDBACK_ENABLE_POSITION`，控制反馈来源用 `MFOC_FEEDBACK_BACKEND`。所有参与链接的编译单元使用一致配置。 |
+| 项目构建者 | 构建参数和 `mfoc_config.h` | 设置速度环频率，选择位置反馈及库功能。`MFOC_NUMERIC=float/fixed` 选择数值后端，`MFOC_MOTOR_CONFIG` 选择电机配置。所有参与链接的编译单元使用一致配置。 |
 | 电机应用作者 | 电机 profile 和 `mfoc_motor_cfg_t` | 示例 profile 提供电流基值 mA、电压基值 mV、电频率基值 Hz，以及电机固有的极对数。应用填写三个基值字段和 `params.pole_pairs`，Motor_Init 在初始化 Port 时转交。 |
-| 板级移植者 | 新板的 `mfoc_port.c` 和板级驱动 | 配置 ADC 通道、满量程、极性、母线分压、PWM 周期与更新点、tick 来源。使用 Encoder 时在这里选择采样周期、滤波、方向、零位和超时。 |
-| 库维护者 | 选择常量、派生量和数值实现 | `MFOC_FEEDBACK_POSITION`、`MFOC_FEEDBACK_SMO` 等是固定编号的公开选择值。`MFOC_SPEED_LOOP_DIVIDER`、`MFOC_MOTOR_RUN_PERIOD_US` 由用户填写的频率推导。`MFOC_Q_FRACTION_BITS` 和 `MFOC_Q_SCALE` 描述 FIXED 数值格式。应用按定义使用这些值。 |
+| 板级移植者 | 目标构建配置、`mfoc_port.c` 和板级驱动 | 统一设置控制频率、计时器频率和调制上限。配置 ADC 通道、满量程、极性、母线分压、PWM 更新点和传感器参数。 |
+| 算法调试者 | 对应模块的默认值和项目编译宏 | 按需覆盖 Flux 增益、EKF 噪声参数和辨识实验参数。 |
 
 例如，使用 G431 编码器闭环时，让目标中所有 MFOC 源文件看到以下构建选项。
 
@@ -18,12 +18,51 @@
 
 同一个位置提供者也可用于观察。保留 `ENABLE_POSITION=1`，将 backend 设为已启用的 SMO，Encoder 仍会更新，常规闭环取 SMO 的输出。纯无感板可设 `ENABLE_POSITION=0` 并选择相应的已启用无感后端，此时公共 Port 头只声明采样、时钟、初始化和 PWM 接口。旧项目的 `MFOC_FEEDBACK_ENABLE_ENCODER`、`MFOC_FEEDBACK_ENCODER` 是兼容名称。
 
-启动、SMO、Flux 和 EKF 可在同一构建里使用各自 Init 配置中的采样率和基值。HFI 和 Motor 辨识的时序与基值仍来自库的编译期 profile。使用这两项功能时，应用应将实际采样率、基值与该 profile 对齐。
+启动、SMO、Flux 和 EKF 可在同一构建里使用各自 Init 配置中的采样率和基值。启用 HFI 或 Motor 辨识时，两者在编译期使用选定电机配置的电频率基值，采样率取 `MFOC_MOTOR_RUN_FREQ_HZ`。示例应用用同一份电机配置初始化 Motor。
+
+<a id="board-settings"></a>
+
+## 板级配置与控制频率
+
+| 项目 | G431 | AT32F413 |
+| --- | --- | --- |
+| 控制频率 `MFOC_MOTOR_RUN_FREQ_HZ` | `STM32G431_CONTROL_HZ ?= 20000` | `AT32F413_CONTROL_HZ ?= 20000` |
+| perfc 计时频率 `MFOC_PERFC_HZ` | 170 MHz | 200 MHz |
+| 调制上限 `MFOC_CORE_M_MAX` | `0.55f` | `0.35f` |
+
+运行 `make.bat` 时可以通过对应目标的 `*_CONTROL_HZ` 变量设置控制频率。例如 `make.bat TARGET_CHIP=stm32g431 STM32G431_CONTROL_HZ=20000`。更改频率时，确认定时器能产生该频率，且 PWM、ADC 触发和采样 ISR 步长一致，再核对 PI 的离散系数。perfc 计时频率应与移植实际使用的 tick 源一致。[G431 目标](../../target/stm32g431/target.mk) · [AT32F413 目标](../../target/at32f413/target.mk)
+
+接入独立工程时，可参考库内板级模板，通过编译定义为应用和库统一提供三项板级值，也可复制模板到板级目录，并对相关编译单元统一使用编译器的 `-include` 选项。模板的回退值为 20 kHz、170 MHz、`0.55f`，可用于主机示例。[板级模板](../config/board_template.h)
+
+项目设置的速度环频率须为实际控制频率的整数分频，默认 1 kHz。20 kHz 控制频率下，每 20 拍运行一次速度环。填 `0` 会禁用示例应用的速度模式。控制与速度周期换算、速度环分频、默认 ISR 诊断预算和编译期检查由库内头文件提供。[库内配置](../include/mfoc_config_internal.h)
+
+<a id="motor-profile"></a>
+
+## 编译时选择电机配置
+
+从模板复制一份项目配置，例如 `config/motors/my_motor.h`。按 `mfoc_motor_params_t` 的字段顺序填写极对数、相电阻、Ld、Lq、磁链和惯量，按 `mfoc_motor_cfg_t` 的基值字段顺序填写相电流峰值 mA、母线电压 mV 和电频率 Hz，再核对模型更新边界与启动接管设置。当前示例应用的电流环 PI、速度环 PI 和运行限值在 `class/mfoc_app.c` 的 Motor 配置中设置。[电机配置模板](../config/motors/motor_template.h) · [示例应用](../../class/mfoc_app.c)
+
+在仓库根目录运行下列命令，路径相对于构建工作目录，也可填写绝对路径。
+
+```powershell
+.\make.bat TARGET_CHIP=stm32g431 MFOC_NUMERIC=float MFOC_MOTOR_CONFIG=config/motors/my_motor.h
+```
+
+省略 `MFOC_MOTOR_CONFIG` 使用 2804。该选项独立于板型和 FLOAT/FIXED，构建会把选中的头文件传给所有 MFOC 源文件和应用。自己的 Makefile 可使用 `mfoc.mk` 提供的 `MFOC_MOTOR_CONFIG_FLAGS`。使用其他构建系统时，给这些编译单元统一定义 C 宏 `MFOC_MOTOR_CONFIG`，宏值为所选头文件的路径字符串。[默认配置](../config/motors/motor_2804.h) · [选择入口](../include/mfoc_motor_config.h)
+
+<a id="advanced-settings"></a>
+
+## 模块高级参数
+
+Flux 的观测器和 PLL 增益、EKF 的噪声和协方差、辨识的激励、限值和采样数由对应模块提供默认值。项目可在构建中覆盖已有定义，例如在 Make 目标中追加 `C_DEFS += -DMFOC_FLUX_PLL_KP=0.45f`，让库和应用看到同一值。根据实际电机与采样率验证调参结果。[Flux 默认值](../position/include/mfoc_flux.h) · [EKF 默认值](../position/include/mfoc_ekf.h) · [辨识默认值](../identification/include/mfoc_identification_algorithms.h)
+
+## 使用头文件
 
 | 头文件 | 使用方式 |
 | --- | --- |
-| [mfoc_config.h](../mfoc_config.h) | 查功能开关及默认值。移植项目可用构建宏覆盖提供默认值的用户选项。 |
-| [mfoc_motor_config.h](../mfoc_motor_config.h) | 本工程的电机 profile。换电机时更新实测或规格值与选定基值，其余 PU 换算由公式导出。 |
+| [mfoc_config.h](../mfoc_config.h) | 配置项目常用的速度环、反馈和功能开关。项目也可用构建宏覆盖这些默认值。 |
+| [mfoc.h](../include/mfoc.h) | 基础数值和控制公共入口。 |
+| [mfoc_motor_config.h](../include/mfoc_motor_config.h) | 电机配置选择入口。应用和库从这里读取同一份配置。 |
 | [mfoc_port.h](../port/include/mfoc_port.h) | 板级实现与库共用的函数签名、上下文、单位和失败语义。新板实现这里声明的操作。 |
 | [mfoc_encoder.h](../position/include/mfoc_encoder.h) | 使用库 Encoder 的位置提供者包含此头，创建实例，通过 Init、Update、Step、CalibrateZero 操作。 |
 | [mfoc_hall.h](../position/include/mfoc_hall.h) | 三路数字霍尔板填写六扇区电角度表和超时，创建实例，通过 Init、OnEdge、Step 提供物理位置。 |

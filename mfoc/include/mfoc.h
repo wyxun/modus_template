@@ -1,6 +1,6 @@
 /**
  * @file mfoc.h
- * @brief Public numerical and current-control utilities.
+ * @brief Public MFOC entry for numerical and current-control utilities.
  * @note Include mfoc_motor.h and mfoc_port.h for a complete Motor setup.
  * @author wyxun
  * @date 2026-10-19

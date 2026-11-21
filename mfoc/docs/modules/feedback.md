@@ -86,7 +86,7 @@ G431 的 FLOAT 角度波形使用本次 ADC 中断中 Feedback 读取的物理�
 
 1. **RAMP。** 保持结束后按 OpenLoop 角加速，到目标速度才进入 ACQUIRE 并开始接管超时计时。
 2. **ACQUIRE，捕获前。** 观测器须返回 `OK`，强拖角与反馈角的最短角差须在捕获角窗内，且速度差不超过 `abs(speed_ref) × MFOC_START_SPEED_WINDOW`。例如当前配置下，目标为 0.5 PU 时，速度误差最多为 0.05 PU，角差最多为 10°。未满足时继续使用强拖角，直至捕获或超时。
-3. **捕获后。** 记录强拖角相对反馈角的偏移，逐拍将偏移缩至零。偏移归零后 Motor 使速度 PI 跟踪当前 q 轴参考并进入速度模式。速度在窗口内连续满足稳定时长后，退出启动状态。捕获后再丢反馈、接管超时或常规闭环丢反馈，都走 `MFOC_MOTOR_FAULT_FEEDBACK` 关断路径。[接管状态机](../../motor/src/mfoc_sensorless_start.c) · [窗口与时限配置](../../mfoc_motor_config.h)
+3. **捕获后。** 记录强拖角相对反馈角的偏移，逐拍将偏移缩至零。偏移归零后 Motor 使速度 PI 跟踪当前 q 轴参考并进入速度模式。速度在窗口内连续满足稳定时长后，退出启动状态。捕获后再丢反馈、接管超时或常规闭环丢反馈，都走 `MFOC_MOTOR_FAULT_FEEDBACK` 关断路径。[接管状态机](../../motor/src/mfoc_sensorless_start.c) · [默认窗口与时限配置](../../config/motors/motor_2804.h)
 
 ## 主机验证
 

@@ -10,6 +10,27 @@
 #include "mfoc_angle.h"
 #include "mfoc_motor_params.h"
 
+/* Initial covariance tuning. Q is per control step and scales with
+ * 1/MFOC_MOTOR_RUN_FREQ_HZ. Estimate R from measured current data. */
+#ifndef MFOC_EKF_Q
+#define MFOC_EKF_Q {1e-6f, 1e-6f, 1e-7f, 1e-8f}
+#endif
+#ifndef MFOC_EKF_R
+#define MFOC_EKF_R {1e-6f, 0.0f, 1e-6f}
+#endif
+#ifndef MFOC_EKF_P0
+#define MFOC_EKF_P0 {0.01f, 0.01f, 0.25f, 0.08333333f}
+#endif
+#ifndef MFOC_EKF_MIN_SPEED
+#define MFOC_EKF_MIN_SPEED 0.05f
+#endif
+#ifndef MFOC_EKF_MAX_ANGLE_VAR
+#define MFOC_EKF_MAX_ANGLE_VAR 0.000625f /* turns squared */
+#endif
+#ifndef MFOC_EKF_MAX_SPEED_VAR
+#define MFOC_EKF_MAX_SPEED_VAR 0.0025f /* speed PU squared */
+#endif
+
 #if MFOC_FEEDBACK_ENABLE_EKF
 #if defined(MFOC_NUMERIC_FIXED)
 #error "MFOC EKF requires FLOAT; FIXED EKF is not implemented"

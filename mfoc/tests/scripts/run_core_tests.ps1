@@ -6,11 +6,17 @@ param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
     [ValidateSet(0, 1)][int]$Identify = 0,
     [ValidateSet(0, 1, 2, 3, 4, 5)][int]$Backend = 1,
     [ValidateSet(0, 1)][int]$Position = 1,
-    [switch]$Perfc)
+    [switch]$Perfc,
+    [string]$MotorConfig = '')
 $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $repo = Split-Path -Parent $library
+$profileFlags = @()
+if ($MotorConfig) {
+    $profile = (Resolve-Path -LiteralPath $MotorConfig).Path.Replace('\', '/')
+    $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$profile>")
+}
 $perfcFlags = @()
 if ($Perfc) {
     $perfcFlags = @('-DMFOC_USE_PERFC_FSM=1',
@@ -79,8 +85,9 @@ foreach ($numeric in $numerics) {
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_FEEDBACK_ENABLE_EKF=$ekf" `
         "-DMFOC_IDENTIFICATION_ENABLE=$([int]$enableIdentification)" `
-        @perfcFlags @irqArguments @feedbackArguments `
-        "-I$library" "-I$library/math/include" "-I$library/control/include" `
+        @perfcFlags @irqArguments @feedbackArguments @profileFlags `
+        "-I$library" "-I$library/include" "-I$library/math/include" `
+        "-I$library/control/include" `
         "-I$library/core/include" `
         "-I$library/motor/include" "-I$library/port/include" `
         "-I$library/position/include" "-I$library/identification/include" `

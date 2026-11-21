@@ -1,6 +1,6 @@
 /**
  * @file adc_runtime.c
- * @brief Real G431 binding with host register storage for regular DMA.
+ * @brief Exercise G431 injected frames and regular DMA with host registers.
  * @author Codex
  * @date 2026-10-10
  * @note W1C commands are captured; the test applies hardware flag clearing.
@@ -22,7 +22,6 @@ static DMA_Channel_TypeDef s_tChannel;
 #define DMA1_Channel1 (&s_tChannel)
 #include "../state.c"
 #include "../service.c"
-#include "../foc_adapter.h"
 
 int64_t get_system_ticks(void) { return 1; }
 int64_t perfc_convert_us_to_ticks(uint32_t wUs) { return (int64_t)wUs; }
@@ -34,28 +33,46 @@ bool __perfc_is_time_out(int64_t lPeriod, int64_t *plSlot, bool bReload)
     return false;
 }
 
-/** @brief Check sequencing, busy guards, publication and transfer failure. */
+/** @brief Check injected frames, DMA sequencing, and transfer errors. */
 int main(void)
 {
-    foc_current_sample_t current = {0};
+    MDI_Sample_Frame(phase_current_completed) frame = {0};
+    const uint32_t pending = ADC_ISR_JEOS | ADC_ISR_OVR;
 
-    assert(mdi_g431_foc_sample_current(NULL) == FOC_RESULT_NULL);
+    ADC1->ISR = pending;
+    ADC2->ISR = pending;
+    assert(MDI_Sample_ReadCompleted(phase_current_completed, NULL) ==
+           MDI_INVALID);
+    assert(ADC1->ISR == pending && ADC2->ISR == pending);
     ADC1->ISR = 0U;
-    assert(mdi_g431_foc_sample_current(&current) == FOC_RESULT_BUSY);
+    assert(MDI_Sample_ReadCompleted(phase_current_completed, &frame) ==
+           MDI_BUSY);
+    assert(frame.u == 0U && frame.v == 0U && frame.w == 0U);
+    assert(!g_bG431JeosConsumed);
+
     /* Preserve both fractional-code bits and the upper sum bits. */
-    for (uint32_t low = 0U; low < 4U; low++) {
+    for (uint32_t low = 0U; low < 4U; ++low) {
         ADC1->JDR1 = 8192U + low;
         ADC2->JDR2 = 10236U + low;
         ADC2->JDR1 = 16380U - low;
-        ADC1->ISR = ADC_ISR_JEOS;
-        assert(mdi_g431_foc_sample_current(&current) == FOC_RESULT_OK);
-        assert(current.wU == 8192U + low);
-        assert(current.wV == 10236U + low);
-        assert(current.wW == 16380U - low);
+        ADC1->ISR = pending;
+        ADC2->ISR = pending;
+        g_bG431JeosConsumed = false;
+        assert(MDI_Sample_ReadCompleted(phase_current_completed, &frame) ==
+               MDI_OK);
+        assert(frame.u == 8192U + low);
+        assert(frame.v == 10236U + low);
+        assert(frame.w == 16380U - low);
         assert(ADC1->ISR == ADC_ISR_JEOS);
+        assert(ADC2->ISR == ADC_ISR_JEOS);
+        assert(g_bG431JeosConsumed);
+
+        /* The host stores the command instead of applying W1C semantics. */
+        ADC1->ISR = pending & ~ADC1->ISR;
+        ADC2->ISR = pending & ~ADC2->ISR;
     }
-    ADC1->ISR = 0U;
-    assert(mdi_g431_foc_sample_current(&current) == FOC_RESULT_BUSY);
+    assert(MDI_Sample_ReadCompleted(phase_current_completed, &frame) ==
+           MDI_BUSY);
 
     assert(MDI_ADC_Start(adc_mean) == MDI_IO_ERROR);
     ADC1->CR = ADC_CR_ADEN;

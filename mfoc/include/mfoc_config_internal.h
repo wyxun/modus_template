@@ -1,0 +1,58 @@
+/**
+ * @file mfoc_config_internal.h
+ * @brief Resolve board defaults, selector names and derived timing.
+ * @author Codex
+ * @date 2026-11-21
+ */
+#ifndef MFOC_CONFIG_INTERNAL_H
+#define MFOC_CONFIG_INTERNAL_H
+
+#include "../config/board_template.h"
+
+/* Stable values for MFOC_FEEDBACK_BACKEND. */
+#define MFOC_FEEDBACK_NONE 0
+#define MFOC_FEEDBACK_POSITION 1
+#define MFOC_FEEDBACK_SMO 2
+#define MFOC_FEEDBACK_HFI 3
+#define MFOC_FEEDBACK_FLUX 4
+#define MFOC_FEEDBACK_EKF 5
+
+/* Preserve the former encoder-specific names for existing projects. */
+#define MFOC_FEEDBACK_ENCODER MFOC_FEEDBACK_POSITION
+#ifndef MFOC_FEEDBACK_ENABLE_POSITION
+#define MFOC_FEEDBACK_ENABLE_POSITION MFOC_FEEDBACK_ENABLE_ENCODER
+#endif
+#ifndef MFOC_FEEDBACK_ENABLE_ENCODER
+#define MFOC_FEEDBACK_ENABLE_ENCODER MFOC_FEEDBACK_ENABLE_POSITION
+#elif MFOC_FEEDBACK_ENABLE_ENCODER != MFOC_FEEDBACK_ENABLE_POSITION
+#error "Encoder compatibility flag must match the physical position flag"
+#endif
+
+#if MFOC_MOTOR_RUN_FREQ_HZ == 0U
+#error "MFOC_MOTOR_RUN_FREQ_HZ must be positive"
+#endif
+#if MFOC_SPEED_RUN_FREQ_HZ > MFOC_MOTOR_RUN_FREQ_HZ
+#error "The speed loop cannot run faster than the current loop"
+#endif
+#if MFOC_SPEED_RUN_FREQ_HZ != 0U &&                                         \
+    (MFOC_MOTOR_RUN_FREQ_HZ % MFOC_SPEED_RUN_FREQ_HZ) != 0U
+#error "MFOC_MOTOR_RUN_FREQ_HZ must be an integer multiple of the speed rate"
+#endif
+
+/* Periods use truncated microseconds. A divider of zero disables speed. */
+#define MFOC_MOTOR_RUN_PERIOD_US (1000000U / MFOC_MOTOR_RUN_FREQ_HZ)
+#if MFOC_SPEED_RUN_FREQ_HZ == 0U
+#define MFOC_SPEED_LOOP_DIVIDER 0U
+#define MFOC_SPEED_RUN_PERIOD_US 0U
+#else
+#define MFOC_SPEED_LOOP_DIVIDER \
+    (MFOC_MOTOR_RUN_FREQ_HZ / MFOC_SPEED_RUN_FREQ_HZ)
+#define MFOC_SPEED_RUN_PERIOD_US (1000000U / MFOC_SPEED_RUN_FREQ_HZ)
+#endif
+
+/* The diagnostic budget defaults to one control period in perfc ticks. */
+#ifndef MFOC_ISR_BUDGET_TICKS
+#define MFOC_ISR_BUDGET_TICKS (MFOC_PERFC_HZ / MFOC_MOTOR_RUN_FREQ_HZ)
+#endif
+
+#endif

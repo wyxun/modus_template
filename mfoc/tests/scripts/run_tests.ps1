@@ -19,7 +19,7 @@ foreach ($case in $cases) {
     $exe = Join-Path $output "math-$numeric-$trig.exe"
     $arguments = @('-std=c11', '-O2', '-Wall', '-Wextra', '-Werror',
         '-ffp-contract=off', "-DMFOC_NUMERIC_$numeric=1",
-        "-DMFOC_TRIG_BACKEND=$trig", "-I$library",
+        "-DMFOC_TRIG_BACKEND=$trig", "-I$library", "-I$library/include",
         "-I$(Join-Path $math 'include')",
         "-I$(Join-Path $library 'control/include')",
         $testSource) + $sources + @('-lm', '-o', $exe)

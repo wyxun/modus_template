@@ -17,11 +17,7 @@
 
 #include "at32f413.h"
 #include "haladc.h"
-
-#define ADC_ORDINARY_CH_LEN    HALADC_ORD_CHANNELS   /* 4 channels */
-
-/* DMA buffer for ordinary channels */
-static __IO uint16_t s_ahwAdcOrdBuf[ADC_ORDINARY_CH_LEN];
+#include "mdi/instance.h"
 
 void haladc_Init(void)
 {
@@ -81,9 +77,9 @@ void haladc_Init(void)
     /* ---- DMA config for ordinary channels ---- */
     dma_reset(DMA1_CHANNEL1);
     dma_default_para_init(&dma_init_struct);
-    dma_init_struct.buffer_size         = ADC_ORDINARY_CH_LEN;
+    dma_init_struct.buffer_size         = AT32_ADC_ORDINARY_COUNT;
     dma_init_struct.direction           = DMA_DIR_PERIPHERAL_TO_MEMORY;
-    dma_init_struct.memory_base_addr    = (uint32_t)s_ahwAdcOrdBuf;
+    dma_init_struct.memory_base_addr    = (uint32_t)g_ahwAt32AdcOrdinary;
     dma_init_struct.memory_data_width   = DMA_MEMORY_DATA_WIDTH_HALFWORD;
     dma_init_struct.memory_inc_enable   = TRUE;
     dma_init_struct.peripheral_base_addr = (uint32_t)&(ADC1->odt);
@@ -101,7 +97,7 @@ void haladc_Init(void)
     adc_base_struct.sequence_mode         = TRUE;
     adc_base_struct.repeat_mode           = FALSE;
     adc_base_struct.data_align            = ADC_RIGHT_ALIGNMENT;
-    adc_base_struct.ordinary_channel_length = ADC_ORDINARY_CH_LEN;
+    adc_base_struct.ordinary_channel_length = AT32_ADC_ORDINARY_COUNT;
     adc_base_config(ADC1, &adc_base_struct);
 
     /* ---- Ordinary channels (DMA sequence order) ---- */
@@ -137,54 +133,15 @@ void haladc_Init(void)
     adc_calibration_start(ADC1);
     while (adc_calibration_status_get(ADC1));
 
-    haladc_RequestBus();
+    (void)mdi_at32_adc_StartOrdinary();
 }
 
-uint16_t haladc_GetOrdinary(uint8_t chIndex)
-{
-    if (chIndex >= ADC_ORDINARY_CH_LEN) return 0;
-    return s_ahwAdcOrdBuf[chIndex];
-}
-
-/** @brief Read the three ranks of a completed preempt frame.
- * @param phwU U rank, valid output. @param phwV V rank, valid output.
- * @param phwW W rank, valid output. @return None. */
-void haladc_GetPreemptRaw(uint16_t *phwU, uint16_t *phwV, uint16_t *phwW)
-{
-    *phwU = (uint16_t)ADC1->pdt1;
-    *phwV = (uint16_t)ADC1->pdt2;
-    *phwW = (uint16_t)ADC1->pdt3;
-}
-
-/** @brief Let the first explicit start transfer ownership from polling.
- * @return None. Later starts retain the already-armed IRQ. */
-void haladc_EnableControlIRQ(void)
+void mdi_at32_adc_EnableControlIRQ(void)
 {
     if (ADC1->ctrl1_bit.pcceien == 0U) {
-        haladc_DiscardPreempt();
+        mdi_at32_adc_AckCurrentFrame();
         NVIC_ClearPendingIRQ(ADC1_2_IRQn);
         adc_interrupt_enable(ADC1, ADC_PCCE_INT, TRUE);
         nvic_irq_enable(ADC1_2_IRQn, 1, 0);
     }
-}
-
-/** @brief Request an ordinary conversion group from the foreground.
- * @return None. Only one requester owns the DMA group at a time. */
-void haladc_RequestBus(void)
-{
-    dma_flag_clear(DMA1_FDT1_FLAG | DMA1_DTERR1_FLAG);
-    adc_ordinary_software_trigger_enable(ADC1, TRUE);
-}
-
-/** @brief Read the latest complete, foreground-independent bus sample.
- * @param sample Output ADC code, valid only if true is returned.
- * @return True if there is an available sample. */
-bool haladc_ReadBusRaw(uint16_t *sample)
-{
-    if (dma_flag_get(DMA1_DTERR1_FLAG) == SET ||
-        dma_flag_get(DMA1_FDT1_FLAG) == RESET) {
-        return false;
-    }
-    *sample = s_ahwAdcOrdBuf[HALADC_ORD_BUS_VOLT];
-    return true;
 }

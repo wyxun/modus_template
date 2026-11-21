@@ -19,8 +19,10 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 | 目录或文件 | 用途 |
 | --- | --- |
-| `mfoc_config.h` | 库功能开关和部分算法配置 |
-| `mfoc_motor_config.h` | 电机规格、标幺基值和启动参数 |
+| `mfoc_config.h` | 项目常用设置，包括速度环、反馈选择和功能开关 |
+| `include/` | 公共入口、电机配置选择入口及库内共用的配置派生头 |
+| `config/board_template.h` | 板级配置模板和独立构建的默认值 |
+| `config/motors/` | 2804 默认配置和可复制的电机配置模板 |
 | `math/`、`control/` | 数值、坐标变换、PI 和调制 |
 | `core/` | 电流环及电压调制计算 |
 | `motor/` | 电机运行、反馈选择与启动流程 |
@@ -29,13 +31,13 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `port/` | 电流、母线、统一电角度/速度、PWM 和时钟的接入契约 |
 | `tests/`、`tools/` | 测试和代码生成工具 |
 
-各模块的公共头文件位于其 `include/`，实现位于 `src/`。`mfoc.h` 汇集基础数学及控制接口；使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供本工程使用的源码与头文件路径清单。
+各模块的公共头文件位于其 `include/`，实现位于 `src/`。[`mfoc.h`](include/mfoc.h) 汇集基础数学及控制接口。使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供源码与头文件路径清单。
 
-独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和自行实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。主机示例使用 C11、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[主机回放示例](examples/host_replay/README.md) · [Port 接入指南](docs/port-contract.md)
+独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和自行实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。使用自定义电机配置时，添加 `MFOC_MOTOR_CONFIG_FLAGS` 到库和应用的编译参数。主机示例使用 C11、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[主机回放示例](examples/host_replay/README.md) · [Port 接入指南](docs/port-contract.md)
 
 ## 配置 MFOC
 
-集成 perfc 的工程可为库和调用方统一设置 `-DMFOC_USE_PERFC_FSM=1`，并提供 perfc 的头文件路径和移植配置。G431 已启用此选项，`mfoc_fsm_rt_t` 是 `fsm_rt_t` 的别名，辨识前台使用 `perfc_task_pt.h` 的原生 PT 宏。独立工程默认使用 MFOC 的返回类型和 C11 PT 实现。[公共类型](math/include/mfoc_types.h) · [PT 接口](mfoc_pt.h)
+集成 perfc 的工程可为库和调用方统一设置 `-DMFOC_USE_PERFC_FSM=1`，并提供 perfc 的头文件路径和移植配置。G431 已启用此选项，`mfoc_fsm_rt_t` 是 `fsm_rt_t` 的别名，辨识前台使用 `perfc_task_pt.h` 的原生 PT 宏。独立工程默认使用 MFOC 的返回类型和 C11 PT 实现。[公共类型](math/include/mfoc_types.h) · [PT 接口](include/mfoc_pt.h)
 
 ### 数值和三角函数
 
@@ -49,11 +51,8 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 | 配置 | 含义 | 当前默认值 |
 | --- | --- | --- |
-| `MFOC_CORE_M_MAX` | dq 电压矢量相对母线的调制上限 | `0.55f` |
-| `MFOC_MOTOR_RUN_FREQ_HZ` | 控制中断、电流环、采样、HFI 与辨识共用的频率 | `20000U`，须与 PWM/ADC 触发一致 |
-| `MFOC_SPEED_RUN_FREQ_HZ` | 速度环频率，`MFOC_SPEED_LOOP_DIVIDER` 由它派生 | `1000U`，`0` 关闭速度模式 |
+| `MFOC_SPEED_RUN_FREQ_HZ` | 速度环频率，按板级控制频率自动计算分频 | `1000U`，`0` 关闭速度模式 |
 | `MFOC_ISR_MEASURE` | 中断耗时统计开关 | `0`，G431 调试构建覆盖为 `1` |
-| `MFOC_ISR_BUDGET_TICKS` | 中断耗时预算，按计时器频率设置 | `8500` |
 | `MFOC_IDENTIFICATION_ENABLE` | Motor 参数辨识流程 | `0` |
 | `MFOC_MOTOR_MODEL_UPDATE_ENABLE` | 停机后显式应用 PU 电机参数 | `0` |
 | `MFOC_FEEDBACK_ENABLE_POSITION` | 板级提供的统一位置反馈；旧 `ENABLE_ENCODER` 名称兼容 | `1` |
@@ -63,11 +62,15 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `MFOC_FEEDBACK_ENABLE_EKF` | EKF 观测器 | `0`，仅 FLOAT |
 | `MFOC_FEEDBACK_BACKEND` | 选作控制输出的位置反馈 | `MFOC_FEEDBACK_FLUX` |
 
-使能算法与选择控制输出是两项配置：所选 backend 对应的算法必须使能。未选作 backend 的已使能算法可用于影子观察。HFI 主反馈闭环允许注入，POSITION 仅在显式 `HfiStart` 时允许注入。普通非 HFI 闭环的 `feedback.observe_hfi` 可启用无注入诊断。Flux 和 EKF 的增益、噪声参数等需要针对实际电机配置及验证。文件中还包含 Rs/L 辨识、Flux 和 EKF 的参数，具体定义以配置头为准。
+所选控制反馈对应的算法必须使能。其余已使能算法可用于影子观察。HFI 主反馈闭环允许注入，POSITION 仅在显式 `HfiStart` 时允许注入。普通非 HFI 闭环的 `feedback.observe_hfi` 可启用无注入诊断。Flux、EKF 和参数辨识的调参默认值由各模块提供，项目可按需用编译宏覆盖。[高级参数](docs/configuration.md#advanced-settings)
+
+### 板级设置
+
+G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 同时提供给 PWM/ADC 和 MFOC。计时器频率和允许的调制上限也在板级设置。移植新板时可从库内模板取得这三项的写法，环路分频和诊断预算由库在编译期计算。[板级模板](config/board_template.h) · [板级配置方法](docs/configuration.md#board-settings)
 
 ### 电机与标幺值
 
-在 [`mfoc_motor_config.h`](mfoc_motor_config.h) 中填写相电阻、Ld、Lq、磁链、转动惯量和极对数，并设置电流、电压、电角速度基值。其余电阻、电感、磁链等基值由这三项基值推导。当前文件中的 2804 电机规格及启动阈值是本工程配置，换电机时需重新核对。
+默认使用 2804 的电机配置。换电机时复制模板，按结构体字段顺序填写电机参数、基值及启动参数，再用 `MFOC_MOTOR_CONFIG` 指定新头文件。应用、HFI 和辨识在同一次构建中使用同一份配置，单位换算和其余 PU 基值在编译期推导。[默认配置](config/motors/motor_2804.h) · [电机配置模板](config/motors/motor_template.h) · [配置选择](docs/configuration.md#motor-profile)
 
 电流使用 `I/Ibase`，母线使用 `Vdc/Vbase`，速度使用电角速度与电角速度基值之比。当前电流基值是相电流峰值；例如 `0.02 pu` 对应 `0.02 × 3.5 A = 0.07 A`。极对数用于机械角与电角的换算。
 

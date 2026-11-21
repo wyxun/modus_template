@@ -24,12 +24,11 @@ if (Test-Path -LiteralPath $output) {
 
 $package = Join-Path $output 'mfoc'
 New-Item -ItemType Directory -Path $package -Force | Out-Null
-foreach ($file in @('mfoc.mk', 'mfoc.h', 'mfoc_config.h',
-                    'mfoc_motor_config.h', 'mfoc_pt.h')) {
+foreach ($file in @('mfoc.mk', 'mfoc_config.h')) {
     Copy-Item -LiteralPath (Join-Path $library $file) -Destination $package
 }
-foreach ($module in @('control', 'core', 'identification', 'math', 'motor',
-                       'port', 'position')) {
+foreach ($module in @('config', 'include', 'control', 'core', 'identification',
+                       'math', 'motor', 'port', 'position')) {
     $source = Join-Path $library $module
     foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
         if ($file.Extension -notin @('.c', '.h', '.inc')) { continue }
@@ -96,7 +95,8 @@ try {
                          'C_INCLUDE_PATH', 'LIBRARY_PATH',
                          'GCC_EXEC_PREFIX', 'COMPILER_PATH', 'NUMERIC',
                          'BACKEND', 'POSITION', 'SMO', 'HFI', 'FLUX', 'EKF',
-                         'IDENTIFY', 'MODEL_UPDATE', 'TRIG')) {
+                         'IDENTIFY', 'MODEL_UPDATE', 'TRIG',
+                         'MFOC_MOTOR_CONFIG')) {
         $environment[$name] = [Environment]::GetEnvironmentVariable($name)
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
     }

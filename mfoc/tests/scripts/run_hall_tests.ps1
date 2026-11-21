@@ -3,7 +3,7 @@ $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-hall-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
-$includes = @('', 'math/include', 'position/include', 'motor/include',
+$includes = @('', 'include', 'math/include', 'position/include', 'motor/include',
     'control/include', 'core/include', 'port/include') |
     ForEach-Object { '-I' + (Join-Path $library $_) }
 $sources = @("$testsRoot/position/hall_test.c", "$library/position/src/mfoc_hall.c",

@@ -8,14 +8,14 @@
 #define MFOC_AT32F413_MOTOR_IRQ_BINDING_H
 
 #include "mfoc_app.h"
-#include "haladc.h"
+#include "mdi/instance.h"
 
 extern mfoc_app_t tMfocApp;
 
 #define MFOC_MOTOR_IRQ_VECTOR ADC1_2_IRQHandler
 #define MFOC_MOTOR_IRQ_INSTANCE tMfocApp.motor
-#define MFOC_MOTOR_IRQ_READY() haladc_PreemptReady()
+#define MFOC_MOTOR_IRQ_READY() MDI_Sample_IsReady(phase_current)
 #define MFOC_MOTOR_IRQ_BEGIN() ((void)0)
-#define MFOC_MOTOR_IRQ_END() haladc_DiscardPreempt()
+#define MFOC_MOTOR_IRQ_END() mdi_at32_adc_AckCurrentFrame()
 
 #endif

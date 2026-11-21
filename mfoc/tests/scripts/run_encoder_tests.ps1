@@ -16,7 +16,8 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         "-DMFOC_FEEDBACK_ENABLE_POSITION=$enabled" `
         -DMFOC_FEEDBACK_ENABLE_SMO=0 -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
         -DMFOC_FEEDBACK_ENABLE_HFI=0 -DMFOC_FEEDBACK_ENABLE_EKF=0 `
-        "-I$library" "-I$library/math/include" "-I$library/control/include" `
+        "-I$library" "-I$library/include" "-I$library/math/include" `
+        "-I$library/control/include" `
         "-I$library/core/include" `
         "-I$library/port/include" "-I$library/motor/include" `
         "-I$library/position/include" "$testsRoot/position/encoder_test.c" `

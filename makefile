@@ -153,6 +153,7 @@ PERIPHERAL_SOURCES += $(wildcard peripheral/driver/*.c)
 # MFOC numeric backend and source bindings.
 MFOC_SOURCES ?=
 MFOC_INCLUDES ?=
+C_DEFS += $(MFOC_MOTOR_CONFIG_FLAGS)
 MFOC_NUMERIC ?= float
 ifeq ($(MFOC_NUMERIC),float)
     C_DEFS += -DMFOC_NUMERIC_FLOAT=1
@@ -276,32 +277,36 @@ endif
 
 # ------------------------------------------------------------------------------
 # Build configuration signature tracking
-# Triggers recompile whenever target, flags, or numeric backend changes
+# Triggers recompile whenever target, flags, backend, or motor profile changes.
 # ------------------------------------------------------------------------------
 BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC)\
                         -mod_$(MODUS_ENABLE)$(TARGET_CONFIG_SIGNATURE)
+ifneq ($(MFOC_MOTOR_CONFIG_PATH),)
+    BUILD_CONFIG_SIGNATURE += -motor_$(MFOC_MOTOR_CONFIG_PATH)
+endif
 
 CONFIG_STAMP = $(BUILD_DIR)/.config_stamp
 
 ifeq ($(OS),Windows_NT)
     CONFIG_STAMP_WIN = $(BUILD_DIR_WIN)\.config_stamp
-    PREV_CONFIG := $(shell if exist "$(CONFIG_STAMP_WIN)" type "$(CONFIG_STAMP_WIN)")
+    PREV_CONFIG := $(subst ",,$(shell if exist "$(CONFIG_STAMP_WIN)" type "$(CONFIG_STAMP_WIN)"))
 else
-    PREV_CONFIG := $(shell cat $(CONFIG_STAMP) 2>/dev/null)
+    PREV_CONFIG := $(shell cat "$(CONFIG_STAMP)" 2>/dev/null)
 endif
 
-ifneq ($(strip $(PREV_CONFIG)),$(strip $(BUILD_CONFIG_SIGNATURE)))
+ifneq ($(PREV_CONFIG),$(BUILD_CONFIG_SIGNATURE))
 .PHONY: $(CONFIG_STAMP)
 endif
 
 $(CONFIG_STAMP): | $(BUILD_DIR)
 ifeq ($(OS),Windows_NT)
-	@echo $(BUILD_CONFIG_SIGNATURE)>"$(CONFIG_STAMP_WIN)"
+	@echo "$(BUILD_CONFIG_SIGNATURE)">"$(CONFIG_STAMP_WIN)"
 else
-	@echo $(BUILD_CONFIG_SIGNATURE) > $(CONFIG_STAMP)
+	@printf '%s\n' "$(BUILD_CONFIG_SIGNATURE)" > "$(CONFIG_STAMP)"
 endif
 
-$(OBJECTS): $(CONFIG_STAMP) makefile $(wildcard config.local.mk)
+$(OBJECTS): $(CONFIG_STAMP) makefile target/$(TARGET_CHIP)/target.mk \
+            $(wildcard config.local.mk)
 
 -include $(OBJECTS:.o=.d)
 

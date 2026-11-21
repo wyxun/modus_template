@@ -5,6 +5,7 @@
  * @date 2026-10-26
  */
 #include "mfoc_identification_algorithms.h"
+#include "mfoc_motor_config_internal.h"
 #include <assert.h>
 #include <math.h>
 #include <stdio.h>

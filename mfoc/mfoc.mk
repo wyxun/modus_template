@@ -1,11 +1,24 @@
 # MFOC library sources; the target supplies the Port and interrupt entry.
 MFOC_ROOT ?= mfoc
 MFOC_INDUCTANCE_SRC = $(MFOC_ROOT)/identification/src/inductance
-MFOC_INCLUDE_DIRS = $(MFOC_ROOT) $(MFOC_ROOT)/math/include                     \
+MFOC_INCLUDE_DIRS = $(MFOC_ROOT) $(MFOC_ROOT)/include                          \
+    $(MFOC_ROOT)/math/include                                                \
     $(MFOC_ROOT)/control/include $(MFOC_ROOT)/core/include                     \
     $(MFOC_ROOT)/motor/include $(MFOC_ROOT)/port/include                       \
     $(MFOC_ROOT)/position/include $(MFOC_ROOT)/identification/include
 MFOC_INCLUDES = $(addprefix -I,$(MFOC_INCLUDE_DIRS))
+
+ifneq ($(strip $(MFOC_MOTOR_CONFIG)),)
+    # Keep the path in one argument, including spaces on Windows.
+    MFOC_MOTOR_CONFIG_NORMALIZED := $(subst \,/,$(MFOC_MOTOR_CONFIG))
+    ifeq ($(or $(filter /%,$(firstword $(MFOC_MOTOR_CONFIG_NORMALIZED))),$(findstring :/,$(firstword $(MFOC_MOTOR_CONFIG_NORMALIZED)))),)
+        MFOC_MOTOR_CONFIG_PATH := $(CURDIR)/$(MFOC_MOTOR_CONFIG_NORMALIZED)
+    else
+        MFOC_MOTOR_CONFIG_PATH := $(MFOC_MOTOR_CONFIG_NORMALIZED)
+    endif
+    MFOC_MOTOR_CONFIG_FLAGS = -DMFOC_MOTOR_CONFIG="\"$(MFOC_MOTOR_CONFIG_PATH)\""
+endif
+
 MFOC_SOURCES = $(MFOC_ROOT)/math/src/mfoc_numeric.c                              \
     $(MFOC_ROOT)/math/src/mfoc_angle.c                                          \
     $(MFOC_ROOT)/math/src/mfoc_trig.c                                           \

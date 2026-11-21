@@ -6,6 +6,7 @@
  */
 #include "../../class/mfoc_app.c"
 #include <assert.h>
+#include <math.h>
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
@@ -418,10 +419,47 @@ int mbase_Init(modus_base_t *base, modus_base_cfg_t *cfg)
     return s_register_result;
 }
 
+#if defined(MFOC_TEST_ALTERNATE_MOTOR)
+/** @brief Check the application and both algorithms see the selected motor. */
+static void check_selected_profile(void)
+{
+    const mfoc_motor_cfg_t *motor = &tMfocAppCfg.motor;
+    assert(motor->current_base_milliamp == 4000U);
+    assert(motor->voltage_base_millivolt == 14000U);
+    assert(motor->electrical_speed_base_hz == MFOC_SCALAR(320.0f));
+    assert(motor->params.pole_pairs == 6U);
+    const float omega = 6.28318530718f * 320.0f;
+    const float resistance_base = 14.0f / 4.0f;
+    const float inductance_base = resistance_base / omega;
+    const float flux_base = 14.0f / omega;
+    const float torque_base = 1.5f * 6.0f * flux_base * 4.0f;
+    const float inertia_base = torque_base / omega / (omega / 6.0f);
+    assert(fabsf(mfoc_to_float(motor->params.rs) -
+                 2.75f / resistance_base) < 0.0001f);
+    assert(fabsf(mfoc_to_float(motor->params.ld) -
+                 0.00095f / inductance_base) < 0.0001f);
+    assert(motor->params.ld == motor->params.lq);
+    assert(fabsf(mfoc_to_float(motor->params.flux) -
+                 0.0039f / flux_base) < 0.0001f);
+    assert(fabsf(mfoc_to_float(motor->params.inertia) -
+                 0.0000047f / inertia_base) < 0.0001f);
+    assert(motor->feedback.smo.speed_base_hz ==
+           motor->electrical_speed_base_hz);
+    assert(motor->feedback.flux.speed_base_hz ==
+           motor->electrical_speed_base_hz);
+    assert(motor->openloop.speed_base_hz == motor->electrical_speed_base_hz);
+    assert(MFOC_HFI_SPEED_BASE_HZ == 320U);
+    assert(MFOC_IDENTIFICATION_SPEED_BASE_HZ == 320U);
+}
+#endif
+
 /** @brief Check success, failure and Run without deferred initialization.
  * @return Zero on success. */
 int main(void)
 {
+#if defined(MFOC_TEST_ALTERNATE_MOTOR)
+    check_selected_profile();
+#endif
     assert(tMfocAppCfg.motor.current_base_milliamp ==
         (uint32_t)MFOC_MOTOR_BASE_CURRENT_MILLIAMP);
     assert(tMfocAppCfg.motor.voltage_base_millivolt ==

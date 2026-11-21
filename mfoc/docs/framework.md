@@ -60,7 +60,7 @@ Motor 在 PWM 提交成功后用最终占空比和本拍母线快照重建模型
 
 ### 2.1 标幺与基值
 
-电机模型和控制量使用 Motor 初始化时约定的标幺基值。G431 的基值取自工程配置。辨识可以更新这套基值上的电机参数。电流基值是**相电流峰值**，Clarke 为幅值不变形式。[G431 电机配置](../mfoc_motor_config.h)
+电机模型和控制量使用 Motor 初始化时约定的标幺基值。G431 的基值取自工程配置。辨识可以更新这套基值上的电机参数。电流基值是**相电流峰值**，Clarke 为幅值不变形式。[G431 默认电机配置](../config/motors/motor_2804.h)
 
 | 量 | 基值 | PU 定义 | 说明 |
 | --- | --- | --- | --- |
@@ -82,7 +82,7 @@ Motor 在 PWM 提交成功后用最终占空比和本拍母线快照重建模型
 
 - 角度一律 `mfoc_angle_t`（BAM32）。求差用 `mfoc_angle_diff`，得到 `[-0.5, 0.5)` 周；不要自己相减后强转符号。
 - 速度统一定义为**电气角速度 PU**，符号即转向。机械换算是编码器模块内部的事（机械转速 × 极对数 ÷ `ωb`），其它算法不得假设自己拿到的是机械量。
-- 控制中断频率由 `MFOC_MOTOR_RUN_FREQ_HZ` 给定，电流环、电流采样、HFI 载波与参数辨识共用它，各自的系数在编译期或 Init 时按它换算。速度环频率 `MFOC_SPEED_RUN_FREQ_HZ` 独立设置，框架据此派生“每几步更新一次速度”。应用应将观测器的 `sample_hz` 设为实际控制频率。SMO 和 Flux 按传入值计算离散系数，Init 不核对硬件节拍。
+- 目标板提供 `MFOC_MOTOR_RUN_FREQ_HZ`，电流环、电流采样、HFI 载波与参数辨识共用它，各自的系数在编译期或 Init 时按它换算。项目设置 `MFOC_SPEED_RUN_FREQ_HZ`，框架据此派生“每几步更新一次速度”。应用应将观测器的 `sample_hz` 设为实际控制频率。SMO 和 Flux 按传入值计算离散系数，Init 不核对硬件节拍。
 - 一个控制拍内的输入输出约定：当前拍电流是 `i[k]`，可用电压是**上一区间**的 `u[k-1]`，覆盖采样间隔 `[k-1, k)`。两者的时间对齐由调用者保证。
 
 ### 2.3 调用上下文与所有权
@@ -321,7 +321,7 @@ Motor 在每个采样拍按以下顺序选定控制角和最终 dq 电流参考�
 | 5 | HFI 主反馈获取期 | HFI 当前估计角，`(0, 0)`；两个电流 PI 继续运行并叠加载波 | HFI 发布注入请求。速度 PI 与分频冻结 |
 | 6 | 正常闭环（含 HFI 锁定首拍） | 所选主反馈的角；电流模式用 `current_cmd`，速度模式用 `(0, speed_iq)` | 主反馈供控制，速度 PI 仅在分频到期时使用反馈速度 |
 
-ACQUIRE 捕获成功后，Motor 按 `MFOC_START_BLEND_TURNS_S` 将 `forced - observed` 的偏移量逐拍缩至零，随后用 `mfoc_pi_Track` 衔接速度环。速度连续处于窗口内满 `MFOC_START_STABLE_MS` 后，启动状态回到 NONE。[捕获判据与超时处置](modules/feedback.md#handover) · [接管参数](../mfoc_motor_config.h)
+ACQUIRE 捕获成功后，Motor 按 `MFOC_START_BLEND_TURNS_S` 将 `forced - observed` 的偏移量逐拍缩至零，随后用 `mfoc_pi_Track` 衔接速度环。速度连续处于窗口内满 `MFOC_START_STABLE_MS` 后，启动状态回到 NONE。[捕获判据与超时处置](modules/feedback.md#handover) · [默认接管参数](../config/motors/motor_2804.h)
 
 后续接入 MTPA 或弱磁时，参考生成放在 Motor 正常闭环选定电流命令或速度 PI 的 Iq 之后、向 Core 交付 `core_input.ref` 之前。在这里组合 Id 与 Iq 并施加电流约束。外部命令保存在 `current_cmd`，启动、获取和辨识各自使用表中的参考。[编码器与 SMO 的使用方](modules/feedback.md#feedback-consumers)
 
@@ -368,7 +368,7 @@ sequenceDiagram
 
 `mfoc_motor_Run` 每个前台循环调用一次，先调用 `mfoc_port_position_run`（使能物理位置时），再推进辨识或处理对齐超时。辨识分支提前返回前也已完成位置服务。位置读取失败不会跳过对齐到期、校准结果处理和停机。Motor 保持计时与辨识阶段超时都使用 Port 的 64 位 tick。辨识从首次前台轮询该阶段时开始计时，后续轮询沿用该起点。ISR 已完成采样时，前台优先处理完成事件，再为下一阶段计时。
 
-在 `mfoc_identification_Run` 中，`MFOC_PT_BEGIN(id->run_pt)` 和 `MFOC_PT_END()` 标出前台流程的范围。每个实例各自保存恢复点 `run_pt`。进入一个阶段时先记录起始 tick，然后在 `MFOC_PT_WAIT_UNTIL` 等待采样完成、实验中止或阶段超时。条件未满足时返回 `MFOC_FSM_ONGOING`，下次调用直接重查条件，因此采样停滞也会按原截止时间退出。G431 将这三个宏映射到原生 perfc PT，独立构建使用 C11 实现。[前台状态机](../identification/src/mfoc_identification.c) · [PT 接口](../mfoc_pt.h)
+在 `mfoc_identification_Run` 中，`MFOC_PT_BEGIN(id->run_pt)` 和 `MFOC_PT_END()` 标出前台流程的范围。每个实例各自保存恢复点 `run_pt`。进入一个阶段时先记录起始 tick，然后在 `MFOC_PT_WAIT_UNTIL` 等待采样完成、实验中止或阶段超时。条件未满足时返回 `MFOC_FSM_ONGOING`，下次调用直接重查条件，因此采样停滞也会按原截止时间退出。G431 将这三个宏映射到原生 perfc PT，独立构建使用 C11 实现。[前台状态机](../identification/src/mfoc_identification.c) · [PT 接口](../include/mfoc_pt.h)
 
 空闲时调用 Run 返回 `MFOC_FSM_COMPLETE`，表示调用方可以停止轮询。实验状态由 `mfoc_identification_GetStatus` 查询，只有到达 `MFOC_IDENTIFICATION_DONE` 时，`mfoc_identification_GetResult` 才会写入模型。[辨识接口](../identification/include/mfoc_identification.h)
 
@@ -418,18 +418,18 @@ ALIGN、强拖、无感启动阶段不是主状态，而是 `hold_active`、`ope
 
 ## 11. 配置与编译边界
 
-[`mfoc_config.h`](../mfoc_config.h) 管功能与算法选择，[`mfoc_motor_config.h`](../mfoc_motor_config.h) 管电机规格与基值，板级标度由目标的 Port 实现提供。
+项目通过 `mfoc_config.h` 设置速度环、反馈和功能开关。电机配置提供电机规格与基值，目标配置提供控制频率、计时频率和调制上限。板级采样换算由目标的 Port 实现。[配置说明](configuration.md)
 
 | 配置 | 作用 | 现状 |
 | --- | --- | --- |
 | `MFOC_NUMERIC=float/fixed` | 数值后端，二选一 | EKF 仅支持 FLOAT |
-| `MFOC_MOTOR_RUN_FREQ_HZ` | 控制中断、电流环、采样、HFI、辨识共用频率 | 默认 20000；必须能被目标 PWM 生成 |
+| `MFOC_MOTOR_RUN_FREQ_HZ` | 控制中断、电流环、采样、HFI、辨识共用频率 | 两个目标默认 20 kHz，与实际 PWM/ADC 触发同步 |
 | `MFOC_SPEED_RUN_FREQ_HZ` | 速度环频率，决定 `MFOC_SPEED_LOOP_DIVIDER` | 默认 1000；0 关闭速度模式 |
-| `MFOC_FEEDBACK_ENABLE_*` | 哪些位置源/观测器参与运行 | POSITION、SMO 默认开 |
-| `MFOC_FEEDBACK_BACKEND` | 谁的输出被采纳 | 默认 SMO；必须对应已使能算法，`#error` 兜底 |
-| `MFOC_CORE_M_MAX` | 电压矢量相对母线的上限 | 0.55，留 PWM 余量 |
+| `MFOC_FEEDBACK_ENABLE_*` | 哪些位置源或观测器编入 | 项目默认启用 POSITION 和 Flux，目标可覆盖 |
+| `MFOC_FEEDBACK_BACKEND` | 控制角速取自哪一路 | 默认 Flux，所选算法必须已启用 |
+| `MFOC_CORE_M_MAX` | 电压矢量相对母线的上限 | G431 为 0.55，AT32F413 为 0.35 |
 | `MFOC_IDENTIFICATION_ENABLE` | 辨识流程与相关字段 | 默认 0；关闭后实例成员一并消失 |
-| `MFOC_ISR_MEASURE` | 中断计时统计 | 仅调试构建开启，会引用应用对象 |
+| `MFOC_ISR_MEASURE` | 中断计时统计 | 默认关闭，G431 调试构建默认开启 |
 
 两点容易踩：`MFOC_FEEDBACK_NONE` 只适用于纯强拖或辨识构建，常规闭环会因"无后端"直接 Trip；编译开关会改变结构体成员，各编译单元必须使用同一份配置。
 

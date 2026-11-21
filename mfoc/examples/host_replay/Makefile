@@ -31,11 +31,12 @@ CONFIG_FLAGS = -DMFOC_NUMERIC_$(NUMERIC)=1 \
     -DMFOC_FEEDBACK_ENABLE_FLUX=$(FLUX) -DMFOC_FEEDBACK_ENABLE_EKF=$(EKF) \
     -DMFOC_IDENTIFICATION_ENABLE=$(IDENTIFY) \
     -DMFOC_MOTOR_MODEL_UPDATE_ENABLE=$(MODEL_UPDATE) \
-    -DMFOC_TRIG_BACKEND=MFOC_TRIG_BACKEND_$(TRIG)
+    -DMFOC_TRIG_BACKEND=MFOC_TRIG_BACKEND_$(TRIG) $(MFOC_MOTOR_CONFIG_FLAGS)
 CFLAGS += -std=c11 -O2 -Wall -Wextra -Werror -ffp-contract=off
 LDLIBS += -lm
 
 ifeq ($(OS),Windows_NT)
+    SHELL = cmd.exe
     EXEEXT = .exe
 endif
 
@@ -43,9 +44,20 @@ FEATURES = $(POSITION)$(SMO)$(HFI)$(FLUX)$(EKF)
 PROFILE = $(NUMERIC)-$(BACKEND)-$(FEATURES)-id$(IDENTIFY)-$(TRIG)-model$(MODEL_UPDATE)
 PROGRAM = build/replay-$(PROFILE)$(EXEEXT)
 SOURCES = consumer.c $(MFOC_SOURCES)
-HEADERS = $(wildcard $(addsuffix /*.h,$(MFOC_INCLUDE_DIRS))) \
-    $(wildcard $(addsuffix *.h,$(sort $(dir $(MFOC_SOURCES))))) \
-    $(wildcard $(addsuffix *.inc,$(sort $(dir $(MFOC_SOURCES)))))
+DEPS = build/replay-$(PROFILE).d
+CONFIG_STAMP = build/replay-$(PROFILE).motor-config
+MOTOR_CONFIG = $(or $(MFOC_MOTOR_CONFIG_PATH),default)
+
+ifeq ($(OS),Windows_NT)
+    CONFIG_STAMP_WIN = $(subst /,\,$(CONFIG_STAMP))
+    PREV_CONFIG := $(subst ",,$(shell if exist "$(CONFIG_STAMP_WIN)" type "$(CONFIG_STAMP_WIN)"))
+else
+    PREV_CONFIG := $(shell cat "$(CONFIG_STAMP)" 2>/dev/null)
+endif
+
+ifneq ($(PREV_CONFIG),$(MOTOR_CONFIG))
+.PHONY: $(CONFIG_STAMP)
+endif
 
 .PHONY: all run
 all: $(PROGRAM)
@@ -53,9 +65,20 @@ all: $(PROGRAM)
 run: $(PROGRAM)
 	./$(PROGRAM)
 
-$(PROGRAM): $(SOURCES) $(HEADERS) Makefile $(MFOC_ROOT)/mfoc.mk | build
+-include $(DEPS)
+
+$(PROGRAM): $(SOURCES) $(CONFIG_STAMP) Makefile $(MFOC_ROOT)/mfoc.mk | build
 	$(CC) $(CPPFLAGS) $(CONFIG_FLAGS) $(CFLAGS) $(MFOC_INCLUDES) \
 	    $(SOURCES) $(LDLIBS) -o $@
+	$(CC) $(CPPFLAGS) $(CONFIG_FLAGS) $(CFLAGS) $(MFOC_INCLUDES) \
+	    -MM -MP -MT "$@" $(SOURCES) > "$(DEPS)"
+
+$(CONFIG_STAMP): | build
+ifeq ($(OS),Windows_NT)
+	@echo "$(MOTOR_CONFIG)">"$(CONFIG_STAMP_WIN)"
+else
+	@printf '%s\n' "$(MOTOR_CONFIG)" > "$(CONFIG_STAMP)"
+endif
 
 build:
 	mkdir build
