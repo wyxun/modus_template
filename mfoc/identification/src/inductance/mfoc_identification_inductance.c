@@ -5,7 +5,7 @@
  * @date 2026-10-26
  */
 #include "mfoc_identification_inductance_internal.h"
-#include "mfoc_motor_config_internal.h"
+#include "mfoc_identification_internal.h"
 
 #define L_SAMPLES MFOC_IDENTIFICATION_L_SAMPLES
 #define L_DT_PU MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_RAD_S /                 \
@@ -44,4 +44,45 @@ mfoc_fsm_rt_t mfoc_identification_inductance_Finish(
 {
     return _mfoc_identification_EvaluateInductance(state, rs, L_DT_PU,
                                                    inductance);
+}
+
+/** @copydoc mfoc_identification_inductance_SeriesStep */
+mfoc_fsm_rt_t mfoc_identification_inductance_SeriesStep(
+    mfoc_identification_inductance_series_t *state,
+    mfoc_scalar_t i_axis_k, mfoc_scalar_t u_axis_previous, bool negative)
+{
+    const uint32_t count = state->count;
+    if (count == 0U) {
+        state->i_start = i_axis_k;
+    } else {
+        const mfoc_scalar_t trapezoid = state->i_last + i_axis_k;
+        state->sum_u += negative ? -u_axis_previous : u_axis_previous;
+        state->sum_i_twice += negative ? -trapezoid : trapezoid;
+        /* The ending current is also the next half-wave's baseline. */
+        if ((count % L_SAMPLES) == 0U) {
+            const mfoc_scalar_t delta_i = i_axis_k - state->i_start;
+            state->delta_i_signed += negative ? -delta_i : delta_i;
+            state->i_start = i_axis_k;
+        }
+    }
+    state->i_last = i_axis_k;
+    state->count = count + 1U;
+    return count == MFOC_IDENTIFICATION_L_SERIES_INTERVALS ?
+        MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
+}
+
+/** @copydoc mfoc_identification_inductance_SeriesFinish */
+mfoc_fsm_rt_t mfoc_identification_inductance_SeriesFinish(
+    const mfoc_identification_inductance_series_t *state,
+    mfoc_scalar_t rs, mfoc_scalar_t *inductance)
+{
+    /* The 16 signed half-waves cancel constant voltage and current offsets. */
+    const mfoc_scalar_t min_delta = MFOC_SCALAR(MFOC_IDENTIFICATION_L_DELTA_MIN)
+        * (mfoc_scalar_t)MFOC_IDENTIFICATION_L_SERIES_HALVES;
+    if (state->count != MFOC_IDENTIFICATION_L_SERIES_INTERVALS + 1U ||
+        state->delta_i_signed < min_delta) {
+        return MFOC_FSM_FAILED;
+    }
+    return _mfoc_identification_SolveInductance(state->sum_u,
+        state->sum_i_twice, state->delta_i_signed, rs, L_DT_PU, inductance);
 }

@@ -65,6 +65,8 @@ MDI_AT32_PWM_LIFECYCLE_BIND(bridge, TMR1, (GPIOB->idt & GPIO_PINS_12) == 0U)
 MDI_AT32_TICK_BIND(raw_tick, get_system_ticks)
 
 #if AT32F413_BOARD_HALL
+/* APB1 /2 with timer doubling and core-clock SysTick both run at 200 MHz. */
+#define AT32_HALL_TICKS_PER_US 200U
 /* J1 H1/H2/H3 are PB4/PB5/PB0. */
 MDI_AT32_IO_BIND_INPUT_3(hall_inputs, GPIOB, 4U, 0U)
 #endif

@@ -16,6 +16,10 @@ typedef struct {
     bool bConfigured;
 } mdi_adc_service_state_t;
 static mdi_adc_service_state_t s_tAdcService;
+#if MFOC_RUNTIME_BUS
+uint64_t g_g431AdcStarted[G431_ADC_DMA_SLOT_COUNT];
+uint64_t g_g431MeanStarted;
+#endif
 
 /** @brief Decode the AS5600 raw angle register into mechanical counts.
  * @param raw Output between 0 and 4095. @return I2C or argument status. */
@@ -113,7 +117,16 @@ void mdi_Service(void)
     bool bDue = false;
     if (!s_tAdcService.bConfigured) { return; }
     g_eG431AdcStatus = g_tG431Adc.eError;
+#if MFOC_RUNTIME_BUS
+    const uint32_t previous = g_wG431AdcConsumed;
+#endif
     eStatus = MDI_ADC_MeanUpdate(adc_mean);
+#if MFOC_RUNTIME_BUS
+    if (previous != g_wG431AdcConsumed) {
+        const uint32_t slot = MDI_ADC_DMA_CompletedIndexAt(adc_dma, g_wG431AdcConsumed);
+        g_g431MeanStarted = g_g431AdcStarted[slot];
+    }
+#endif
     if (eStatus != MDI_OK && eStatus != MDI_BUSY) {
         g_eG431AdcStatus = eStatus;
     }

@@ -10,7 +10,8 @@
  * clears all bound compares and issues UG; duty must then be resubmitted.
  * RCR/trigger side effects of UG belong to board integration, not this API.
  * Only the optional CYCLE binding exposes StageCycle/Commit and requires
- * ARR/CCR preload. G431 bridge preload is disabled and has no Commit.
+ * ARR/CCR preload. The G431 bridge transfers its staged compares at a
+ * natural hardware update.
  */
 #ifndef STM32G431_MDI_PWM_H
 #define STM32G431_MDI_PWM_H
@@ -189,7 +190,7 @@ MDI_INLINE mdi_status_t mdi_stm32_PlanFrequency(
 #define MDI_CORE_PWM_ZERO(N, R, M) (R) = 0U;
 #define MDI_CORE_DUTY_INVALID(N, R, M) || (ptDuty->N > 65536U)
 #define MDI_CORE_DUTY_CONVERT(N, R, M)                                          \
-    tCounts.N = (uint32_t)(((uint64_t)ptDuty->N * wPeriod + 32768U) >> 16U);
+    ptCounts->N = (uint32_t)(((uint64_t)ptDuty->N * wPeriod + 32768U) >> 16U);
 #define MDI_CORE_CYCLE_INVALID(N, R, M) || (ptCycle->tCompare.N > wPeriod)
 
 /** @brief Bind timer run control and an explicit output gate.
@@ -310,18 +311,24 @@ MDI_INLINE mdi_status_t mdi_stm32_PlanFrequency(
         (TIMER)->EGR = 1U;                                                      \
         return MDI_OK;                                                          \
     }                                                                           \
-    MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_SetDuty)(                         \
-        const MDI_PWM_DutyFrame(NAME) *ptDuty)                                  \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_PrepareDuty)(                     \
+        const MDI_PWM_DutyFrame(NAME) *ptDuty, MDI_PWM_Frame(NAME) *ptCounts)   \
     {                                                                           \
-        MDI_PWM_Frame(NAME) tCounts = {0};                                      \
         uint32_t wPeriod = 0U;                                                  \
-        if (ptDuty == NULL) { return MDI_INVALID; }                             \
+        if (ptDuty == NULL || ptCounts == NULL) { return MDI_INVALID; }        \
         if (false CHANNELS(MDI_CORE_DUTY_INVALID)) { return MDI_RANGE; }        \
         wPeriod = MDI_STM32_PWM_PERIOD(TIMER, FACTOR);                          \
         if (wPeriod < 2U || wPeriod > 65535U) { return MDI_RANGE; }             \
         CHANNELS(MDI_CORE_DUTY_CONVERT)                                         \
-        MDI_PWM_StageFast(NAME, &tCounts);                                      \
         return MDI_OK;                                                          \
+    }                                                                           \
+    MDI_INLINE mdi_status_t MDI_OP(NAME, _pwm_SetDuty)(                         \
+        const MDI_PWM_DutyFrame(NAME) *ptDuty)                                  \
+    {                                                                           \
+        MDI_PWM_Frame(NAME) tCounts = {0};                                      \
+        mdi_status_t eStatus = MDI_OP(NAME, _pwm_PrepareDuty)(ptDuty, &tCounts);\
+        if (eStatus == MDI_OK) { MDI_PWM_StageFast(NAME, &tCounts); }           \
+        return eStatus;                                                         \
     }
 
 /** @brief Opt in to an ARR/CCR preload cycle with explicit update events.

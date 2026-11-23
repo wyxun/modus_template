@@ -14,11 +14,14 @@
  * current-loop rate. Same electrical speed base as Motor. These are tuning
  * starting points, not measured motor data. All voltages/currents are PU.
  * Hold +alpha, -alpha, +beta, -beta for two intervals each. Demodulate only
- * the second current increment of each vector, i.e. seven of eight steps. */
+ * the second current increment of each vector, four of eight steps. */
 #define MFOC_HFI_SAMPLE_HZ MFOC_MOTOR_RUN_FREQ_HZ
 #define MFOC_HFI_CARRIER_SAMPLES 8U
 #define MFOC_HFI_SPEED_BASE_HZ MFOC_MOTOR_BASE_ELECTRICAL_HZ
-#define MFOC_HFI_VOLTAGE MFOC_SCALAR(0.04f)
+#ifndef MFOC_HFI_VOLTAGE_PU
+#define MFOC_HFI_VOLTAGE_PU 0.04f
+#endif
+#define MFOC_HFI_VOLTAGE MFOC_SCALAR(MFOC_HFI_VOLTAGE_PU)
 #define MFOC_HFI_RESPONSE_MIN MFOC_SCALAR(0.002f)
 #define MFOC_HFI_SALIENCY_MIN MFOC_SCALAR(0.04f)
 /* +1 for Ld < Lq, -1 for Ld > Lq; must match measured HF saliency. */
@@ -101,9 +104,14 @@ typedef struct {
     mfoc_hfi_state_t state;
     uint32_t startup_count;
     uint16_t lock_count;
-    uint8_t carrier; /* Prior interval: bit 0=second, 1=negative, 2=beta. */
+    uint8_t carrier; /* Demodulation cursor; 0 after a completed group. */
     bool has_current;
     bool has_angle;
+#if MFOC_PWM_PRELOAD_DELAY
+    /* Zero means no injection. Tags 1-8 encode carrier phases 0-7. */
+    uint8_t applied_tag; /* Injection for the interval ending at next Step. */
+    uint8_t pending_tag; /* Injection preloaded at the last Step. */
+#endif
 } mfoc_hfi_t;
 
 /** @brief Estimate and next-interval stationary injection command. */
@@ -118,16 +126,17 @@ typedef struct {
  * @param hfi Valid instance. @return None. */
 void mfoc_hfi_Init(mfoc_hfi_t *hfi);
 
-/** @brief Demodulate i[k], track the axis and request interval-k injection.
+/** @brief Demodulate i[k], track the axis and request the next injection.
  * @param hfi Initialized instance. @param i_ab_k Current I/Ibase sample.
  * @param u_previous Prior-interval V/Vbase, NULL before the first PWM interval.
- * @param output Next-interval injection and electrical estimate.
+ * @param output Injection for the new PWM command, and electrical estimate.
  * @return None. Valid instance/current/output pointers are preconditions.
  * @note Caller supplies bounded finite samples (|i_axis| <= 1, |u_axis| <= 4).
- * i[k]-i[k-1] must correspond to u_previous and the preceding injection.
+ * i[k]-i[k-1] must correspond to u_previous and the injection applied in
+ * [k-1,k). The command was emitted at k-1, or k-2 with PWM preload delay.
  * Current history advances every ISR, including the discarded first interval;
  * accepted increments span one control period, not the full two-interval hold.
- * No extra PWM delay is assumed. Missing voltage resets the whole sequence.
+ * Missing voltage resets the sequence; a known neutral interval uses zero.
  * Polarity identification requires rest and zero fundamental current command;
  * current control must leave enough injection voltage and HF response.
  * The pulse comparison assumes short, similar positive/negative waveforms;

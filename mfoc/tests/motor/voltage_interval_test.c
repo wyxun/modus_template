@@ -62,13 +62,33 @@ static void control_history(void)
     assert(motor.previous_core_output.limited);
     mfoc_ab_t limited = applied(low_bus);
     assert(limited.qAlpha > MFOC_ZERO && limited.qBeta > MFOC_ZERO);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor.previous_voltage_ab, (mfoc_ab_t){0});
+#else
     same_voltage(motor.previous_voltage_ab, limited);
+#endif
 
     const mfoc_scalar_t high_bus = MFOC_SCALAR(1.3f);
     assert(mfoc_motor_SetBus(&motor, high_bus) == MFOC_RESULT_OK);
+    const mfoc_dq_t reversed = {-MFOC_HALF, MFOC_SCALAR(0.1f)};
+    assert(mfoc_motor_SetCurrent(&motor, &reversed) == MFOC_RESULT_OK);
+    motor_port_fake.feedback.u_inject_ab.qBeta = MFOC_ZERO;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    const mfoc_ab_t negative = applied(high_bus);
+    assert(negative.qAlpha < MFOC_ZERO);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor_port_fake.feedback_voltage, (mfoc_ab_t){0});
+    same_voltage(motor.previous_voltage_ab, limited);
+    assert(mfoc_motor_SetBus(&motor, MFOC_HALF) == MFOC_RESULT_OK);
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     same_voltage(motor_port_fake.feedback_voltage, limited);
-    same_voltage(motor.previous_voltage_ab, applied(high_bus));
+    same_voltage(motor.previous_voltage_ab, negative);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    same_voltage(motor_port_fake.feedback_voltage, negative);
+#else
+    same_voltage(motor_port_fake.feedback_voltage, limited);
+    same_voltage(motor.previous_voltage_ab, negative);
+#endif
 
     motor_port_fake.write = MFOC_RESULT_IO;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_IO);
@@ -80,6 +100,15 @@ static void control_history(void)
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor_port_fake.feedback_voltage_address == NULL);
+    same_voltage(motor.previous_voltage_ab, (mfoc_ab_t){0});
+    motor_port_fake.sample = MFOC_RESULT_IO;
+    unsigned writes = motor_port_fake.writes;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_IO);
+    assert(motor_port_fake.writes == writes);
+    assert(!motor_port_fake.enabled && !motor.previous_voltage_ab_valid);
+    assert((motor.faults & MFOC_MOTOR_FAULT_SAMPLE) != 0U);
+    motor_port_fake.sample = MFOC_RESULT_OK;
+    assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     assert(!motor.previous_voltage_ab_valid);
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
@@ -102,7 +131,11 @@ static void identification_routes(void)
     assert(motor.previous_voltage_ab_valid);
     mfoc_ab_t direct = applied(MFOC_ONE);
     assert(direct.qAlpha > MFOC_ZERO);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor.previous_voltage_ab, (mfoc_ab_t){0});
+#else
     same_voltage(motor.previous_voltage_ab, direct);
+#endif
 
     /* Select the regular route for one replayed tick following direct PWM.
      * This isolates the history contract from experiment stage sequencing. */
@@ -112,7 +145,13 @@ static void identification_routes(void)
     assert(motor_port_fake.feedback_reads == 1U);
     assert(motor_port_fake.feedback_voltage_address ==
            &motor.previous_voltage_ab);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor_port_fake.feedback_voltage, (mfoc_ab_t){0});
+    same_voltage(motor.previous_voltage_ab, direct);
+    const mfoc_ab_t regular_voltage = applied(MFOC_HALF);
+#else
     same_voltage(motor_port_fake.feedback_voltage, direct);
+#endif
 
     /* A held virtual stage uses its current reference and the real Core. */
     motor.identification.stage = MFOC_IDENTIFICATION_STAGE_FLUX;
@@ -127,9 +166,17 @@ static void identification_routes(void)
     mfoc_ab_t virtual_voltage = applied(MFOC_HALF);
     assert(virtual_voltage.qAlpha > MFOC_ZERO);
     assert(virtual_voltage.qBeta < MFOC_ZERO);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor.previous_voltage_ab, regular_voltage);
+#else
     same_voltage(motor.previous_voltage_ab, virtual_voltage);
+#endif
     motor.identification.stage = MFOC_IDENTIFICATION_STAGE_NONE;
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+#if MFOC_PWM_PRELOAD_DELAY
+    same_voltage(motor_port_fake.feedback_voltage, regular_voltage);
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+#endif
     same_voltage(motor_port_fake.feedback_voltage, virtual_voltage);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
 }

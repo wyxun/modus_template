@@ -1,4 +1,4 @@
-param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
+param([string[]]$Tests = @('openloop', 'core', 'board_bus', 'motor', 'motor_run',
     'motor_control', 'motor_irq', 'voltage_interval', 'motor_identification',
     'identification_rs', 'identification_inductance', 'identification_inertia',
     'hfi_motor'),
@@ -7,6 +7,9 @@ param([string[]]$Tests = @('openloop', 'core', 'motor', 'motor_run',
     [ValidateSet(0, 1, 2, 3, 4, 5)][int]$Backend = 1,
     [ValidateSet(0, 1)][int]$Position = 1,
     [switch]$Perfc,
+    [switch]$PwmPreloadDelay,
+    [switch]$SmoStaggerSpeedPi,
+    [uint32]$ControlHz = 0,
     [string]$MotorConfig = '')
 $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
@@ -17,6 +20,8 @@ if ($MotorConfig) {
     $profile = (Resolve-Path -LiteralPath $MotorConfig).Path.Replace('\', '/')
     $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$profile>")
 }
+if ($ControlHz) { $profileFlags += "-DMFOC_MOTOR_RUN_FREQ_HZ=${ControlHz}U" }
+if ($PwmPreloadDelay) { $profileFlags += '-DMFOC_PWM_PRELOAD_DELAY=1' }
 $perfcFlags = @()
 if ($Perfc) {
     $perfcFlags = @('-DMFOC_USE_PERFC_FSM=1',
@@ -38,14 +43,15 @@ if ($Backend -eq 5) {
 foreach ($numeric in $numerics) {
   foreach ($test in $Tests) {
     $testGroup = switch -Regex ($test) {
-      '^(core)$' { 'core'; break }
-      '^(identification_rs|identification_inductance|identification_inertia)$' {
+      '^(core|board_bus)$' { 'core'; break }
+      '^(identification_rs|identification_inductance|identification_inertia|identification_preload)$' {
         'identification'; break
       }
       default { 'motor' }
     }
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
+    if ($test -eq 'board_bus') { $irqArguments = @("-I$repo/class") }
     if ($test -eq 'motor_irq') {
       $irqArguments = @('-DMFOC_ISR_MEASURE=0',
           "-I$testsRoot/irq_binding",
@@ -71,7 +77,12 @@ foreach ($numeric in $numerics) {
           "$library/position/src/mfoc_ekf.c")
     }
     $enableIdentification = $Identify -or $plant -or
-        $test -in @('motor_identification', 'hfi_permission')
+        $test -in @('motor_identification', 'hfi_permission',
+            'identification_preload')
+    $stagger = @()
+    if ($SmoStaggerSpeedPi -and $numeric -eq 'FIXED') {
+      $stagger = @('-DMFOC_SMO_STAGGER_SPEED_PI=1')
+    }
     # Cover all three PWM routes by default; -Identify 0 tests the trimmed build.
     if ($test -eq 'voltage_interval' -and !$PSBoundParameters.ContainsKey('Identify')) {
       $enableIdentification = $true
@@ -85,7 +96,7 @@ foreach ($numeric in $numerics) {
         "-DMFOC_FEEDBACK_ENABLE_FLUX=$flux" `
         "-DMFOC_FEEDBACK_ENABLE_EKF=$ekf" `
         "-DMFOC_IDENTIFICATION_ENABLE=$([int]$enableIdentification)" `
-        @perfcFlags @irqArguments @feedbackArguments @profileFlags `
+        @perfcFlags @irqArguments @feedbackArguments @profileFlags @stagger `
         "-I$library" "-I$library/include" "-I$library/math/include" `
         "-I$library/control/include" `
         "-I$library/core/include" `

@@ -28,6 +28,26 @@
 #error "Encoder compatibility flag must match the physical position flag"
 #endif
 
+/* Angle diagnostics need the same position read as the control frame. */
+#if defined(MWAVEFORM_ENABLE) && MWAVEFORM_ENABLE &&                           \
+    defined(MFOC_NUMERIC_FLOAT)
+#define MFOC_DEBUG_HFI_WAVEFORM (MFOC_FEEDBACK_ENABLE_HFI &&                   \
+    !MFOC_FEEDBACK_ENABLE_FLUX && !MFOC_FEEDBACK_ENABLE_SMO)
+#define MFOC_DEBUG_POSITION_WAVEFORM (MFOC_FEEDBACK_ENABLE_POSITION &&         \
+    !MFOC_DEBUG_HFI_WAVEFORM)
+#else
+#define MFOC_DEBUG_HFI_WAVEFORM 0
+#define MFOC_DEBUG_POSITION_WAVEFORM 0
+#endif
+
+/* Target contract: a duty submitted at k drives [k+1,k+2). */
+#ifndef MFOC_PWM_PRELOAD_DELAY
+#define MFOC_PWM_PRELOAD_DELAY 0
+#endif
+#if MFOC_PWM_PRELOAD_DELAY != 0 && MFOC_PWM_PRELOAD_DELAY != 1
+#error "MFOC_PWM_PRELOAD_DELAY must be 0 or 1"
+#endif
+
 #if MFOC_MOTOR_RUN_FREQ_HZ == 0U
 #error "MFOC_MOTOR_RUN_FREQ_HZ must be positive"
 #endif

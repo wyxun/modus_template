@@ -21,8 +21,9 @@ typedef struct {
 } test_dma_t;
 typedef struct {
     struct { volatile unsigned oen; } brk_bit;
+    struct { volatile uint32_t cval; } cval_bit;
     volatile uint32_t c1dt, c2dt, c3dt;
-    volatile uint32_t ists, swevt;
+    volatile uint32_t ists, swevt, iden;
 } test_timer_t;
 typedef test_timer_t tmr_type;
 
@@ -32,6 +33,24 @@ extern test_timer_t test_timer;
 #define ADC1 (&test_adc)
 #define DMA1 (&test_dma)
 #define TMR1 (&test_timer)
+#if AT32F413_BOARD_HALL
+extern test_timer_t test_hall_timer;
+#define TMR3 (&test_hall_timer)
+#define TMR_C1_FLAG 2U
+#define TMR_C1_INT 2U
+#define TMR_C1_RECAPTURE_FLAG 512U
+#define TMR_SELECT_CHANNEL_1 0U
+uint32_t tmr_channel_value_get(tmr_type *tmr, unsigned channel);
+static inline void tmr_flag_clear(tmr_type *tmr, uint32_t flags)
+{
+    tmr->ists &= ~flags;
+}
+static inline void tmr_interrupt_enable(tmr_type *tmr, uint32_t irq,
+                                        bool enable)
+{
+    if (enable) { tmr->iden |= irq; } else { tmr->iden &= ~irq; }
+}
+#endif
 
 typedef struct {
     volatile uint32_t idt, scr;
@@ -68,6 +87,7 @@ enum {
     GPIO_MODE_INPUT, GPIO_PULL_NONE, USART1_IRQn
 };
 #define TRUE true
+#define FALSE false
 
 static inline void crm_periph_clock_enable(unsigned clock, bool enabled)
 {

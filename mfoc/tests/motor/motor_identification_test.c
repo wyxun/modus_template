@@ -362,7 +362,8 @@ static void lost_pulse_interval(void)
     mfoc_motor_t motor = {0};
     setup(&motor);
     motor.identification.stage = MFOC_IDENTIFICATION_STAGE_LQ;
-    motor.identification.work.inductance = (mfoc_identification_inductance_t){0};
+    motor.identification.work.inductance =
+        (mfoc_identification_inductance_series_t){0};
     assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
     assert(motor.identification.work.inductance.count == 1U);
     motor.previous_voltage_ab_valid = false;

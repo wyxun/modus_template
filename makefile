@@ -39,6 +39,19 @@ CLASS_SOURCES = class/template_class.c template_driver.c
 
 include target/$(TARGET_CHIP)/target.mk
 
+# P12 comparison build. The production choice follows the overlap measurements.
+MFOC_RUNTIME_BUS ?= 0
+ifeq ($(MFOC_RUNTIME_BUS),1)
+    ifeq ($(filter stm32g431 at32f413,$(TARGET_CHIP)),)
+        $(error Runtime bus monitoring needs a supported MFOC power board)
+    endif
+    C_DEFS += -DMFOC_RUNTIME_BUS=1
+    CLASS_SOURCES += class/mfoc_board_bus.c
+    TARGET_CONFIG_SIGNATURE += -runtime_bus
+else ifneq ($(MFOC_RUNTIME_BUS),0)
+    $(error MFOC_RUNTIME_BUS must be 0 or 1)
+endif
+
 # ------------------------------------------------------------------------------
 # Toolchain directories are optional when the tools are on PATH.
 # ------------------------------------------------------------------------------
@@ -268,11 +281,23 @@ vpath %.c $(sort $(dir $(C_SOURCES)))
 vpath %.s $(sort $(dir $(ASM_SOURCES)))
 vpath %.S $(sort $(dir $(ASM_SOURCES)))
 
-# 针对高频控制步相关的密集计算模块强制启用 -O2 优化
-$(BUILD_DIR)/motor.o: CFLAGS += -O2
 # Preserve separate-operation rounding in MFOC numeric callers.
 ifneq ($(strip $(MFOC_SOURCES) $(MFOC_TARGET_SOURCES)),)
 $(addprefix $(BUILD_DIR)/,$(notdir $(MFOC_SOURCES:.c=.o) $(MFOC_TARGET_SOURCES:.c=.o))): CFLAGS += -ffp-contract=off
+endif
+
+# A diagnostic build may benchmark one additional MFOC object.
+ifneq ($(strip $(MFOC_O2_OBJECT)),)
+ifneq ($(words $(MFOC_O2_OBJECT)),1)
+    $(error MFOC_O2_OBJECT must name one MFOC object without the .o suffix)
+endif
+ifeq ($(filter $(notdir $(basename $(MFOC_SOURCES))),$(MFOC_O2_OBJECT)),)
+    $(error Unknown MFOC object: $(MFOC_O2_OBJECT))
+endif
+endif
+MFOC_O2_OBJECTS := $(sort $(MFOC_TARGET_O2_OBJECT) $(MFOC_O2_OBJECT))
+ifneq ($(MFOC_O2_OBJECTS),)
+$(addprefix $(BUILD_DIR)/,$(addsuffix .o,$(MFOC_O2_OBJECTS))): private CFLAGS += -O2
 endif
 
 # ------------------------------------------------------------------------------
@@ -281,6 +306,9 @@ endif
 # ------------------------------------------------------------------------------
 BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC)\
                         -mod_$(MODUS_ENABLE)$(TARGET_CONFIG_SIGNATURE)
+ifneq ($(strip $(MFOC_O2_OBJECT)),)
+    BUILD_CONFIG_SIGNATURE += -o2_$(MFOC_O2_OBJECT)
+endif
 ifneq ($(MFOC_MOTOR_CONFIG_PATH),)
     BUILD_CONFIG_SIGNATURE += -motor_$(MFOC_MOTOR_CONFIG_PATH)
 endif

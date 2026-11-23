@@ -45,6 +45,17 @@ Encoder 和 Hall 算法由库提供，目标适配持有选用的组件实例，
 | `mfoc_port_pwm_start(initial_duty)` | 三相初始占空比 | 前台；保证初始 duty 生效后才打开输出门 |
 | `mfoc_port_pwm_stop()` | 无量值参数 | 关闭相输出，保留 ADC 触发；可重复调用 |
 
+**Break 恢复。** 物理故障仍在时，两板启动都返回 `MFOC_RESULT_SAFETY`，相输出保持关闭。普通 duty 和 Stop 都保留历史锁存。故障源已解除、锁存仍在时，显式启动的行为如下。
+
+| 功率板 | 启动时遇到历史锁存 |
+| --- | --- |
+| G431 | 任一比较器有效、TIM1 BIF 或软件锁存仍在，Start 均拒绝。关闭相门后通过板级 `MDI_PWM_ClearFault(bridge)` 确认，复查通过才可再次启动。 |
+| AT32F413 | Start 完成母线联锁后关闭 MOE，确认 PB12 已释放，清 TMR1 历史 BRK，再核查并开桥。故障复发时硬件再次关断或拒绝启动。 |
+
+Motor 软件故障清除与板级锁存确认分别生效。
+
+**PWM 生效区间。** G431 默认在下一次 TIM1 顶部自然更新事件统一装载三相预装载值。目标为应用和库共同定义 `MFOC_PWM_PRELOAD_DELAY=1`。第 `k` 拍提交的 duty 驱动 `[k+1,k+2)`，Port 在晚写、采样跳拍或门控失效时返回错误，由 Motor 关桥。开桥前先确认初始 duty 已转移。AT32F413 和默认 Port 模板沿用现有生效约定，提交值用于 `[k,k+1)`。
+
 `electrical_speed_base_hz` 是电气周波每秒，`omega_base = 2*pi*electrical_speed_base_hz`；用电气 Hz 相除与角速度相除得到相同 PU。BAM32 用整个 `uint32_t` 表示一电气周，按无符号模运算回绕。FLOAT/FIXED 共用接口；`mfoc_scalar_t` 分别使用 float 和库定义的 Q15 缩放有符号存储。
 
 Port 不新增逐拍时间/有效性/硬件故障元数据包。错误通过原有 `mfoc_result_t` 返回；失败时读出参数保持原值。硬件门控、ADC 完成状态及位置组件的原有过期判断继续保留。受信的电流输出和 duty 输入不额外执行有限值检查；电流不会在 Port 被截成 Motor 的工作限幅。
@@ -82,11 +93,11 @@ flowchart TD
     C -->|"三相 duty"| PWM["板级 · mfoc_port_pwm 写比较值"]
 ```
 
-代码的调用顺序是前台 `mfoc_motor_Run → mfoc_port_position_run → Update / OnEdge`，控制中断 `mfoc_motor_Step → mfoc_feedback_Step → mfoc_port_position → 组件 Step`。位置组件按当前 tick 外推，慢速传感器读取留在中断外。Motor 在 PWM 提交成功后，用最终 duty 及该区间的母线快照保存 αβ 模型电压，供下一拍的观测与辨识使用。母线按应用选定的节拍刷新。启动和故障关断另走第 2 节的 PWM 启停接口。
+前台通过 `mfoc_motor_Run → mfoc_port_position_run → Update / OnEdge` 更新位置。物理位置参与闭环或角度波形时，控制中断通过 `mfoc_feedback_Step` 调用 `mfoc_port_position`，按当前 tick 外推。角度波形复用这次读取的角度及有效状态。慢速传感器读取留在中断外。PWM 提交成功后，Motor 用最终 duty 和该命令的母线快照保存 αβ 模型电压，观测器与辨识在相应区间结束后消费。G431 在第 `k` 拍处理 `[k-1,k)` 时消费 `u[k-2]`。启动首拍没有可用的历史，完成首个中性区间后发布零电压。启动和故障关断走第 2 节的 PWM 启停接口。
 
 ## 5. 照模板接编码器或霍尔
 
-**两种方案共用同一组构建选项。** 有感闭环设置 `MFOC_FEEDBACK_ENABLE_POSITION=1` 和 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。如果只开前者、保留 G431 默认的 SMO backend，物理位置会更新，常规闭环仍取 SMO。复制模板后，按第 2 节接好电流、母线、时钟和 PWM，再选下面一列。[Port 模板](../port/template/mfoc_port_template.c) · [配置说明](configuration.md)
+**两种方案共用同一组构建选项。** 有感闭环设置 `MFOC_FEEDBACK_ENABLE_POSITION=1` 和 `MFOC_FEEDBACK_BACKEND=MFOC_FEEDBACK_POSITION`。如果只开前者，无感主反馈仍决定控制角，物理位置由前台更新。复制模板后，按第 2 节接好电流、母线、时钟和 PWM，再选下面一列。[Port 模板](../port/template/mfoc_port_template.c) · [配置说明](configuration.md)
 
 | 接线位置 | 编码器 | 三路数字霍尔 |
 | --- | --- | --- |
@@ -171,7 +182,7 @@ mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t held_angle)
 
 `MFOC_FEEDBACK_ENABLE_POSITION=0` 编译掉库对物理位置三个接口的调用，G431 同时不创建 Encoder 实例、不配置 AS5600，也不定义这三个位置服务函数。此时选择 POSITION 为主反馈会在编译期报错；无感构建不需要用成功空实现伪装物理位置能力。时基、电流、母线、PWM 仍是各自独立的 Port 能力。
 
-旧的 `MFOC_FEEDBACK_ENCODER`、`MFOC_FEEDBACK_ENABLE_ENCODER` 保留为 POSITION 的兼容名称；新旧使能值冲突会报错。若位置已启用但主反馈选无感，它仍可被前台服务和 ISR 读取；其失败不替代所选无感反馈的状态。
+旧的 `MFOC_FEEDBACK_ENCODER`、`MFOC_FEEDBACK_ENABLE_ENCODER` 保留为 POSITION 的兼容名称，新旧使能值冲突会报错。启用位置和无感主反馈时，前台继续更新位置，只有使用物理位置的角度波形才会在控制中断读它。位置读取的有效状态随波形保留，无感主反馈仍按自身状态发布。
 
 G431 默认启用 POSITION 和 Flux，主反馈选择 Flux。实际能力和主反馈由项目设置及目标构建宏决定。[配置说明](configuration.md)
 

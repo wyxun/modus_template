@@ -62,7 +62,7 @@ static void initialization(void)
     unsigned reads = motor_port_fake.bus_reads;
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
     assert(motor_port_fake.bus_reads == reads);
-    assert(motor.core.bus == cfg.core.bus);
+    assert(mfoc_core_GetBus(&motor.core) == cfg.core.bus);
     assert(mfoc_motor_UpdateBus(&motor) == MFOC_RESULT_IO);
     motor_port_fake.bus_sample = MFOC_RESULT_OK;
     assert(motor.state == MFOC_MOTOR_IDLE);

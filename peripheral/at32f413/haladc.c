@@ -133,7 +133,9 @@ void haladc_Init(void)
     adc_calibration_start(ADC1);
     while (adc_calibration_status_get(ADC1));
 
+#if !MFOC_RUNTIME_BUS
     (void)mdi_at32_adc_StartOrdinary();
+#endif
 }
 
 void mdi_at32_adc_EnableControlIRQ(void)

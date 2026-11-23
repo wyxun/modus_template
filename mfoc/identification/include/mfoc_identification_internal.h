@@ -18,6 +18,23 @@
     MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_RAD_S * (float)MFOC_ROTATION_BLOCK /  \
         (float)MFOC_IDENTIFICATION_SAMPLE_HZ)
 
+/** @brief Accumulate a baseline or one applied series interval.
+ * @param state Experiment workspace. @param i_axis_k Present axis current.
+ * @param u_axis_previous Validated voltage over the preceding interval.
+ * @param negative True for the negative half-wave of that interval.
+ * @return Ongoing or complete after the last interval. */
+mfoc_fsm_rt_t mfoc_identification_inductance_SeriesStep(
+    mfoc_identification_inductance_series_t *state,
+    mfoc_scalar_t i_axis_k, mfoc_scalar_t u_axis_previous, bool negative);
+
+/** @brief Evaluate a complete series in the foreground.
+ * @param state Frozen capture. @param rs Measured resistance in PU.
+ * @param inductance Result in PU, changed only on success.
+ * @return Complete or failed. */
+mfoc_fsm_rt_t mfoc_identification_inductance_SeriesFinish(
+    const mfoc_identification_inductance_series_t *state,
+    mfoc_scalar_t rs, mfoc_scalar_t *inductance);
+
 /** @brief Control for Motor and the stage for this frame. Identification
  * uses the matching stage for dispatch without a second volatile read. */
 typedef struct {

@@ -84,7 +84,9 @@ void CAN1_RX1_IRQHandler(void)              {}
 void CAN1_SE_IRQHandler(void)               {}
 void EXINT9_5_IRQHandler(void)              {}
 void TMR2_GLOBAL_IRQHandler(void)           {}
+#if !AT32F413_BOARD_HALL
 void TMR3_GLOBAL_IRQHandler(void)           {}
+#endif
 void TMR4_GLOBAL_IRQHandler(void)           {}
 void I2C1_EVT_IRQHandler(void)              {}
 void I2C1_ERR_IRQHandler(void)              {}

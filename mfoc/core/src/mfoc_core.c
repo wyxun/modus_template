@@ -64,18 +64,28 @@ static bool _mfoc_core_limit(mfoc_dq_t *u, const mfoc_core_t *c)
 {
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t n2 = u->qD * u->qD + u->qQ * u->qQ;
-    if (n2 <= c->u_max_sq) { return false; }
-    mfoc_scalar_t k = sqrtf(c->u_max_sq / n2);
+    if (n2 <= c->bus_coeff.u_max_sq) { return false; }
+    mfoc_scalar_t k = sqrtf(c->bus_coeff.u_max_sq / n2);
     u->qD *= k;
     u->qQ *= k;
 #else
-    mfoc_scalar_t r = c->u_max;
+    mfoc_scalar_t r = c->bus_coeff.u_max;
     /* Injection can push either axis above 1 PU. Keep the Q30 norm wide;
      * ceil(sqrt(norm)) preserves conservative vector limiting. */
     uint64_t n2 = (uint64_t)((int64_t)u->qD * u->qD) +
                   (uint64_t)((int64_t)u->qQ * u->qQ);
     if (n2 <= (uint64_t)((int64_t)r * r)) { return false; }
     uint32_t n = _mfoc_core_CeilSqrt(n2);
+#if defined(MFOC_CORE_LIMIT_DIV32)
+    /* Each axis magnitude is <= n. On this branch r < n, so
+     * 46341 * 46340 bounds the signed products within int32_t. */
+    if (n <= 46341U) {
+        const int32_t divisor = (int32_t)n;
+        u->qD = u->qD * r / divisor;
+        u->qQ = u->qQ * r / divisor;
+        return true;
+    }
+#endif
     /* Single wide product/division per axis, rounded toward zero. */
     u->qD = (mfoc_scalar_t)((int64_t)u->qD * r / (int64_t)n);
     u->qQ = (mfoc_scalar_t)((int64_t)u->qQ * r / (int64_t)n);
@@ -108,11 +118,11 @@ mfoc_result_t mfoc_core_Init(mfoc_core_t *c,
 }
 
 /** @brief Precompute the voltage limit and bus reciprocal.
- * @param c Initialized instance. @param bus Vdc/Vbase.
- * @return Validation result; failure preserves both coefficients. */
-mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
+ * @param coeff Valid destination. @param bus Vdc/Vbase.
+ * @return Validation result; failure preserves coeff. */
+static inline mfoc_result_t _mfoc_core_PrepareBus(mfoc_scalar_t bus,
+                                                 mfoc_core_bus_coeff_t *coeff)
 {
-    if (c == NULL) { return MFOC_RESULT_NULL; }
     if (bus <= MFOC_ZERO) {
         return MFOC_RESULT_INVALID_ARGUMENT;
     }
@@ -129,14 +139,40 @@ mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
     if (u_max_sq < FLT_MIN || u_max_sq > FLT_MAX) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    c->u_max_sq = u_max_sq;
+    coeff->u_max_sq = u_max_sq;
 #else
-    c->u_max = u_max;
+    coeff->u_max = u_max;
 #endif
-    c->bus = bus;
-    c->bus_inv = bus_inv;
+    coeff->bus = bus;
+    coeff->bus_inv = bus_inv;
     return MFOC_RESULT_OK;
 }
+
+mfoc_result_t mfoc_core_PrepareBus(mfoc_scalar_t bus,
+                                  mfoc_core_bus_coeff_t *coeff)
+{
+    if (coeff == NULL) { return MFOC_RESULT_NULL; }
+    return _mfoc_core_PrepareBus(bus, coeff);
+}
+
+mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
+{
+    if (c == NULL) { return MFOC_RESULT_NULL; }
+    return _mfoc_core_PrepareBus(bus, &c->bus_coeff);
+}
+
+#if MFOC_P10_LIMIT
+void mfoc_core_BenchHalfVoltageLimit(mfoc_core_t *c,
+                                    mfoc_core_bus_coeff_t *saved)
+{
+    *saved = c->bus_coeff;
+#if defined(MFOC_NUMERIC_FLOAT)
+    c->bus_coeff.u_max_sq *= 0.25f;
+#else
+    c->bus_coeff.u_max /= 2;
+#endif
+}
+#endif
 
 /** @brief Reset both PI integrators.
  * @param c Initialized instance. @return Reset result. */
@@ -179,9 +215,9 @@ void mfoc_core_Step(mfoc_core_t *c,
         mfoc_pi_ApplyLimit(&c->q, u.qQ, out->u.qQ);
     }
     /* V/Vbase -> V/Vdc, using the initialized or updated reciprocal. */
-    m.qD = mfoc_mul_wide(out->u.qD, c->bus_inv);
-    m.qQ = mfoc_mul_wide(out->u.qQ, c->bus_inv);
+    m.qD = mfoc_mul_wide(out->u.qD, c->bus_coeff.bus_inv);
+    m.qQ = mfoc_mul_wide(out->u.qQ, c->bus_coeff.bus_inv);
     mfoc_ipark_cached(&m, sin_theta, cos_theta, &out->m);
     mfoc_svpwm(&out->m, &out->duty);
-    out->bus = c->bus;
+    out->bus = c->bus_coeff.bus;
 }

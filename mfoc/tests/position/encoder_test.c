@@ -186,7 +186,12 @@ static void check_feedback(void)
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, NULL, &output);
 #if MFOC_FEEDBACK_ENABLE_POSITION
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION ||                         \
+    MFOC_DEBUG_POSITION_WAVEFORM
     assert(reads == 1U);
+#else
+    assert(reads == 0U);
+#endif
 #endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK);

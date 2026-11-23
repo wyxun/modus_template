@@ -20,6 +20,12 @@ static void explicit_start(mfoc_motor_t *motor)
     assert(mfoc_motor_Start(motor) == MFOC_RESULT_INVALID_STATE);
     assert(mfoc_motor_Step(motor) == MFOC_RESULT_OK);
     assert(motor->feedback.hfi_output.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
+#if MFOC_PWM_PRELOAD_DELAY
+    assert(motor->previous_voltage_ab.qAlpha == MFOC_ZERO);
+    assert(motor->preloaded_voltage_ab.qAlpha > MFOC_ZERO);
+    assert(mfoc_motor_Step(motor) == MFOC_RESULT_OK);
+    assert(motor->feedback.hfi_output.u_inject_ab.qAlpha == MFOC_HFI_VOLTAGE);
+#endif
     assert(motor->previous_voltage_ab.qAlpha > MFOC_ZERO);
     assert(motor_port_fake.duty.qU != motor_port_fake.duty.qV);
 }
@@ -54,6 +60,10 @@ static void acquisition_voltage(mfoc_motor_t *motor, mfoc_motor_mode_t mode)
         assert(mfoc_motor_SetSpeed(motor, MFOC_HALF) == MFOC_RESULT_OK);
     }
     assert(mfoc_motor_Start(motor) == MFOC_RESULT_OK);
+#if MFOC_PWM_PRELOAD_DELAY
+    float prior_ud = 0.0f;
+    float prior_uq = 0.0f;
+#endif
     for (unsigned tick = 0U; tick < 3U; ++tick) {
         const bool locked = tick == 2U;
         float ref_d = 0.0f;
@@ -81,10 +91,23 @@ static void acquisition_voltage(mfoc_motor_t *motor, mfoc_motor_mode_t mode)
         const float ud = carrier + 0.5f * err_d + ui_d;
         const float uq = 0.5f * err_q + ui_q;
         assert(motor->previous_voltage_ab_valid);
+#if MFOC_PWM_PRELOAD_DELAY
+        assert(fabsf(mfoc_to_float(motor->previous_voltage_ab.qAlpha) -
+                     prior_ud) < 0.0002f);
+        assert(fabsf(mfoc_to_float(motor->previous_voltage_ab.qBeta) -
+                     prior_uq) < 0.0002f);
+        assert(fabsf(mfoc_to_float(motor->preloaded_voltage_ab.qAlpha) -
+                     ud) < 0.0002f);
+        assert(fabsf(mfoc_to_float(motor->preloaded_voltage_ab.qBeta) -
+                     uq) < 0.0002f);
+        prior_ud = ud;
+        prior_uq = uq;
+#else
         assert(fabsf(mfoc_to_float(motor->previous_voltage_ab.qAlpha) -
                      ud) < 0.0002f);
         assert(fabsf(mfoc_to_float(motor->previous_voltage_ab.qBeta) -
                      uq) < 0.0002f);
+#endif
     }
     assert(mfoc_motor_Stop(motor) == MFOC_RESULT_OK);
     motor_port_fake.current = (mfoc_uvw_t){0};

@@ -12,6 +12,12 @@
 #include "mfoc_port.h"
 #include "mfoc_numeric.h"
 
+/* Run the real board acknowledgement against host interrupt state. */
+static uint32_t s_primask;
+#define __get_PRIMASK() (s_primask)
+#define __disable_irq() ((void)(s_primask = 1U))
+#define __set_PRIMASK(mask) ((void)(s_primask = (mask)))
+
 static TIM_TypeDef s_tim;
 static ADC_TypeDef s_adc1;
 static ADC_TypeDef s_adc2;
@@ -502,20 +508,74 @@ static void _test_ControlStartStop(void)
     COMP4->CSR = 0U;
     g_bG431FaultLatched = false;
     ADC1->IER = ADC_IER_OVRIE;
+#if MFOC_RUNTIME_BUS
+    mfoc_board_bus_Reset();
+    g_bG431AdcMeanValid = false;
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_INVALID_STATE);
+    assert(!MDI_PWM_IsEnabled(bridge));
+    g_wG431AdcSequence += 2U;
+    g_bG431AdcMeanValid = true;
+    g_awG431AdcMean[0] = 1400U;
+    g_g431MeanStarted = s_tick;
+    mfoc_board_bus_sample_t sample;
+    assert(mfoc_board_bus_Poll(&sample) && sample.started == (uint64_t)s_tick);
+    assert(mfoc_board_bus_Publish(&sample) == MFOC_RESULT_OK);
+    assert(!mfoc_board_bus_Poll(&sample));
+    s_tick += 30000;
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
+    g_eG431AdcStatus = MDI_IO_ERROR;
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_IO);
+    g_eG431AdcStatus = MDI_OK;
+    g_wG431AdcSequence += 2U;
+    g_g431MeanStarted = s_tick;
+#endif
     assert(mfoc_port_pwm(&neutral) == MFOC_RESULT_OK);
     assert(ADC1->IER == ADC_IER_OVRIE);
     assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_OK);
     assert((ADC1->IER & ADC_IER_JEOSIE) != 0U);
     assert(MDI_PWM_IsEnabled(bridge));
+#if MFOC_RUNTIME_BUS
+    mfoc_core_t control = {0};
+    assert(mfoc_board_bus_Apply(&control) == MFOC_RESULT_OK);
+    assert(mfoc_core_GetBus(&control) > MFOC_ZERO);
+#endif
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
     assert(ADC1->IER == ADC_IER_OVRIE);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     assert((TIM1->CCER & TIM_CCER_CC4E) != 0U);
+#if MFOC_RUNTIME_BUS
+    /* Same published DMA mean, 29.9 ms old on re-arm at 20 kHz. */
+    s_tick += 29900;
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_OK);
+    s_tick += 50;
+    assert(mfoc_board_bus_Apply(&control) == MFOC_RESULT_OK);
+    s_tick += 50;
+    assert(mfoc_board_bus_Apply(&control) == MFOC_RESULT_SAFETY);
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
+    assert(!MDI_PWM_IsEnabled(bridge));
+    g_wG431AdcSequence += 2U;
+    g_g431MeanStarted = s_tick;
+#endif
     COMP1->CSR = COMP_CSR_VALUE;
     assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
     assert(ADC1->IER == ADC_IER_OVRIE);
     assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
     COMP1->CSR = 0U;
+    /* Source released with the hardware history still latched. */
+    TIM1->SR = TIM_SR_BIF;
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
+    (void)mfoc_port_pwm(&neutral);
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+    assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
+    assert((TIM1->SR & TIM_SR_BIF) != 0U);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    assert(MDI_PWM_ClearFault(bridge) == MDI_OK);
+    assert(s_primask == 0U);
+    COMP2->CSR = COMP_CSR_VALUE; /* Fault recurs after explicit clear. */
+    assert(mfoc_port_pwm_start(&neutral) == MFOC_RESULT_SAFETY);
+    assert(!MDI_OP(bridge, _pwm_AnyOutputEnabled)());
+    COMP2->CSR = 0U;
 }
 
 /** @brief Exercise real lifecycle adapters against the MDI register provider.

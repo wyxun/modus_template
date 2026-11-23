@@ -5,6 +5,9 @@
  * @date 2026-10-24
  */
 #include "mfoc_hfi.h"
+#include "mfoc_trig.h"
+#include "../../include/mfoc_trace_internal.h"
+#include <limits.h>
 #include <stddef.h>
 
 /* BAM32 phase gain: phase increment per speed PU per ISR sample. */
@@ -25,6 +28,11 @@
 #define MFOC_HFI_POLARITY_MIN_VOLTAGE_SUM \
     (MFOC_HFI_POLARITY_VOLTAGE * \
      (mfoc_scalar_t)MFOC_HFI_POLARITY_SAMPLES / 2)
+
+#if MFOC_PWM_PRELOAD_DELAY
+#define MFOC_HFI_TAG_POSITIVE (MFOC_HFI_CARRIER_SAMPLES + 1U)
+#define MFOC_HFI_TAG_NEGATIVE (MFOC_HFI_CARRIER_SAMPLES + 2U)
+#endif
 
 #if defined(MFOC_NUMERIC_FIXED)
 #define MFOC_HFI_POLARITY_CURRENT_SQ_MAX \
@@ -86,15 +94,52 @@ static bool _mfoc_hfi_Axis(const mfoc_hfi_t *hfi, mfoc_angle_t *axis)
         (mfoc_hfi_product_t)i[1].qBeta * u[0].qBeta;
     mfoc_hfi_product_t x = (aa - bb) * MFOC_HFI_SALIENCY_SIGN;
     mfoc_hfi_product_t y = (ab + ba) * MFOC_HFI_SALIENCY_SIGN;
+#if defined(MFOC_NUMERIC_FIXED) && \
+    MFOC_TRIG_BACKEND != MFOC_TRIG_BACKEND_EXTERNAL
+    const mfoc_hfi_product_t ax = x < 0 ? -x : x;
+    const mfoc_hfi_product_t ay = y < 0 ? -y : y;
+    mfoc_hfi_product_t magnitude = ax + ay;
+#else
     mfoc_hfi_product_t magnitude = (x < 0 ? -x : x) + (y < 0 ? -y : y);
+#endif
     mfoc_hfi_product_t trace = aa + bb;
     if (aa <= 0 || bb <= 0 || magnitude <= 0 || magnitude > 2 * trace ||
+#if defined(MFOC_NUMERIC_FIXED)
+        /* trace > 0 and threshold is integral in Q15 counts. */
+        magnitude * MFOC_HFI_RATIO_SCALE < MFOC_HFI_SALIENCY_MIN * trace) {
+#else
         (mfoc_scalar_t)(magnitude * MFOC_HFI_RATIO_SCALE / trace) <
         MFOC_HFI_SALIENCY_MIN) {
+#endif
         return false;
     }
+#if defined(MFOC_NUMERIC_FIXED) && \
+    MFOC_TRIG_BACKEND != MFOC_TRIG_BACKEND_EXTERNAL
+    /* CORDIC depends on direction and normalizes int32_t inputs itself.
+     * Both products fit unchanged in the usual small-signal case. */
+    _Static_assert((INT64_C(-1) >> 1) == -1, "HFI requires arithmetic shift");
+    uint32_t high = (uint32_t)((ax > ay ? ax : ay) >> 31U);
+    if (high != 0U) {
+#if defined(__GNUC__) || defined(__clang__)
+        unsigned int shift = (unsigned int)(sizeof(unsigned long) * CHAR_BIT) -
+            (unsigned int)__builtin_clzl((unsigned long)high);
+#else
+        unsigned int shift = 1U;
+        while (high > 1U) {
+            high >>= 1U;
+            ++shift;
+        }
+#endif
+        x >>= shift;
+        y >>= shift;
+    }
+    mfoc_scalar_t y_unit = (mfoc_scalar_t)y;
+    mfoc_scalar_t x_unit = (mfoc_scalar_t)x;
+#else
+    /* A target-supplied atan2 retains its normalized Q15 input range. */
     mfoc_scalar_t y_unit = (mfoc_scalar_t)(y * MFOC_HFI_RATIO_SCALE / magnitude);
     mfoc_scalar_t x_unit = (mfoc_scalar_t)(x * MFOC_HFI_RATIO_SCALE / magnitude);
+#endif
     *axis = mfoc_angle_atan2(y_unit, x_unit);
     axis->wBam32 >>= 1U;
     return true;
@@ -150,7 +195,7 @@ static void _mfoc_hfi_Track(mfoc_hfi_t *hfi, mfoc_angle_t axis)
     }
 }
 
-/** @brief Pair current increments with the carrier actually issued last Step.
+/** @brief Pair current increments with the carrier applied in the interval.
  * @param hfi Demodulator. @param i Present current. @param u Prior voltage.
  * @return None. One matrix extraction per eight intervals. */
 static void _mfoc_hfi_Demodulate(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
@@ -175,8 +220,10 @@ static void _mfoc_hfi_Demodulate(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
     if (hfi->carrier == 0U) {
         mfoc_angle_t angle = {0U};
         if (_mfoc_hfi_Axis(hfi, &angle)) {
+            MFOC_TRACE_EVENT(HFI_EIGHTH_OK);
             _mfoc_hfi_Track(hfi, angle);
         } else {
+            MFOC_TRACE_EVENT(HFI_EIGHTH_WEAK);
             hfi->lock_count = 0U;
             if (hfi->state == MFOC_HFI_TRACK) {
                 hfi->state = MFOC_HFI_FAILED;
@@ -234,6 +281,10 @@ static void _mfoc_hfi_PolarityStep(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
     bool positive = hfi->state == MFOC_HFI_PULSE_POSITIVE;
     bool pulsing = positive || hfi->state == MFOC_HFI_PULSE_NEGATIVE;
     if (!pulsing) {
+#if MFOC_PWM_PRELOAD_DELAY
+        /* A carrier command can still be in flight on entry to rest. */
+        if (hfi->applied_tag != 0U) { return; }
+#endif
         if (p->count < MFOC_HFI_REST_SAMPLES) { ++p->count; }
         if (p->count < MFOC_HFI_REST_SAMPLES ||
             mfoc_abs(i->qAlpha) + mfoc_abs(i->qBeta) > MFOC_HFI_REST_CURRENT ||
@@ -241,17 +292,33 @@ static void _mfoc_hfi_PolarityStep(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
             return;
         }
         p->count = 0U;
+#if !MFOC_PWM_PRELOAD_DELAY
         p->i_start = id;
+#endif
         p->u_sum = MFOC_ZERO;
         if (hfi->state == MFOC_HFI_SETTLE_TRACK) {
             hfi->state = MFOC_HFI_TRACK;
+#if !MFOC_PWM_PRELOAD_DELAY
             hfi->carrier = 0U;
+#endif
         } else {
             hfi->state = hfi->state == MFOC_HFI_SETTLE_POSITIVE ?
                 MFOC_HFI_PULSE_POSITIVE : MFOC_HFI_PULSE_NEGATIVE;
         }
         return;
     }
+#if MFOC_PWM_PRELOAD_DELAY
+    if (hfi->applied_tag != (positive ? MFOC_HFI_TAG_POSITIVE :
+                                      MFOC_HFI_TAG_NEGATIVE)) {
+        if (hfi->applied_tag == 0U && p->count == 0U) {
+            /* At the end of the last neutral interval, just before the pulse. */
+            p->i_start = id;
+        } else {
+            hfi->state = MFOC_HFI_FAILED;
+        }
+        return;
+    }
+#endif
     mfoc_scalar_t ud = mfoc_mul_wide(u->qAlpha, p->axis.qAlpha) +
         mfoc_mul_wide(u->qBeta, p->axis.qBeta);
     if (!positive) { ud = -ud; }
@@ -284,17 +351,37 @@ static void _mfoc_hfi_PolarityStep(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
 
 /** @brief Produce the next carrier or polarity pulse, zero during rest/failure.
  * @param hfi Current sequence. @return Stationary alpha-beta voltage, V/Vbase. */
-static mfoc_ab_t _mfoc_hfi_Injection(const mfoc_hfi_t *hfi)
+static mfoc_ab_t _mfoc_hfi_Injection(mfoc_hfi_t *hfi)
 {
     mfoc_ab_t u = {0};
+#if MFOC_PWM_PRELOAD_DELAY
+    hfi->applied_tag = hfi->pending_tag;
+    hfi->pending_tag = 0U;
+#endif
     if (hfi->state == MFOC_HFI_ACQUIRE || hfi->state == MFOC_HFI_TRACK) {
-        mfoc_scalar_t amplitude = (hfi->carrier & 2U) == 0U ?
+#if MFOC_PWM_PRELOAD_DELAY
+        /* The preceding emission is now applied. Rest drains polarity tags
+         * before returning to carrier emission. */
+        uint8_t carrier = hfi->applied_tag & (MFOC_HFI_CARRIER_SAMPLES - 1U);
+        hfi->pending_tag = (uint8_t)(carrier + 1U);
+#else
+        uint8_t carrier = hfi->carrier;
+#endif
+        mfoc_scalar_t amplitude = (carrier & 2U) == 0U ?
             MFOC_HFI_VOLTAGE : -MFOC_HFI_VOLTAGE;
-        if (hfi->carrier < 4U) { u.qAlpha = amplitude; }
+        if (carrier < 4U) { u.qAlpha = amplitude; }
         else { u.qBeta = amplitude; }
 #if MFOC_HFI_ENABLE_POLARITY
     } else if (hfi->state == MFOC_HFI_PULSE_POSITIVE ||
                hfi->state == MFOC_HFI_PULSE_NEGATIVE) {
+#if MFOC_PWM_PRELOAD_DELAY
+        /* The last pulse is already preloaded; drain it before comparing. */
+        if (hfi->polarity.count == MFOC_HFI_POLARITY_SAMPLES - 1U) {
+            return u;
+        }
+        hfi->pending_tag = hfi->state == MFOC_HFI_PULSE_POSITIVE ?
+            MFOC_HFI_TAG_POSITIVE : MFOC_HFI_TAG_NEGATIVE;
+#endif
         mfoc_scalar_t amplitude = hfi->state == MFOC_HFI_PULSE_POSITIVE ?
             MFOC_HFI_POLARITY_VOLTAGE : -MFOC_HFI_POLARITY_VOLTAGE;
         u.qAlpha = mfoc_mul_wide(amplitude, hfi->polarity.axis.qAlpha);
@@ -312,6 +399,10 @@ void mfoc_hfi_Step(mfoc_hfi_t *hfi, const mfoc_ab_t *i_ab_k,
     const mfoc_ab_t *u_previous, mfoc_hfi_output_t *output)
 {
     if (u_previous == NULL) { mfoc_hfi_Init(hfi); }
+#if MFOC_PWM_PRELOAD_DELAY
+    /* An empty pipeline or a rest interval has no carrier-group result. */
+    hfi->carrier = MFOC_HFI_CARRIER_SAMPLES;
+#endif
     if (hfi->state != MFOC_HFI_TRACK && hfi->state != MFOC_HFI_FAILED) {
         ++hfi->startup_count;
         if (hfi->startup_count > MFOC_HFI_STARTUP_SAMPLES) {
@@ -329,7 +420,14 @@ void mfoc_hfi_Step(mfoc_hfi_t *hfi, const mfoc_ab_t *i_ab_k,
                                       MFOC_HFI_PHASE_GAIN);
 #endif
             hfi->angle.wBam32 += (uint32_t)delta;
+#if MFOC_PWM_PRELOAD_DELAY
+            if (hfi->applied_tag != 0U) {
+                hfi->carrier = (uint8_t)(hfi->applied_tag - 1U);
+                _mfoc_hfi_Demodulate(hfi, i_ab_k, u_previous);
+            }
+#else
             _mfoc_hfi_Demodulate(hfi, i_ab_k, u_previous);
+#endif
 #if MFOC_HFI_ENABLE_POLARITY
         } else if (hfi->state != MFOC_HFI_FAILED) {
             _mfoc_hfi_PolarityStep(hfi, i_ab_k, u_previous);

@@ -102,18 +102,18 @@ static bool _mfoc_identification_AdvanceStage(mfoc_identification_t *id)
         if (id->operation == MFOC_IDENTIFICATION_RESISTANCE) {
             id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
         } else {
-            id->work.inductance = (mfoc_identification_inductance_t){0};
+            id->work.inductance = (mfoc_identification_inductance_series_t){0};
             id->stage = MFOC_IDENTIFICATION_STAGE_LD;
         }
         break;
     case MFOC_IDENTIFICATION_STAGE_LD:
     case MFOC_IDENTIFICATION_STAGE_LQ: {
         bool d_axis = id->stage == MFOC_IDENTIFICATION_STAGE_LD;
-        if (mfoc_identification_inductance_Finish(&id->work.inductance,
+        if (mfoc_identification_inductance_SeriesFinish(&id->work.inductance,
                 id->result.rs, d_axis ? &id->result.ld : &id->result.lq) !=
             MFOC_FSM_COMPLETE) { return false; }
         if (d_axis) {
-            id->work.inductance = (mfoc_identification_inductance_t){0};
+            id->work.inductance = (mfoc_identification_inductance_series_t){0};
             id->stage = MFOC_IDENTIFICATION_STAGE_LQ;
         } else {
             id->stage = MFOC_IDENTIFICATION_STAGE_COMPLETE;
@@ -196,6 +196,16 @@ static bool _mfoc_identification_CurrentAllowed(const mfoc_ab_t *current,
     return current->qBeta >= -beta_limit && current->qBeta <= beta_limit;
 }
 
+/** @brief Choose the polarity of a zero-based applied interval.
+ * @param d_axis True for d. @param interval Index into the series.
+ * @return True for negative voltage; d reverses the prior Rs excitation. */
+static inline bool _mfoc_identification_LNegative(bool d_axis,
+                                                    uint32_t interval)
+{
+    const uint32_t half_wave = interval / MFOC_IDENTIFICATION_L_SAMPLES;
+    return d_axis != ((half_wave & 1U) != 0U);
+}
+
 /** @brief Dispatch one synchronous sample directly to the selected leaf.
  * @param id Active instance. @param stage Stage selected for this frame.
  * @param input Samples. @param output Request.
@@ -222,39 +232,91 @@ mfoc_identification_control_t mfoc_identification_SampleStage(
             MFOC_IDENTIFICATION_RS_ALIGN_MS / 1000U ?
             MFOC_FSM_COMPLETE : MFOC_FSM_ONGOING;
         break;
-    case MFOC_IDENTIFICATION_STAGE_RS:
+    case MFOC_IDENTIFICATION_STAGE_RS: {
+        const mfoc_ab_t *u = input->u_ab_previous;
+#if MFOC_PWM_PRELOAD_DELAY
+        const uint8_t excitation =
+            id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW ?
+                MFOC_IDENTIFICATION_EXCITATION_RS_LOW :
+                MFOC_IDENTIFICATION_EXCITATION_RS_HIGH;
+        /* Neither the old level nor a neutral handoff is high/low dwell. */
+        if (input->applied_excitation != excitation) { u = NULL; }
+#endif
         progress = mfoc_identification_rs_Step(
-            &id->work.rs, input->i_ab_k, input->u_ab_previous);
+            &id->work.rs, input->i_ab_k, u);
         /* Current belongs to the old level; apply the next one now. */
         if (progress == MFOC_FSM_ONGOING) {
-            output->modulation_ab.qAlpha =
-                id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW ?
+            const bool low = id->work.rs.level == MFOC_IDENTIFICATION_RS_LOW;
+            output->modulation_ab.qAlpha = low ?
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_LOW) :
                 MFOC_SCALAR(MFOC_IDENTIFICATION_RS_MODULATION_HIGH);
+#if MFOC_PWM_PRELOAD_DELAY
+            output->excitation = low ? MFOC_IDENTIFICATION_EXCITATION_RS_LOW :
+                MFOC_IDENTIFICATION_EXCITATION_RS_HIGH;
+#endif
         }
         break;
+    }
     case MFOC_IDENTIFICATION_STAGE_LD:
     case MFOC_IDENTIFICATION_STAGE_LQ: {
-        bool d_axis = stage == MFOC_IDENTIFICATION_STAGE_LD;
+        const bool d_axis = stage == MFOC_IDENTIFICATION_STAGE_LD;
+        mfoc_identification_inductance_series_t *capture =
+            &id->work.inductance;
+        const uint32_t count = capture->count;
+#if MFOC_PWM_PRELOAD_DELAY
+        const uint8_t excitation = d_axis ? MFOC_IDENTIFICATION_EXCITATION_LD :
+            MFOC_IDENTIFICATION_EXCITATION_LQ;
+#endif
         mfoc_scalar_t u = MFOC_ZERO;
-        if (id->work.inductance.count != 0U) {
+        bool negative = false;
+        if (count != 0U) {
             /* A lost interval invalidates the volt-second integral. */
-            if (input->u_ab_previous == NULL) { break; }
+            if (input->u_ab_previous == NULL
+#if MFOC_PWM_PRELOAD_DELAY
+                || input->applied_excitation != excitation
+#endif
+            ) { break; }
             u = d_axis ? input->u_ab_previous->qAlpha :
                          input->u_ab_previous->qBeta;
-            if (mfoc_abs(u) > MFOC_ONE) { break; }
+            negative = _mfoc_identification_LNegative(d_axis, count - 1U);
+            const bool valid = negative ?
+                u < MFOC_ZERO && u >= -MFOC_ONE :
+                u > MFOC_ZERO && u <= MFOC_ONE;
+            if (!valid) { break; }
         }
-        progress = mfoc_identification_inductance_Step(&id->work.inductance,
-            d_axis ? input->i_ab_k->qAlpha : input->i_ab_k->qBeta, u);
-        if (progress == MFOC_FSM_ONGOING) {
-            /* Reverse the preceding positive Rs excitation on the d axis. */
+#if MFOC_PWM_PRELOAD_DELAY
+        /* i[k] is the baseline only when this axis first loads at k. */
+        progress = count == 0U &&
+            input->active_excitation != excitation ? MFOC_FSM_ONGOING :
+#else
+        progress =
+#endif
+            mfoc_identification_inductance_SeriesStep(capture,
+                d_axis ? input->i_ab_k->qAlpha : input->i_ab_k->qBeta,
+                u, negative);
+        if (progress == MFOC_FSM_ONGOING
+#if MFOC_PWM_PRELOAD_DELAY
+            /* The last interval is already active when neutral is queued. */
+            && capture->count < MFOC_IDENTIFICATION_L_SERIES_INTERVALS
+#endif
+        ) {
+            uint32_t next = capture->count;
+#if !MFOC_PWM_PRELOAD_DELAY
+            /* Without preload, the command applies one interval sooner. */
+            --next;
+#endif
+            const mfoc_scalar_t pulse =
+                MFOC_SCALAR(MFOC_IDENTIFICATION_L_PULSE);
+            const mfoc_scalar_t command =
+                _mfoc_identification_LNegative(d_axis, next) ? -pulse : pulse;
             if (d_axis) {
-                output->modulation_ab.qAlpha =
-                    -MFOC_SCALAR(MFOC_IDENTIFICATION_L_PULSE);
+                output->modulation_ab.qAlpha = command;
             } else {
-                output->modulation_ab.qBeta =
-                    MFOC_SCALAR(MFOC_IDENTIFICATION_L_PULSE);
+                output->modulation_ab.qBeta = command;
             }
+#if MFOC_PWM_PRELOAD_DELAY
+            output->excitation = excitation;
+#endif
         }
         break;
     }

@@ -10,11 +10,6 @@
 #include "mfoc_app.h"
 
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
-/* Angle comparison takes priority: Flux, then SMO, then HFI diagnostics. */
-#define MFOC_DEBUG_HFI_WAVEFORM (MFOC_FEEDBACK_ENABLE_HFI &&                     \
-    !MFOC_FEEDBACK_ENABLE_FLUX && !MFOC_FEEDBACK_ENABLE_SMO)
-#define MFOC_DEBUG_POSITION_WAVEFORM (MFOC_FEEDBACK_ENABLE_POSITION && \
-                                      !MFOC_DEBUG_HFI_WAVEFORM)
 #if MFOC_DEBUG_POSITION_WAVEFORM
 /* A skipped Feedback step permits one diagnostic read. A failed position
  * read must keep its invalid result until this ADC frame ends. */

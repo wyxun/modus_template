@@ -41,6 +41,39 @@ static void injection_limit(const mfoc_core_params_t *cfg)
     assert(fabsf(mfoc_to_float(core.q.ui) - (q + 0.42f)) < 0.0002f);
 }
 
+/** @brief Prepare and apply must publish the same bits as SetBus. */
+static void prepared_bus(const mfoc_core_params_t *cfg)
+{
+    mfoc_core_t direct = {0};
+    assert(mfoc_core_Init(&direct, cfg) == MFOC_RESULT_OK);
+    direct.d.ui = MFOC_SCALAR(-0.13f);
+    direct.q.ui = MFOC_SCALAR(0.17f);
+    mfoc_core_t applied = direct;
+    mfoc_core_bus_coeff_t coeff = {0};
+    assert(mfoc_core_PrepareBus(MFOC_ONE, NULL) == MFOC_RESULT_NULL);
+    for (int b = 1; b <= 64; ++b) {
+        const mfoc_scalar_t bus = mfoc_from_float((float)b / 16.0f);
+        assert(mfoc_core_PrepareBus(bus, &coeff) == MFOC_RESULT_OK);
+        mfoc_core_ApplyBus(&applied, &coeff);
+        assert(mfoc_core_SetBus(&direct, bus) == MFOC_RESULT_OK);
+        assert(memcmp(&direct, &applied, sizeof(direct)) == 0);
+    }
+    const mfoc_scalar_t invalid[] = {MFOC_ZERO, -MFOC_ONE,
+#if defined(MFOC_NUMERIC_FIXED)
+        1, INT32_MAX
+#else
+        NAN, INFINITY, FLT_MAX, 1.0e-20f
+#endif
+    };
+    const mfoc_core_bus_coeff_t saved = coeff;
+    for (size_t i = 0U; i < sizeof(invalid) / sizeof(invalid[0]); ++i) {
+        const mfoc_result_t rc = mfoc_core_SetBus(&direct, invalid[i]);
+        assert(rc != MFOC_RESULT_OK);
+        assert(mfoc_core_PrepareBus(invalid[i], &coeff) == rc);
+        assert(memcmp(&saved, &coeff, sizeof(coeff)) == 0);
+    }
+}
+
 #if defined(MFOC_NUMERIC_FIXED)
 /** @brief Find the smallest integer whose square covers the Q30 norm. */
 static int64_t reference_radius(uint64_t norm_sq)
@@ -60,7 +93,7 @@ static void fixed_limit_boundaries(const mfoc_core_params_t *cfg)
 {
     mfoc_core_t core = {0};
     assert(mfoc_core_Init(&core, cfg) == MFOC_RESULT_OK);
-    int32_t r = core.u_max;
+    int32_t r = core.bus_coeff.u_max;
     const mfoc_ab_t requests[] = {
         {r - 1, 0}, {r, 0}, {r, 1}, {r + 1, 0}, {-r, -1},
         /* 32769 squared minus one, exactly, and plus one. */
@@ -90,6 +123,7 @@ int main(void)
         -MFOC_ONE, MFOC_ONE, -MFOC_ONE, MFOC_ONE};
     mfoc_core_params_t cfg = {pi, pi, MFOC_ONE};
     injection_limit(&cfg);
+    prepared_bus(&cfg);
 #if defined(MFOC_NUMERIC_FIXED)
     fixed_limit_boundaries(&cfg);
     mfoc_core_params_t small_bus = cfg;
@@ -147,15 +181,15 @@ int main(void)
     assert(mfoc_core_SetBus(&c, MFOC_ONE) == MFOC_RESULT_OK);
     assert(c.d.ui == saved.d.ui && c.q.ui == saved.q.ui);
     assert(mfoc_core_Reset(&c) == MFOC_RESULT_OK);
-    assert(c.bus_inv == MFOC_ONE);
+    assert(c.bus_coeff.bus_inv == MFOC_ONE);
 #if defined(MFOC_NUMERIC_FLOAT)
-    assert(c.u_max_sq == MFOC_CORE_M_MAX * MFOC_CORE_M_MAX);
+    assert(c.bus_coeff.u_max_sq == MFOC_CORE_M_MAX * MFOC_CORE_M_MAX);
     assert(mfoc_core_SetBus(&c, 1.0e10f) == MFOC_RESULT_OK);
     in.ref = (mfoc_dq_t){MFOC_ONE, MFOC_ONE};
     mfoc_core_Step(&c, &in, &out);
     assert(!out.limited && out.u.qD == MFOC_ONE && out.u.qQ == MFOC_ONE);
 #else
-    assert(c.u_max == MFOC_SCALAR(MFOC_CORE_M_MAX));
+    assert(c.bus_coeff.u_max == MFOC_SCALAR(MFOC_CORE_M_MAX));
 #endif
     assert(c.d.ui == MFOC_ZERO && c.q.ui == MFOC_ZERO);
     printf("Core passed; max normalization error %.9g\n", (double)worst);

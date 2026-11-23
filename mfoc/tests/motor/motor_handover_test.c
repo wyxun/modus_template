@@ -61,6 +61,63 @@ static void qualified_step(mfoc_motor_t *motor)
     assert(mfoc_motor_Step(motor) == MFOC_RESULT_OK);
 }
 
+#if MFOC_SMO_STAGGER_SPEED_PI && defined(MFOC_NUMERIC_FIXED) && \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
+/** @brief Exercise each capture phase and preserve the speed-loop cadence. */
+static void stagger_speed_window(void)
+{
+    const mfoc_motor_t started = start(1, MFOC_MOTOR_RUN_FREQ_HZ, 400.0f);
+    const uint8_t span = 20U;
+    for (uint8_t phase = 0U; phase < span; ++phase) {
+        mfoc_motor_t motor = started;
+        mfoc_smo_t *smo = &motor.feedback.smo;
+        smo->c.speed_span = span;
+        smo->speed_count = phase;
+        mfoc_openloop_t next = motor.openloop;
+        mfoc_openloop_Step(&next);
+        motor_port_fake.feedback_step = MFOC_RESULT_OK;
+        motor_port_fake.feedback.angle = next.angle;
+        motor_port_fake.feedback.speed = motor.speed_ref;
+        assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+        assert(motor.mode == MFOC_MOTOR_MODE_SPEED);
+        const unsigned until_due = phase == 0U ? 0U : (unsigned)span - phase;
+        assert(motor.speed_count == until_due);
+        motor_port_fake.feedback.speed -= MFOC_SCALAR(0.1f);
+
+        uint8_t previous_phase = phase;
+        unsigned updates = 0U;
+        for (unsigned frame = 0U; frame < 2U * span; ++frame) {
+            /* The fake Feedback leaves the post-observer phase to this test. */
+            smo->speed_count = (uint8_t)((previous_phase + 1U) % span);
+            const mfoc_scalar_t previous_iq = motor.speed_iq;
+            assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+            if (previous_phase == 0U) {
+                assert(motor.speed_count == span - 1U);
+                assert(motor.speed_iq != previous_iq);
+                ++updates;
+            } else {
+                assert(motor.speed_iq == previous_iq);
+            }
+            previous_phase = smo->speed_count;
+        }
+        assert(updates == 2U);
+    }
+
+    /* A different configured window falls back to the old cadence. */
+    mfoc_motor_t motor = started;
+    motor.feedback.smo.c.speed_span = 16U;
+    motor.feedback.smo.speed_count = 10U;
+    mfoc_openloop_t next = motor.openloop;
+    mfoc_openloop_Step(&next);
+    motor_port_fake.feedback.angle = next.angle;
+    motor_port_fake.feedback.speed = motor.speed_ref;
+    assert(mfoc_motor_Step(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == span - 1U);
+    assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
+    assert(motor.speed_count == 0U);
+}
+#endif
+
 static void handover(int sign, uint32_t sample_hz, float base_hz)
 {
     mfoc_motor_t motor = start(sign, sample_hz, base_hz);
@@ -186,6 +243,10 @@ static void adjustment(int sign)
 
 int main(void)
 {
+#if MFOC_SMO_STAGGER_SPEED_PI && defined(MFOC_NUMERIC_FIXED) && \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
+    stagger_speed_window();
+#endif
     interrupted_capture(false);
     interrupted_capture(true);
     adjustment(1);

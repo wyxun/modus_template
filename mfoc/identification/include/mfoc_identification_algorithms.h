@@ -71,6 +71,17 @@ typedef enum {
     (MFOC_IDENTIFICATION_CONTROL_VIRTUAL | \
      MFOC_IDENTIFICATION_CONTROL_VOLTAGE)
 
+#if MFOC_PWM_PRELOAD_DELAY
+/** @brief Tags carried with the voltage model by a delayed PWM port. */
+enum {
+    MFOC_IDENTIFICATION_EXCITATION_NONE = 0,
+    MFOC_IDENTIFICATION_EXCITATION_RS_LOW,
+    MFOC_IDENTIFICATION_EXCITATION_RS_HIGH,
+    MFOC_IDENTIFICATION_EXCITATION_LD,
+    MFOC_IDENTIFICATION_EXCITATION_LQ,
+};
+#endif
+
 /** @brief Motor command selected by the stage control flags.
  * VOLTAGE sends modulation_ab (V/Vdc) directly to SVPWM, bypassing Core.
  * VIRTUAL sends i_ref and an algorithm-owned angle through Core; no Feedback
@@ -79,6 +90,9 @@ typedef struct {
     mfoc_dq_t i_ref; /* CONTROL_VIRTUAL. */
     mfoc_angle_t angle; /* CONTROL_VIRTUAL; algorithm-owned virtual frame. */
     mfoc_ab_t modulation_ab; /* CONTROL_VOLTAGE, V/Vdc. */
+#if MFOC_PWM_PRELOAD_DELAY
+    uint8_t excitation; /* Experiment tag for the submitted voltage. */
+#endif
 } mfoc_identification_output_t;
 
 /** @brief Standalone rotor-dq flux experiment with caller-supplied angle/speed.

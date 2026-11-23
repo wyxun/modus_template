@@ -115,7 +115,7 @@ int main(void)
         cfg.electrical_speed_base_hz);
     assert(motor_port_fake.port_cfg.pole_pairs == 4U);
     assert(other.params.inertia == cfg.params.inertia);
-    assert(other.core.bus_inv == MFOC_SCALAR(2.0f));
+    assert(other.core.bus_coeff.bus_inv == MFOC_SCALAR(2.0f));
     assert(memcmp(&motor, &saved, sizeof(motor)) == 0);
     puts("Motor initialization and instance isolation passed");
     return 0;

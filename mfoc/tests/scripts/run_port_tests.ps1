@@ -15,9 +15,15 @@ $sources = @(Get-ChildItem "$library/math/src/*.c" |
     @("$library/position/src/mfoc_encoder.c")
 # The angle-wave profile links the real Feedback, G431 clock/encoder and
 # diagnostic callback. The two production profiles leave waveform disabled.
-foreach ($profile in @('FLOAT', 'FIXED', 'FLOAT-wave')) {
+foreach ($profile in @('FLOAT', 'FIXED', 'FLOAT-wave', 'FLOAT-bus', 'FIXED-bus')) {
     $numeric = $profile.Split('-')[0]
     $waveArgs = @()
+    if ($profile -like '*-bus') {
+        $waveArgs = @('-DMFOC_RUNTIME_BUS=1', '-DMFOC_PERFC_HZ=1000000U',
+            "-I$repo/class", "-I$library/core/include", "-I$library/control/include",
+            "$repo/class/mfoc_board_bus.c", "$library/core/src/mfoc_core.c",
+            "$library/control/src/mfoc_pi.c", "$library/control/src/mfoc_modulation.c")
+    }
     if ($profile -eq 'FLOAT-wave') {
         $waveArgs = @('-DMWAVEFORM_ENABLE=1', '-DMFOC_FEEDBACK_BACKEND=1',
             '-DMFOC_FEEDBACK_ENABLE_SMO=0', '-DMFOC_FEEDBACK_ENABLE_FLUX=0',

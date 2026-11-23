@@ -57,13 +57,32 @@ typedef struct {
     const mfoc_ab_t *i_ab_k; /**< Sample at k, alpha-beta I/Ibase. */
     /** Model voltage over [k-1,k), alpha-beta V/Vbase; NULL without history. */
     const mfoc_ab_t *u_ab_previous;
+#if MFOC_PWM_PRELOAD_DELAY
+    uint8_t active_excitation; /* Loaded at k for [k,k+1). */
+    uint8_t applied_excitation; /* Matches u_ab_previous over [k-1,k). */
+#endif
 } mfoc_identification_input_t;
+
+/* The electrical experiment uses eight pairs of opposite half-waves. */
+#define MFOC_IDENTIFICATION_L_SERIES_HALVES 16U
+#define MFOC_IDENTIFICATION_L_SERIES_INTERVALS \
+    (MFOC_IDENTIFICATION_L_SERIES_HALVES * MFOC_IDENTIFICATION_L_SAMPLES)
+
+/** @brief Fixed-axis series workspace for the electrical experiment. */
+typedef struct {
+    mfoc_scalar_t i_start; /* Beginning of the current half-wave. */
+    mfoc_scalar_t i_last;
+    mfoc_scalar_t sum_u;
+    mfoc_scalar_t sum_i_twice;
+    mfoc_scalar_t delta_i_signed; /* Polarity-weighted half-wave changes. */
+    uint32_t count; /* One baseline sample, then accepted intervals. */
+} mfoc_identification_inductance_series_t;
 
 /** @brief Mutually exclusive workspaces; unused algorithms add no state. */
 typedef union {
     uint32_t align_samples;
     mfoc_identification_rs_t rs;
-    mfoc_identification_inductance_t inductance;
+    mfoc_identification_inductance_series_t inductance;
     mfoc_identification_rotation_t rotating;
 } mfoc_identification_work_t;
 
@@ -95,7 +114,7 @@ void mfoc_identification_Init(mfoc_identification_t *id);
  * @param bus Positive Vdc/Vbase at startup. Each sample uses its own interval.
  * @return OK when armed; INVALID_STATE for active or missing model prerequisites.
  * @note Call while Motor is IDLE; the caller owns Motor startup/shutdown.
- * ELECTRICAL runs alignment, Rs and both inductance pulses with the rotor
+ * ELECTRICAL runs alignment, Rs and both inductance series with the rotor
  * held at the aligned position. FLUX and INERTIA run with a free shaft.
  * They estimate rotation from phase current and preceding PWM voltage.
  * FLUX needs known Rs/Ld/Lq; INERTIA also needs known magnet flux. */
@@ -128,7 +147,7 @@ mfoc_identification_state_t mfoc_identification_GetStatus(
 mfoc_result_t mfoc_identification_GetResult(const mfoc_identification_t *id,
     mfoc_motor_params_t *model);
 
-/** @brief Consume i[k] and the preceding submitted PWM interval.
+/** @brief Consume i[k] and the preceding applied PWM interval.
  * @param id Active instance. @param input Current/prior-interval samples.
  * @param output Next experiment command.
  * @return Effective actuator route, including neutral voltage on failure.

@@ -5,6 +5,7 @@
  * @date 2026-10-20
  */
 #include "mfoc_motor.h"
+#include "../../include/mfoc_trace_internal.h"
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_identification_internal.h"
 #endif
@@ -139,6 +140,21 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     return MFOC_RESULT_OK;
 }
 
+/** @brief Invalidate telemetry and initialize the next neutral interval. */
+static inline void _mfoc_motor_ResetOutputs(mfoc_motor_t *motor)
+{
+    motor->previous_core_output_valid = false;
+    motor->previous_voltage_ab_valid = false;
+#if MFOC_PWM_PRELOAD_DELAY
+    motor->previous_voltage_ab = (mfoc_ab_t){0};
+    motor->preloaded_voltage_ab = (mfoc_ab_t){0};
+#if MFOC_IDENTIFICATION_ENABLE
+    motor->previous_excitation = MFOC_IDENTIFICATION_EXCITATION_NONE;
+    motor->preloaded_excitation = MFOC_IDENTIFICATION_EXCITATION_NONE;
+#endif
+#endif
+}
+
 /** @brief Start neutral PWM after the command has validated the idle Motor. */
 static mfoc_result_t _mfoc_motor_StartPwm(mfoc_motor_t *motor)
 {
@@ -150,9 +166,8 @@ static mfoc_result_t _mfoc_motor_StartPwm(mfoc_motor_t *motor)
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }
-    /* Neutral startup duty precedes the first complete control interval. */
-    motor->previous_core_output_valid = false;
-    motor->previous_voltage_ab_valid = false;
+    /* The first sample can straddle gate enable. Its predecessor is invalid. */
+    _mfoc_motor_ResetOutputs(motor);
     motor->state = MFOC_MOTOR_RUNNING;
     return MFOC_RESULT_OK;
 }
@@ -203,10 +218,15 @@ mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor)
  * @return Physical shutdown status. */
 mfoc_result_t mfoc_motor_Trip(mfoc_motor_t *motor, uint32_t faults)
 {
-    motor->previous_core_output_valid = false;
-    motor->previous_voltage_ab_valid = false;
+#if !MFOC_PWM_PRELOAD_DELAY
+    _mfoc_motor_ResetOutputs(motor);
+#endif
     motor->faults |= faults;
     motor->state = MFOC_MOTOR_FAULT;
+#if MFOC_PWM_PRELOAD_DELAY
+    /* Exclude the sampling ISR before clearing the two interval records. */
+    _mfoc_motor_ResetOutputs(motor);
+#endif
     motor->current_cmd = (mfoc_dq_t){0};
     mfoc_sensorless_start_Stop(&motor->sensorless_start);
     motor->openloop_active = false;
@@ -247,8 +267,7 @@ mfoc_result_t mfoc_motor_Stop(mfoc_motor_t *motor)
     mfoc_sensorless_start_Stop(&motor->sensorless_start);
     motor->openloop_active = false;
     mfoc_openloop_Reset(&motor->openloop, (mfoc_angle_t){0U});
-    motor->previous_core_output_valid = false;
-    motor->previous_voltage_ab_valid = false;
+    _mfoc_motor_ResetOutputs(motor);
     if (motor->speed_divider != 0U) {
         mfoc_result_t speed_reset = mfoc_pi_Reset(&motor->speed);
         if (rc == MFOC_RESULT_OK) { rc = speed_reset; }
@@ -662,6 +681,16 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
                                motor->speed_ref, feedback->speed);
             if (rc != MFOC_RESULT_OK) { return rc; }
             count = motor->speed_divider;
+#if MFOC_SMO_STAGGER_SPEED_PI && defined(MFOC_NUMERIC_FIXED) && \
+    MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_SMO
+            const mfoc_smo_t *smo = &motor->feedback.smo;
+            if (count > 1U && count == smo->c.speed_span) {
+                /* Feedback has advanced. Seed the first PI step one frame
+                 * after a window update, accounting for PWM commit's tick. */
+                const uint8_t phase = smo->speed_count;
+                count = phase == 0U ? 1U : (uint16_t)(count - phase + 1);
+            }
+#endif
             motor->mode = MFOC_MOTOR_MODE_SPEED;
         }
         if (ctx.complete) {
@@ -677,8 +706,11 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
 #endif
     if (motor->mode == MFOC_MOTOR_MODE_SPEED) {
         if (count == 0U) {
+            MFOC_TRACE_BEGIN(SPEED);
             mfoc_pi_Step(&motor->speed, motor->speed_ref, feedback->speed,
                          &motor->speed_iq);
+            MFOC_TRACE_END(SPEED);
+            MFOC_TRACE_EVENT(SPEED_PI);
             count = motor->speed_divider;
         }
         input->ref = (mfoc_dq_t){MFOC_ZERO, motor->speed_iq};
@@ -691,7 +723,8 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
 
 /** @brief Sample current, execute control, and submit the resulting PWM.
  * @param motor Initialized instance. @return Sampling/control/PWM status.
- * @note Feedback and identification consume i[k] and modeled u[k-1].
+ * @note Feedback and identification consume i[k] and the voltage over
+ * [k-1,k). The command source is u[k-2] on a top-update preload target.
  * One RUNNING gate precedes all processing; history updates after PWM. */
 mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
 {
@@ -700,7 +733,9 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         return MFOC_RESULT_INVALID_STATE;
     }
     mfoc_uvw_t current;
+    MFOC_TRACE_BEGIN(CURRENT);
     mfoc_result_t rc = mfoc_port_current(&current);
+    MFOC_TRACE_END(CURRENT);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE, rc);
     }
@@ -712,6 +747,9 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
 #if MFOC_IDENTIFICATION_ENABLE
     mfoc_identification_frame_t frame =
         mfoc_identification_BeginFrame(&motor->identification);
+#if MFOC_PWM_PRELOAD_DELAY
+    uint8_t excitation = MFOC_IDENTIFICATION_EXCITATION_NONE;
+#endif
 #endif
     /* Core fills its output; direct voltage publishes only duty and bus. */
     mfoc_core_output_t output;
@@ -720,21 +758,39 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
     if (frame.control != MFOC_IDENTIFICATION_CONTROL_INACTIVE) {
         mfoc_identification_output_t request;
         const mfoc_identification_input_t sample = {
-            .i_ab_k = &core_input.i, .u_ab_previous = u_ab_previous};
+            .i_ab_k = &core_input.i,
+            .u_ab_previous = u_ab_previous,
+#if MFOC_PWM_PRELOAD_DELAY
+            .active_excitation = motor->preloaded_excitation,
+            .applied_excitation = motor->previous_excitation,
+#endif
+        };
+        MFOC_TRACE_BEGIN(IDENTIFICATION);
         frame.control = mfoc_identification_StepFrame(
             &motor->identification, frame, &sample, &request);
+        MFOC_TRACE_END(IDENTIFICATION);
+#if MFOC_PWM_PRELOAD_DELAY
+        if (motor->identification.state == MFOC_IDENTIFICATION_ERROR) {
+            /* Neutral preload cannot cancel the pulse already in flight. */
+            return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_EXTERNAL,
+                                    MFOC_RESULT_SAFETY);
+        }
+        excitation = request.excitation;
+#endif
 
         switch (frame.control) {
         case MFOC_IDENTIFICATION_CONTROL_VOLTAGE:
             mfoc_svpwm(&request.modulation_ab, &output.duty);
-            output.bus = motor->core.bus;
+            output.bus = mfoc_core_GetBus(&motor->core);
             break;
         default: {
             /* VIRTUAL: the algorithm owns the current target and angle. */
             core_input.u_inject_ab = (mfoc_ab_t){0};
             core_input.ref = request.i_ref;
             core_input.angle = request.angle;
+            MFOC_TRACE_BEGIN(CORE);
             mfoc_core_Step(&motor->core, &core_input, &output);
+            MFOC_TRACE_END(CORE);
             break;
         }
         }
@@ -750,8 +806,10 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             mfoc_feedback_output_t feedback = {0};
             mfoc_feedback_input_t feedback_input = {
                 .i_ab_k = &core_input.i, .u_ab_previous = u_ab_previous};
+            MFOC_TRACE_BEGIN(FEEDBACK);
             rc = mfoc_feedback_Step(&motor->feedback, &feedback_input,
                                     &feedback);
+            MFOC_TRACE_END(FEEDBACK);
             core_input.angle = feedback.angle;
             core_input.u_inject_ab = feedback.u_inject_ab;
             rc = _mfoc_motor_SelectReference(motor, &feedback, rc,
@@ -760,14 +818,31 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
                 return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK, rc);
             }
         }
+        MFOC_TRACE_BEGIN(CORE);
         mfoc_core_Step(&motor->core, &core_input, &output);
+        MFOC_TRACE_END(CORE);
     }
+    MFOC_TRACE_BEGIN(PWM);
     rc = mfoc_port_pwm(&output.duty);
+    MFOC_TRACE_END(PWM);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }
+#if MFOC_PWM_PRELOAD_DELAY
+    /* The Port accepted this write in the current frame. The previous
+     * preload is active now and will finish at the next sample. Convert
+     * the new duty once, with the bus snapshot that produced it. */
+    motor->previous_voltage_ab = motor->preloaded_voltage_ab;
+#if MFOC_IDENTIFICATION_ENABLE
+    motor->previous_excitation = motor->preloaded_excitation;
+    motor->preloaded_excitation = excitation;
+#endif
+    mfoc_ab_t *model_voltage = &motor->preloaded_voltage_ab;
+#else
+    mfoc_ab_t *model_voltage = &motor->previous_voltage_ab;
+#endif
     rc = mfoc_modulation_ModelVoltageAlphaBeta(&output.duty, output.bus,
-                                                &motor->previous_voltage_ab);
+                                               model_voltage);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_MATH, rc);
     }

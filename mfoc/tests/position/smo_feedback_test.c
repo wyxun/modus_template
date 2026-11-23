@@ -45,6 +45,14 @@ int main(void)
         .angle = {0x12345678U}, .speed = MFOC_HALF};
     assert(mfoc_feedback_Init(&feedback, &cfg, &model) == MFOC_RESULT_OK);
     mfoc_result_t rc = mfoc_feedback_Step(&feedback, NULL, &output);
+#if MFOC_FEEDBACK_ENABLE_POSITION &&                                          \
+    (MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION ||                       \
+     (defined(MWAVEFORM_ENABLE) && MWAVEFORM_ENABLE &&                         \
+      defined(MFOC_NUMERIC_FLOAT)))
+    assert(position_reads == 1U);
+#else
+    assert(position_reads == 0U);
+#endif
 #if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION
     assert(rc == MFOC_RESULT_OK && output.angle.wBam32 == 0x70000000U);
     assert(output.speed == MFOC_SCALAR(0.125f));

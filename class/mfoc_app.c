@@ -6,6 +6,9 @@
  */
 #include "mfoc_app.h"
 #include "mfoc_debug.h"
+#if MFOC_RUNTIME_BUS
+#include "mfoc_board_bus.h"
+#endif
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_motor_config_internal.h"
@@ -25,6 +28,11 @@
 #include <math.h>
 #include <stddef.h>
 
+#if defined(AT32F413_BUS_NOMINAL_MV)
+_Static_assert(MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT == AT32F413_BUS_NOMINAL_MV,
+               "Motor profile voltage base must match the AT32F413 bus");
+#endif
+
 static modus_base_t s_base;
 static modus_base_cfg_t s_base_cfg = {
     .wId = FOC_APP,
@@ -38,6 +46,9 @@ int mfoc_app_Init(uintptr_t object, uintptr_t cfg)
     *app = (mfoc_app_t){0};
     app->ptBase = &s_base;
     const mfoc_app_cfg_t *config = (const mfoc_app_cfg_t *)cfg;
+#if MFOC_RUNTIME_BUS
+    mfoc_board_bus_Reset();
+#endif
     app->result = mfoc_motor_Init(&app->motor, &config->motor);
     if (app->result != MFOC_RESULT_OK) {
         app->state = MFOC_APP_ERROR;
@@ -97,6 +108,10 @@ int mfoc_app_Run(uintptr_t object)
     if (app == NULL || app->state != MFOC_APP_IDLE) {
         return MODUS_EFAIL;
     }
+#if MFOC_RUNTIME_BUS
+    mfoc_board_bus_sample_t sample;
+    if (mfoc_board_bus_Poll(&sample)) { (void)mfoc_board_bus_Publish(&sample); }
+#endif
     app->result = mfoc_motor_Run(&app->motor);
 #if MFOC_ISR_MEASURE && !defined(__NO_USE_LOG__)
     _mfoc_app_ReportIsrTiming(app);
@@ -380,6 +395,41 @@ static void _mfoc_app_CmdMotor(const char *args)
     float q = 0.0f;
     bool valid = false;
 
+#if MFOC_P10_PHASE && MFOC_IDENTIFICATION_ENABLE
+    if (mshell_ConsumeWord(&cursor, "identify")) {
+        mfoc_identification_operation_t op;
+        if (mshell_ConsumeWord(&cursor, "rs")) {
+            op = MFOC_IDENTIFICATION_RESISTANCE;
+        } else if (mshell_ConsumeWord(&cursor, "electrical")) {
+            op = MFOC_IDENTIFICATION_ELECTRICAL;
+        } else if (mshell_ConsumeWord(&cursor, "flux")) {
+            op = MFOC_IDENTIFICATION_FLUX;
+        } else if (mshell_ConsumeWord(&cursor, "inertia")) {
+            op = MFOC_IDENTIFICATION_INERTIA;
+        } else {
+            MLOGF(W, "motor identify rs|electrical|flux|inertia\r\n");
+            return;
+        }
+        if (!mshell_AtEnd(cursor)) { MLOGF(W, "invalid arguments\r\n"); return; }
+        mfoc_motor_t *motor = &tMfocApp.motor;
+        mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
+        __IRQ_SAFE {
+            if (motor->state == MFOC_MOTOR_IDLE && motor->faults == 0U) {
+                rc = mfoc_identification_Start(&motor->identification,
+                    &motor->params, op, mfoc_core_GetBus(&motor->core));
+            }
+        }
+        if (rc == MFOC_RESULT_OK) {
+            rc = mfoc_motor_Start(motor);
+            if (rc != MFOC_RESULT_OK) {
+                __IRQ_SAFE { mfoc_identification_Stop(&motor->identification); }
+            }
+        }
+        tMfocApp.result = rc;
+        MLOGF(I, "motor identify result=%d\r\n", (int)rc);
+        return;
+    }
+#endif
     if (mshell_ConsumeWord(&cursor, "flux")) {
         if ((mshell_AtEnd(cursor) ||
              mshell_ConsumeWord(&cursor, "status")) && mshell_AtEnd(cursor)) {

@@ -103,9 +103,16 @@ typedef struct {
     mfoc_identification_t identification;
 #endif
     mfoc_core_output_t previous_core_output; /* Core telemetry only. */
-    mfoc_ab_t previous_voltage_ab; /* Submitted interval model, V/Vbase. */
+    mfoc_ab_t previous_voltage_ab; /* Model for the next Step, V/Vbase. */
+#if MFOC_PWM_PRELOAD_DELAY
+    mfoc_ab_t preloaded_voltage_ab; /* Last write, still one interval ahead. */
+#endif
     bool previous_core_output_valid; /* False after direct voltage output. */
     bool previous_voltage_ab_valid;  /* Set after a successful PWM Step. */
+#if MFOC_PWM_PRELOAD_DELAY && MFOC_IDENTIFICATION_ENABLE
+    uint8_t previous_excitation;
+    uint8_t preloaded_excitation;
+#endif
     volatile bool hold_active;
     bool openloop_active;
     mfoc_pi_t speed;

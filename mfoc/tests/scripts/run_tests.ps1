@@ -33,6 +33,7 @@ foreach ($case in $cases) {
 Write-Output "Host test artifacts: $output"
 
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1')
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests board_bus -ControlHz 16000
 foreach ($enabled in @(0, 1)) {
     & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests motor_model_update `
         -Backend 1 -Hfi $enabled -Identify $enabled
@@ -47,6 +48,21 @@ foreach ($enabled in @(0, 1)) {
     -Position 0 -Tests motor_identification_plant
 & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Hfi 1 -Backend 3 -Identify 1 `
     -Position 0 -Tests motor_identification_plant
+# A top-update preload target pairs each sample with duty from two samples ago.
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -PwmPreloadDelay `
+    -Hfi 0 -Backend 0 -Position 0 -Identify 1 `
+    -Tests @('voltage_interval', 'identification_preload',
+             'motor_identification_plant')
+foreach ($backend in @(2, 4)) {
+    & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -PwmPreloadDelay `
+        -Hfi 0 -Backend $backend -Position 0 -Tests motor_handover
+}
+& (Join-Path $PSScriptRoot 'run_core_tests.ps1') -PwmPreloadDelay `
+    -SmoStaggerSpeedPi -Hfi 0 -Backend 2 -Position 0 -Tests motor_handover
+foreach ($backend in @(1, 3)) {
+    & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -PwmPreloadDelay `
+        -Backend $backend -Hfi 1 -Identify 1 -Tests hfi_permission
+}
 # POSITION with HFI enabled is covered by the default Core suite.
 foreach ($backend in @(0, 2, 3, 4, 5)) {
     & (Join-Path $PSScriptRoot 'run_core_tests.ps1') -Tests hfi_motor -Backend $backend

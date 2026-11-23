@@ -168,6 +168,10 @@ MDI_INLINE mdi_status_t mdi_at32_usart1_EnableRxIrq(void)
 MDI_INLINE void mdi_at32_adc_AckCurrentFrame(void)
 {
     ADC1->sts = ~(uint32_t)ADC_PCCE_FLAG;
+#if MFOC_RUNTIME_BUS
+    /* ES0006 1.2.2: simultaneous regular/preempted completion. */
+    ADC1->sts = ~(uint32_t)ADC_PCCE_FLAG;
+#endif
 }
 
 /** @brief Transfer frame ownership from foreground calibration to the IRQ.

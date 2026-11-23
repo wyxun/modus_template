@@ -110,15 +110,16 @@ static state_t advance(state_t s, state_t d, double h)
 }
 
 /** @brief Apply real PWM duty for one complete interval then sample phases.
- * @param p Plant with one simulated PWM period of delay. @return None. */
-static void plant_interval(plant_t *p)
+ * @param p Plant. @param duty Applied PWM duty. @param bus Paired bus PU.
+ * @return None. */
+static void plant_interval(plant_t *p, mfoc_uvw_t duty, mfoc_scalar_t bus)
 {
-    const double du = mfoc_to_float(motor_port_fake.duty.qU);
-    const double dv = mfoc_to_float(motor_port_fake.duty.qV);
-    const double dw = mfoc_to_float(motor_port_fake.duty.qW);
+    const double du = mfoc_to_float(duty.qU);
+    const double dv = mfoc_to_float(duty.qV);
+    const double dw = mfoc_to_float(duty.qW);
     assert(du >= 0.0 && du <= 1.0 && dv >= 0.0 && dv <= 1.0);
     assert(dw >= 0.0 && dw <= 1.0);
-    const double vdc = VB_V * mfoc_to_float(motor_port_fake.bus);
+    const double vdc = VB_V * mfoc_to_float(bus);
     const volts_t v = {vdc * (2.0 * du - dv - dw) / 3.0,
         vdc * (dv - dw) / sqrt(3.0)};
     const double h = 1.0 / (4.0 * MFOC_MOTOR_RUN_FREQ_HZ);
@@ -151,7 +152,9 @@ static void check_locked_windings(void)
     motor_port_fake = (motor_port_fake_t){.bus = pu(VDC_V / VB_V),
         .duty = {pu(0.75), pu(0.5), pu(0.25)}};
     const unsigned intervals = 8U;
-    for (unsigned n = 0U; n < intervals; ++n) { plant_interval(&p); }
+    for (unsigned n = 0U; n < intervals; ++n) {
+        plant_interval(&p, motor_port_fake.duty, motor_port_fake.bus);
+    }
     const double t = (double)intervals / MFOC_MOTOR_RUN_FREQ_HZ;
     const double expected_d = 3.0 *
         (1.0 - exp(-t * salient.rs / salient.ld)) / salient.rs;
@@ -281,6 +284,10 @@ static mfoc_result_t run(session_t *s, mfoc_identification_operation_t op,
         MFOC_IDENTIFICATION_STAGE_ALIGN, MFOC_IDENTIFICATION_STAGE_RS,
         MFOC_IDENTIFICATION_STAGE_LD, MFOC_IDENTIFICATION_STAGE_LQ};
     unsigned stage_index = 0U;
+#if MFOC_PWM_PRELOAD_DELAY
+    mfoc_uvw_t applied_duty = motor_port_fake.duty;
+    mfoc_scalar_t applied_bus = motor_port_fake.bus;
+#endif
     for (; n < MFOC_MOTOR_RUN_FREQ_HZ * 18U && motor_port_fake.enabled; ++n) {
         /* The free rotor must reach measurement before overspeed/reversal.
          * Coupling the external shaft changes speed with continuous angle. */
@@ -290,8 +297,25 @@ static mfoc_result_t run(session_t *s, mfoc_identification_operation_t op,
             plant->shaft = SHAFT_DRIVEN;
             plant->state.omega_m = drive_speed_e / POLE_PAIRS;
         }
-        plant_interval(plant);
-        assert(mfoc_motor_Step(motor) == MFOC_RESULT_OK);
+#if MFOC_PWM_PRELOAD_DELAY
+        /* Integrate d[k-2]; the old preload d[k-1] becomes the next input
+         * while Motor calculates d[k]. */
+        plant_interval(plant, applied_duty, applied_bus);
+        applied_duty = motor_port_fake.duty;
+        applied_bus = motor_port_fake.bus;
+#else
+        plant_interval(plant, motor_port_fake.duty, motor_port_fake.bus);
+#endif
+        const mfoc_result_t step = mfoc_motor_Step(motor);
+#if MFOC_PWM_PRELOAD_DELAY
+        if (step == MFOC_RESULT_SAFETY) {
+            assert(!motor_port_fake.enabled);
+            assert(motor->identification.state == MFOC_IDENTIFICATION_ERROR);
+            rc = step;
+            break;
+        }
+#endif
+        assert(step == MFOC_RESULT_OK);
         if (mfoc_identification_GetStatus(&motor->identification) ==
             MFOC_IDENTIFICATION_ERROR) {
             assert(motor_port_fake.duty.qU == MFOC_HALF);

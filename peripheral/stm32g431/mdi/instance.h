@@ -51,6 +51,10 @@ extern volatile uint16_t
 extern volatile uint32_t g_wG431AdcPublished;
 extern volatile uint32_t g_wG431AdcConsumed;
 extern volatile uint32_t g_wG431AdcSequence;
+#if MFOC_RUNTIME_BUS
+extern uint64_t g_g431AdcStarted[G431_ADC_DMA_SLOT_COUNT];
+extern uint64_t g_g431MeanStarted;
+#endif
 /* This board owns one regular DMA transaction; ISR releases its slot. */
 typedef struct {
     volatile bool bBusy;
@@ -95,6 +99,9 @@ static inline mdi_status_t mdi_g431_adc_start(void)
     DMA1_Channel1->CMAR = (uint32_t)(uintptr_t)pwBuffer;
     DMA1_Channel1->CNDTR = G431_ADC_BLOCK_SIZE;
     g_tG431Adc.bBusy = true;
+#if MFOC_RUNTIME_BUS
+    g_g431AdcStarted[wSlot] = MDI_TICK_Now(raw_tick);
+#endif
     DMA1_Channel1->CCR |= DMA_CCR_EN;
     ADC1->CR |= ADC_CR_ADSTART;
     return MDI_OK;

@@ -19,13 +19,15 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
     if ($LASTEXITCODE -ne 0) { throw "SMO test failed: $numeric" }
     Write-Output "$numeric SMO passed"
 
-    foreach ($selection in @(@(1, 1), @(2, 1), @(2, 0), @(0, 0))) {
-        $backend, $encoder = $selection
-        $exe = Join-Path $output "feedback-$numeric-$backend-$encoder.exe"
+    foreach ($selection in @(@(1, 1, 0), @(2, 1, 0), @(2, 0, 0),
+        @(0, 0, 0), @(2, 1, 1))) {
+        $backend, $encoder, $waveform = $selection
+        $exe = Join-Path $output "feedback-$numeric-$backend-$encoder-$waveform.exe"
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
             "-DMFOC_FEEDBACK_BACKEND=$backend" `
             "-DMFOC_FEEDBACK_ENABLE_POSITION=$encoder" `
+            "-DMWAVEFORM_ENABLE=$waveform" `
             -DMFOC_FEEDBACK_ENABLE_SMO=1 -DMFOC_FEEDBACK_ENABLE_FLUX=0 `
             "-I$library" "-I$library/include" "-I$library/math/include" `
             "-I$library/control/include" `
@@ -36,6 +38,6 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         if ($LASTEXITCODE -ne 0) { throw 'SMO Feedback build failed' }
         & $exe
         if ($LASTEXITCODE -ne 0) { throw 'SMO Feedback test failed' }
-        Write-Output "$numeric Feedback=$backend encoder=$encoder passed"
+        Write-Output "$numeric Feedback=$backend encoder=$encoder waveform=$waveform passed"
     }
 }

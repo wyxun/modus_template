@@ -81,8 +81,12 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current);
 
 /** @brief Submit trusted duties without changing phase output gates.
  * @param duty U/V/W phase duties; each must be finite and within [0,1].
- * @return OK, OUT_OF_RANGE for rejected hardware state/frame, or IO.
+ * @return OK, OUT_OF_RANGE for a rejected duty, SAFETY for a missed
+ * transfer deadline or a closed gate, or IO.
  * @note Control ISR; trusted data, no duplicate finite/range checks.
+ * With MFOC_PWM_PRELOAD_DELAY=1, a successful write at sample k takes
+ * effect at the next frame boundary and drives [k+1,k+2). The target must
+ * reject missed frame boundaries or writes that cannot meet this deadline.
  * Updates never enable outputs or clear a physical fault. */
 mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty);
 
@@ -90,7 +94,10 @@ mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty);
  * @param initial_duty Trusted U/V/W duties in [0,1].
  * @return Write/enable status; a physical startup fault returns SAFETY.
  * @note Foreground startup. The target makes the initial duties effective
- * before enabling phase gates; hardware update details stay in the target. */
+ * before enabling phase gates. An active Break source always prevents
+ * startup. For a released source, G431 requires a separate board fault
+ * acknowledgement; AT32F413 acknowledges the old latch here with gates
+ * closed and checks again before enabling. See docs/port-contract.md. */
 mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty);
 
 /** @brief Close phase outputs while preserving the ADC trigger.

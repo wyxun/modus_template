@@ -21,10 +21,8 @@ typedef struct {
     mfoc_scalar_t bus; /* Initial Vdc/Vbase, strictly positive. */
 } mfoc_core_params_t;
 
-/** @brief Instance-owned state; access through Core operations only. */
+/** @brief DC-link voltage and the coefficients derived from that voltage. */
 typedef struct {
-    mfoc_pi_t d;
-    mfoc_pi_t q;
 #if defined(MFOC_NUMERIC_FLOAT)
     mfoc_scalar_t u_max_sq; /* Squared voltage radius, (V/Vbase)^2. */
 #else
@@ -32,6 +30,13 @@ typedef struct {
 #endif
     mfoc_scalar_t bus;     /* Vdc/Vbase used for the current coefficients. */
     mfoc_scalar_t bus_inv; /* Vbase/Vdc. */
+} mfoc_core_bus_coeff_t;
+
+/** @brief Instance-owned state; access through Core operations only. */
+typedef struct {
+    mfoc_pi_t d;
+    mfoc_pi_t q;
+    mfoc_core_bus_coeff_t bus_coeff;
 } mfoc_core_t;
 
 /** @brief Synchronous current sample and command for this control step.
@@ -67,6 +72,36 @@ typedef struct {
  * @return OK, NULL, INVALID_ARGUMENT or OUT_OF_RANGE. */
 mfoc_result_t mfoc_core_Init(mfoc_core_t *c,
                             const mfoc_core_params_t *cfg);
+
+/** @brief Precompute DC-link coefficients without accessing a Core instance.
+ * @param bus Finite positive Vdc/Vbase. @param coeff Destination.
+ * @return Same validation result as SetBus; failure preserves coeff. */
+mfoc_result_t mfoc_core_PrepareBus(mfoc_scalar_t bus,
+                                  mfoc_core_bus_coeff_t *coeff);
+
+/** @brief Apply one prepared set of coefficients at a frame boundary.
+ * @param c Valid instance. @param coeff Valid result from PrepareBus.
+ * @note The caller owns c during the copy and serializes with Step. */
+static inline void mfoc_core_ApplyBus(mfoc_core_t *c,
+                                     const mfoc_core_bus_coeff_t *coeff)
+{
+    c->bus_coeff = *coeff;
+}
+
+/** @brief Read the DC-link voltage in use for this frame.
+ * @param c Valid instance. @return Vdc/Vbase. */
+static inline mfoc_scalar_t mfoc_core_GetBus(const mfoc_core_t *c)
+{
+    return c->bus_coeff.bus;
+}
+
+#if MFOC_P10_LIMIT
+/** @brief Temporarily halve the voltage radius during an instrumented frame.
+ * @param c Valid instance. @param saved Coefficients to restore after Step.
+ * @note The bus and its reciprocal still describe the physical DC link. */
+void mfoc_core_BenchHalfVoltageLimit(mfoc_core_t *c,
+                                    mfoc_core_bus_coeff_t *saved);
+#endif
 
 /** @brief Update bus coefficients without changing PI state.
  * @param c Initialized instance. @param bus Finite positive Vdc/Vbase.

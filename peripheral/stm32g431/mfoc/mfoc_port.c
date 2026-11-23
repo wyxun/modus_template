@@ -5,11 +5,23 @@
  * @date 2026-10-21
  */
 #include "mfoc_port.h"
+#if MFOC_P10_HFI_MPU
+#include "mfoc_p10_hfi_guard.h"
+#endif
+#if MFOC_RUNTIME_BUS
+#include "mfoc_board_bus.h"
+#endif
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_encoder.h"
 #if MFOC_P10_TIMING
 #include "mfoc_p10_timing.h"
+#endif
+#if MFOC_P10_KCL
+#include "mfoc_p10_kcl.h"
+#endif
+#if MFOC_G431_PWM_PHASE
+#include "mfoc_pwm_phase.h"
 #endif
 #if MWAVEFORM_ENABLE && defined(MFOC_NUMERIC_FLOAT)
 #include "mfoc_debug.h"
@@ -106,6 +118,9 @@ typedef struct {
     uint32_t offset_v;
     uint32_t offset_w;
     uint32_t voltage_base_millivolt;
+#if MFOC_RUNTIME_BUS
+    uint32_t bus_sequence;
+#endif
 #if MFOC_FEEDBACK_ENABLE_POSITION
     mfoc_encoder_t encoder;
     mfoc_tick_t position_period_ticks;
@@ -123,6 +138,16 @@ typedef struct {
  * Init is stopped and serialized with ISR. Foreground Run publishes encoder
  * samples; the higher-priority ISR reader completes before Run resumes. */
 static mfoc_mdi_port_t s_port = {0};
+
+#if MFOC_G431_PWM_PHASE == 2 && !MFOC_P10_PHYSICAL
+/* Gate-closed startup seeds the capture. The ADC ISR owns it after enable.
+ * The fixed write reserve covers the three stores plus APB/barrier latency,
+ * after duty preparation, with ADC at the highest configured priority. */
+#define G431_PWM_WRITE_RESERVE 128U
+static uint32_t s_pwm_period;
+static uint32_t s_pwm_capture;
+static bool s_pwm_first_frame;
+#endif
 
 /** @brief Read ten spaced ADC frames and store their phase means.
  * @param port Local port settings to receive the measured offsets.
@@ -309,6 +334,24 @@ mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
     return MFOC_RESULT_OK;
 }
 
+#if MFOC_RUNTIME_BUS
+bool mfoc_board_bus_Poll(mfoc_board_bus_sample_t *sample)
+{
+    /* Service and consumer share the foreground; DMA only publishes raw slots. */
+    sample->started = g_g431MeanStarted;
+    if (g_eG431AdcStatus != MDI_OK && g_eG431AdcStatus != MDI_BUSY) {
+        sample->status = MFOC_RESULT_IO;
+        return true;
+    }
+    if (!g_bG431AdcMeanValid || s_port.bus_sequence == g_wG431AdcSequence) {
+        return false;
+    }
+    s_port.bus_sequence = g_wG431AdcSequence;
+    sample->status = mfoc_port_bus(&sample->bus);
+    return true;
+}
+#endif
+
 /** @brief Read the completed injected frame and publish normalized U/V/W.
  * @param current Valid destination; unchanged on failure.
  * @return OK, INVALID_STATE or IO.
@@ -318,6 +361,21 @@ mfoc_result_t mfoc_port_bus(mfoc_scalar_t *bus)
 mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 {
     if (!s_port.configured) { return MFOC_RESULT_INVALID_STATE; }
+#if MFOC_G431_PWM_PHASE == 2 && !MFOC_P10_PHYSICAL
+    if ((ADC2->ISR & ADC_ISR_JEOS) == 0U) { return MFOC_RESULT_IO; }
+    const uint32_t capture = TIM2->CCR1;
+    const uint32_t elapsed = capture - s_pwm_capture;
+    if ((TIM1->BDTR & TIM_BDTR_MOE) == 0U ||
+        TIM2->CNT - capture >= s_pwm_period / 2U ||
+        (elapsed != s_pwm_period && !(s_pwm_first_frame && elapsed == 0U))) {
+        return MFOC_RESULT_SAFETY;
+    }
+    /* Port runs only after Motor has entered RUNNING. An ADC interrupt
+     * between gate enable and that transition may have discarded the first
+     * neutral sample, so the first accepted capture can be one top later. */
+    s_pwm_capture = capture;
+    s_pwm_first_frame = false;
+#endif
     MDI_Sample_Frame(phase_current_completed) frame = {0};
     mdi_status_t status = MDI_Sample_ReadCompleted(
         phase_current_completed, &frame);
@@ -340,6 +398,23 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
     next.qV = (mfoc_scalar_t)delta_v * s_port.gain;
     next.qW = (mfoc_scalar_t)delta_w * s_port.gain;
 #endif
+#if MFOC_P10_KCL
+    if (!mfoc_p10_kcl_Current(capture, &next, (uint16_t)frame.u,
+                              (uint16_t)frame.v, (uint16_t)frame.w)) {
+        return MFOC_RESULT_SAFETY;
+    }
+#endif
+#if MFOC_P10_LIMIT
+    const mfoc_scalar_t safe_current = MFOC_SCALAR(0.12f);
+    if (mfoc_abs(next.qU) > safe_current ||
+        mfoc_abs(next.qV) > safe_current ||
+        mfoc_abs(next.qW) > safe_current) {
+        return MFOC_RESULT_SAFETY;
+    }
+#endif
+#if MFOC_P10_HFI_MPU
+    if (!mfoc_p10_hfi_Current(&next)) { return MFOC_RESULT_SAFETY; }
+#endif
     *current = next;
     return MFOC_RESULT_OK;
 }
@@ -355,35 +430,98 @@ static uint32_t _mfoc_port_DutyQ16(mfoc_scalar_t duty)
 #endif
 }
 
+/** @brief Convert trusted duties to the bounded MDI input.
+ * @param duty Normalized command. @return Three normalized Q16 duties. */
+static inline MDI_PWM_DutyFrame(bridge) _mfoc_port_DutyFrame(
+    const mfoc_uvw_t *duty)
+{
+    return (MDI_PWM_DutyFrame(bridge)){
+        .u = _mfoc_port_DutyQ16(duty->qU),
+        .v = _mfoc_port_DutyQ16(duty->qV),
+        .w = _mfoc_port_DutyQ16(duty->qW),
+    };
+}
+
 /** @brief Write trusted duties without changing output gates.
  * @param duty Normalized command. @return Submission status.
  * @note ISR submissions never enable outputs. */
 mfoc_result_t mfoc_port_pwm(const mfoc_uvw_t *duty)
 {
-    MDI_PWM_DutyFrame(bridge) frame = {
-        .u = _mfoc_port_DutyQ16(duty->qU),
-        .v = _mfoc_port_DutyQ16(duty->qV),
-        .w = _mfoc_port_DutyQ16(duty->qW),
-    };
+    const MDI_PWM_DutyFrame(bridge) frame = _mfoc_port_DutyFrame(duty);
+#if MFOC_G431_PWM_PHASE == 2 && !MFOC_P10_PHYSICAL
+    MDI_PWM_Frame(bridge) compare;
+    mdi_status_t status = MDI_OP(bridge, _pwm_PrepareDuty)(&frame, &compare);
+#else
     mdi_status_t status = MDI_PWM_SetDuty(bridge, &frame);
+#endif
     if (status != MDI_OK) {
         return status == MDI_RANGE ? MFOC_RESULT_OUT_OF_RANGE : MFOC_RESULT_IO;
     }
+#if MFOC_G431_PWM_PHASE == 2 && !MFOC_P10_PHYSICAL
+    /* Anchor the prepared counts before the deadline read. Otherwise Clang
+     * may sink the Q16 products into the reserved hardware write window. */
+    __asm volatile ("" : : "r"(compare.u), "r"(compare.v), "r"(compare.w) :
+                    "memory");
+    const uint32_t capture = s_pwm_capture;
+    if (TIM2->CNT - capture >= s_pwm_period - G431_PWM_WRITE_RESERVE) {
+        return MFOC_RESULT_SAFETY;
+    }
+    MDI_PWM_StageFast(bridge, &compare);
+    __DSB();
+    /* A crossed UEV or hardware Break invalidates the whole submission.
+     * Motor trips before its queued model voltage can advance. */
+    if (TIM2->CCR1 != capture || TIM2->CNT - capture >= s_pwm_period ||
+        (TIM1->BDTR & TIM_BDTR_MOE) == 0U) {
+        return MFOC_RESULT_SAFETY;
+    }
+#endif
 #if MFOC_P10_TIMING
     mfoc_p10_PwmWritten();
+#endif
+#if MFOC_P10_KCL
+    mfoc_p10_kcl_Duty((uint16_t)compare.u, (uint16_t)compare.v,
+                      (uint16_t)compare.w);
 #endif
     return MFOC_RESULT_OK;
 }
 
 /** @brief Load initial duties before enabling the phase gates.
  * @param initial_duty Normalized startup command. @return Startup status.
- * @note G431 compare preload is disabled, so duty is already effective when
- * MDI Enable opens the phase gates. */
+ * @note Preloaded PWM opens the bridge after a qualified natural transfer. */
 mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
 {
-    mfoc_result_t rc = mfoc_port_pwm(initial_duty);
+#if MFOC_RUNTIME_BUS
+    mfoc_board_bus_sample_t sample;
+    if (mfoc_board_bus_Poll(&sample)) { (void)mfoc_board_bus_Publish(&sample); }
+#endif
+#if MFOC_G431_PWM_PHASE
+    if (MDI_PWM_SafeStop(bridge) != MDI_OK) { return MFOC_RESULT_IO; }
+#endif
+    const MDI_PWM_DutyFrame(bridge) frame = _mfoc_port_DutyFrame(initial_duty);
+    mdi_status_t status = MDI_PWM_SetDuty(bridge, &frame);
+    if (status != MDI_OK) {
+        return status == MDI_RANGE ? MFOC_RESULT_OUT_OF_RANGE : MFOC_RESULT_IO;
+    }
+#if MFOC_G431_PWM_PHASE
+    if (!mfoc_g431_pwm_WaitTransfer()) { return MFOC_RESULT_IO; }
+#endif
+#if MFOC_RUNTIME_BUS
+    const mfoc_result_t rc = mfoc_board_bus_Arm(mfoc_port_tick());
     if (rc != MFOC_RESULT_OK) { return rc; }
-    mdi_status_t status = MDI_PWM_Enable(bridge, true);
+#endif
+#if MFOC_G431_PWM_PHASE == 2 && !MFOC_P10_PHYSICAL
+    s_pwm_period = 2U * TIM1->ARR;
+    if (s_pwm_period <= G431_PWM_WRITE_RESERVE) {
+        return MFOC_RESULT_OUT_OF_RANGE;
+    }
+    s_pwm_capture = g_mfoc_g431_pwm_phase.last_capture;
+    s_pwm_first_frame = true;
+    __DMB();
+#endif
+#if MFOC_P10_KCL
+    mfoc_p10_kcl_Reset();
+#endif
+    status = MDI_PWM_Enable(bridge, true);
     if (status == MDI_BUSY) { return MFOC_RESULT_SAFETY; }
     return status == MDI_OK ? MFOC_RESULT_OK : MFOC_RESULT_IO;
 }
