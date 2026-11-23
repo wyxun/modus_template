@@ -37,6 +37,7 @@ typedef struct {
     unsigned disables;
     mfoc_motor_t *step_during_disable;
     mfoc_result_t port_init;
+    bool clock_unavailable;
     bool bus_configured;
     unsigned port_inits;
     mfoc_port_cfg_t port_cfg;

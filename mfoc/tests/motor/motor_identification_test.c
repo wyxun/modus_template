@@ -38,11 +38,10 @@ static void setup(mfoc_motor_t *motor)
     motor_port_fake = (motor_port_fake_t){0};
     assert(mfoc_motor_Init(motor, &cfg) == MFOC_RESULT_OK);
     assert(mfoc_motor_SetCurrent(motor, &current_command) == MFOC_RESULT_OK);
-    assert(mfoc_identification_Start(&motor->identification, &cfg.params,
-        MFOC_IDENTIFICATION_RESISTANCE, MFOC_ONE) == MFOC_RESULT_OK);
     motor_port_fake.position_run = MFOC_RESULT_IO;
     motor_port_fake.feedback_step = MFOC_RESULT_IO;
-    assert(mfoc_motor_Start(motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_StartIdentification(motor,
+        MFOC_IDENTIFICATION_RESISTANCE) == MFOC_RESULT_OK);
 }
 
 /** @brief Read the measured Rs after either outcome of the final PWM stop. */
@@ -82,9 +81,10 @@ static void resistance(mfoc_result_t shutdown_status)
     assert(rc == shutdown_status);
     assert(motor_port_fake.feedback_reads == 0U);
     mfoc_motor_params_t result = {0};
-    assert(mfoc_identification_GetResult(&motor.identification, &result) ==
-        MFOC_RESULT_OK);
-    assert(fabsf(mfoc_to_float(result.rs) - 1.2f) < 0.01f);
+    assert(mfoc_motor_GetIdentificationResult(&motor, &result) ==
+           MFOC_RESULT_OK);
+    const mfoc_scalar_t measured_rs = result.rs;
+    assert(fabsf(mfoc_to_float(measured_rs) - 1.2f) < 0.01f);
     assert(motor.params.rs == MFOC_HALF);
     if (shutdown_status != MFOC_RESULT_OK) {
         assert(motor_port_fake.enabled && motor.state == MFOC_MOTOR_FAULT);
@@ -94,6 +94,20 @@ static void resistance(mfoc_result_t shutdown_status)
         assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
     }
     assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_IDLE);
+
+    /* A failed bridge start releases the owner and preserves the last result. */
+    motor_port_fake.enable = MFOC_RESULT_IO;
+    assert(mfoc_motor_StartIdentification(&motor,
+        MFOC_IDENTIFICATION_RESISTANCE) == MFOC_RESULT_IO);
+    assert(!motor_port_fake.enabled && motor.state == MFOC_MOTOR_FAULT);
+    assert((motor.faults & MFOC_MOTOR_FAULT_PWM) != 0U);
+    result.rs = MFOC_ZERO;
+    assert(mfoc_motor_GetIdentificationResult(&motor, &result) ==
+           MFOC_RESULT_OK);
+    assert(result.rs == measured_rs);
+    motor_port_fake.enable = MFOC_RESULT_OK;
+    assert(mfoc_motor_ClearFault(&motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_SetCurrent(&motor, &current_command) == MFOC_RESULT_OK);
     /* Terminal result stays readable but does not block ordinary startup. */
     assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OK);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
@@ -350,10 +364,15 @@ static void rotation_speed_limit(void)
     motor_port_fake = (motor_port_fake_t){0};
     assert(mfoc_motor_Init(&motor, &cfg) == MFOC_RESULT_OK);
     unsigned enables = motor_port_fake.enables;
-    assert(mfoc_identification_Start(&motor.identification, &motor.params,
-        MFOC_IDENTIFICATION_FLUX, MFOC_ONE) == MFOC_RESULT_OK);
-    assert(mfoc_motor_Start(&motor) == MFOC_RESULT_OUT_OF_RANGE);
+    assert(mfoc_motor_StartIdentification(&motor, MFOC_IDENTIFICATION_FLUX)
+           == MFOC_RESULT_OUT_OF_RANGE);
     assert(motor_port_fake.enables == enables && !motor_port_fake.enabled);
+    const mfoc_motor_params_t prior = motor.params;
+    mfoc_motor_params_t result = prior;
+    assert(mfoc_motor_GetIdentificationResult(&motor, &result) ==
+           MFOC_RESULT_INVALID_STATE);
+    assert(result.rs == prior.rs);
+    assert(mfoc_motor_SetCurrent(&motor, &current_command) == MFOC_RESULT_OK);
 }
 
 /** @brief A pulse cannot combine volt-seconds across a missing interval. */

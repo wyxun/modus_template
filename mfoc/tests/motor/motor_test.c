@@ -99,6 +99,19 @@ int main(void)
     bad.core.bus = MFOC_ZERO;
     assert(mfoc_motor_Init(&motor, &bad) != MFOC_RESULT_OK);
     assert(memcmp(&motor, &saved, sizeof(motor)) == 0);
+    /* Neither a late Port failure nor a missing clock can replace Motor. */
+    bad = cfg;
+    bad.params.pole_pairs = 4U;
+    motor_port_fake.port_init = MFOC_RESULT_IO;
+    assert(mfoc_motor_Init(&motor, &bad) == MFOC_RESULT_IO);
+    assert(motor_port_fake.port_cfg.pole_pairs == bad.params.pole_pairs);
+    assert(memcmp(&motor, &saved, sizeof(motor)) == 0);
+    motor_port_fake.port_init = MFOC_RESULT_OK;
+    motor_port_fake.clock_unavailable = true;
+    assert(mfoc_motor_Init(&motor, &bad) == MFOC_RESULT_INVALID_STATE);
+    assert(memcmp(&motor, &saved, sizeof(motor)) == 0);
+    motor_port_fake.clock_unavailable = false;
+
     mfoc_motor_t other = {0};
     cfg.current_base_milliamp = 20000U;
     cfg.voltage_base_millivolt = 24000U;

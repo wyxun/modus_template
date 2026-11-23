@@ -8,6 +8,8 @@
 #define MFOC_TYPES_H
 #include <stdbool.h>
 #include <stdint.h>
+#include "../../mfoc_config.h"
+#include "../../include/mfoc_abi.h"
 
 /* Set MFOC_USE_PERFC_FSM=1 for every translation unit in a perfc build. */
 #if defined(MFOC_USE_PERFC_FSM) && MFOC_USE_PERFC_FSM

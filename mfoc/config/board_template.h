@@ -15,11 +15,6 @@
 #define MFOC_MOTOR_RUN_FREQ_HZ 20000U
 #endif
 
-/* Frequency of the tick source that perfc actually reads. */
-#ifndef MFOC_PERFC_HZ
-#define MFOC_PERFC_HZ 170000000U
-#endif
-
 /* Maximum voltage-vector magnitude relative to Vdc, in (0, 1/sqrt(3)]. */
 #ifndef MFOC_CORE_M_MAX
 #define MFOC_CORE_M_MAX 0.55f

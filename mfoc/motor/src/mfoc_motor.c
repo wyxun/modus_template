@@ -5,6 +5,7 @@
  * @date 2026-10-20
  */
 #include "mfoc_motor.h"
+#include "mfoc_feedback_internal.h"
 #include "../../include/mfoc_trace_internal.h"
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_identification_internal.h"
@@ -14,6 +15,7 @@
 #include "mfoc_motor_config.h"
 #include "mfoc_modulation.h"
 #include <stddef.h>
+#include <string.h>
 
 /** @brief Compare a caller-validated finite vector without sqrt.
  * @param x First axis. @param y Second axis. @param limit Positive radius.
@@ -80,15 +82,8 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
         cfg->limits.speed_max <= MFOC_ZERO) {
         return MFOC_RESULT_OUT_OF_RANGE;
     }
-    mfoc_motor_t next = {0};
-#if MFOC_IDENTIFICATION_ENABLE
-    next.identification.timing_mismatch =
-        cfg->electrical_speed_base_hz !=
-            MFOC_SCALAR(MFOC_IDENTIFICATION_SPEED_BASE_HZ) ||
-        (cfg->openloop.sample_hz != 0U &&
-         cfg->openloop.sample_hz != MFOC_IDENTIFICATION_SAMPLE_HZ);
-#endif
-    mfoc_result_t rc = mfoc_core_Init(&next.core, &cfg->core);
+    mfoc_core_t core = {0};
+    mfoc_result_t rc = mfoc_core_Init(&core, &cfg->core);
     if (rc != MFOC_RESULT_OK) { return rc; }
     mfoc_feedback_cfg_t feedback_cfg = cfg->feedback;
     feedback_cfg.smo.speed_base_hz = cfg->electrical_speed_base_hz;
@@ -96,34 +91,29 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
 #if MFOC_FEEDBACK_ENABLE_EKF
     feedback_cfg.ekf.speed_base_hz = cfg->electrical_speed_base_hz;
 #endif
-    rc = mfoc_feedback_Init(&next.feedback, &feedback_cfg, p);
+    mfoc_feedback_prepared_t feedback = {0};
+    rc = mfoc_feedback_Prepare(&feedback, &feedback_cfg, p);
     if (rc != MFOC_RESULT_OK) { return rc; }
+    mfoc_pi_t speed = {0};
     if (cfg->speed_divider != 0U) {
         if (!mfoc_scalar_is_finite(cfg->limits.speed_max) ||
             cfg->speed.out_min < -cfg->limits.i_max ||
             cfg->speed.out_max > cfg->limits.i_max) {
             return MFOC_RESULT_OUT_OF_RANGE;
         }
-        rc = mfoc_pi_Init(&next.speed, &cfg->speed);
+        rc = mfoc_pi_Init(&speed, &cfg->speed);
         if (rc != MFOC_RESULT_OK) { return rc; }
     }
-    next.speed_divider = cfg->speed_divider;
+    mfoc_openloop_t openloop = {0};
     if (cfg->openloop.sample_hz != 0U) {
         if (cfg->limits.speed_max > MFOC_ONE) {
             return MFOC_RESULT_OUT_OF_RANGE;
         }
         mfoc_openloop_cfg_t openloop_cfg = cfg->openloop;
         openloop_cfg.speed_base_hz = cfg->electrical_speed_base_hz;
-        rc = mfoc_openloop_Init(&next.openloop, &openloop_cfg);
+        rc = mfoc_openloop_Init(&openloop, &openloop_cfg);
         if (rc != MFOC_RESULT_OK) { return rc; }
-        mfoc_sensorless_start_Init(&next.sensorless_start,
-                                   cfg->openloop.sample_hz);
     }
-    next.params = cfg->params;
-    next.limits = cfg->limits;
-    next.mode = MFOC_MOTOR_MODE_CURRENT;
-    next.state = MFOC_MOTOR_IDLE;
-    next.irq_result = MFOC_RESULT_INVALID_STATE;
     const mfoc_port_cfg_t port_cfg = {
         .current_base_milliamp = cfg->current_base_milliamp,
         .voltage_base_millivolt = cfg->voltage_base_millivolt,
@@ -134,9 +124,32 @@ mfoc_result_t mfoc_motor_Init(mfoc_motor_t *motor,
     if (rc != MFOC_RESULT_OK) { return rc; }
     uint32_t tick_hz = mfoc_port_tick_frequency();
     if (tick_hz == 0U) { return MFOC_RESULT_INVALID_STATE; }
-    next.hold_ticks = ((mfoc_tick_t)tick_hz * MFOC_MOTOR_ALIGN_TIME_MS +
+    /* After Port accepts, install only the prepared state. This avoids a
+     * stack copy of experiment workspace, telemetry and HFI sample history. */
+    memset(motor, 0, sizeof(*motor));
+    motor->core = core;
+    mfoc_feedback_InitPrepared(&motor->feedback, &feedback, &feedback_cfg);
+    motor->speed = speed;
+    motor->speed_divider = cfg->speed_divider;
+    motor->openloop = openloop;
+    if (cfg->openloop.sample_hz != 0U) {
+        mfoc_sensorless_start_Init(&motor->sensorless_start,
+                                   cfg->openloop.sample_hz);
+    }
+#if MFOC_IDENTIFICATION_ENABLE
+    motor->identification.timing_mismatch =
+        cfg->electrical_speed_base_hz !=
+            MFOC_SCALAR(MFOC_IDENTIFICATION_SPEED_BASE_HZ) ||
+        (cfg->openloop.sample_hz != 0U &&
+         cfg->openloop.sample_hz != MFOC_IDENTIFICATION_SAMPLE_HZ);
+#endif
+    motor->params = cfg->params;
+    motor->limits = cfg->limits;
+    motor->mode = MFOC_MOTOR_MODE_CURRENT;
+    motor->irq_result = MFOC_RESULT_INVALID_STATE;
+    motor->hold_ticks = ((mfoc_tick_t)tick_hz * MFOC_MOTOR_ALIGN_TIME_MS +
         999U) / 1000U;
-    *motor = next;
+    motor->state = MFOC_MOTOR_IDLE;
     return MFOC_RESULT_OK;
 }
 
@@ -459,6 +472,52 @@ static inline bool _mfoc_motor_OutputReserved(const mfoc_motor_t *motor)
     return motor->hold_active;
 #endif
 }
+
+#if MFOC_IDENTIFICATION_ENABLE
+/** @brief Arm and start an experiment while preserving a previous result.
+ * @param motor Stopped instance. @param operation Requested experiment.
+ * @return Validation or PWM startup status. */
+mfoc_result_t mfoc_motor_StartIdentification(mfoc_motor_t *motor,
+    mfoc_identification_operation_t operation)
+{
+    if (motor == NULL) { return MFOC_RESULT_NULL; }
+    if (motor->state != MFOC_MOTOR_IDLE || motor->faults != 0U ||
+        _mfoc_motor_OutputReserved(motor)) {
+        return MFOC_RESULT_INVALID_STATE;
+    }
+
+    mfoc_identification_t *id = &motor->identification;
+    const mfoc_identification_state_t previous_state = id->state;
+    const mfoc_identification_operation_t previous_op = id->operation;
+    mfoc_motor_params_t previous_result = {0};
+    if (previous_state == MFOC_IDENTIFICATION_DONE) {
+        previous_result = id->result;
+    }
+    mfoc_result_t rc = mfoc_identification_Start(id, &motor->params, operation,
+        mfoc_core_GetBus(&motor->core));
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    rc = mfoc_motor_Start(motor);
+    if (rc != MFOC_RESULT_OK) {
+        mfoc_identification_Stop(id);
+        if (previous_state == MFOC_IDENTIFICATION_DONE) {
+            id->result = previous_result;
+        }
+        id->operation = previous_op;
+        id->state = previous_state;
+    }
+    return rc;
+}
+
+/** @brief Read a terminal experiment result even after a bridge fault.
+ * @param motor Initialized instance. @param params Result destination.
+ * @return Status; no result is written before a successful measurement. */
+mfoc_result_t mfoc_motor_GetIdentificationResult(const mfoc_motor_t *motor,
+    mfoc_motor_params_t *params)
+{
+    if (motor == NULL || params == NULL) { return MFOC_RESULT_NULL; }
+    return mfoc_identification_GetResult(&motor->identification, params);
+}
+#endif
 
 #if MFOC_MOTOR_MODEL_UPDATE_ENABLE
 /** @brief Commit Motor parameters after Feedback accepts every coefficient. */

@@ -51,7 +51,9 @@ foreach ($numeric in $numerics) {
     }
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
-    if ($test -eq 'board_bus') { $irqArguments = @("-I$repo/class") }
+    if ($test -eq 'board_bus') {
+      $irqArguments = @("-I$repo/class", '-DMFOC_PERFC_HZ=170000000U')
+    }
     if ($test -eq 'motor_irq') {
       $irqArguments = @('-DMFOC_ISR_MEASURE=0',
           "-I$testsRoot/irq_binding",

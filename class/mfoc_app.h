@@ -9,6 +9,13 @@
 #include "modus.h"
 #include "mfoc_motor.h"
 
+#ifndef MFOC_ISR_MEASURE
+#define MFOC_ISR_MEASURE 0
+#endif
+#if MFOC_ISR_MEASURE && !defined(MFOC_ISR_BUDGET_TICKS)
+#define MFOC_ISR_BUDGET_TICKS (MFOC_PERFC_HZ / MFOC_MOTOR_RUN_FREQ_HZ)
+#endif
+
 typedef enum {
     MFOC_APP_UNINITIALIZED = 0,
     MFOC_APP_IDLE,

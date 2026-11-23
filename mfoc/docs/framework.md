@@ -429,7 +429,7 @@ ALIGN、强拖、无感启动阶段不是主状态，而是 `hold_active`、`ope
 | `MFOC_FEEDBACK_BACKEND` | 控制角速取自哪一路 | 默认 Flux，所选算法必须已启用 |
 | `MFOC_CORE_M_MAX` | 电压矢量相对母线的上限 | G431 为 0.55，AT32F413 为 0.35 |
 | `MFOC_IDENTIFICATION_ENABLE` | 辨识流程与相关字段 | 默认 0；关闭后实例成员一并消失 |
-| `MFOC_ISR_MEASURE` | 中断计时统计 | 默认关闭，G431 调试构建默认开启 |
+| `MFOC_ISR_MEASURE` | 目标应用的中断计时统计 | G431 调试目标默认开启 |
 
 两点容易踩：`MFOC_FEEDBACK_NONE` 只适用于纯强拖或辨识构建，常规闭环会因"无后端"直接 Trip；编译开关会改变结构体成员，各编译单元必须使用同一份配置。
 

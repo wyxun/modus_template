@@ -70,17 +70,47 @@ mfoc_result_t board_read_encoder(mfoc_angle_t *mechanical,
 }
 #endif
 
+#if MFOC_IDENTIFICATION_ENABLE && defined(MFOC_TEST_IDENTIFICATION_START)
+/** @brief Exercise the two-call foreground startup before the Motor API.
+ * @return Experiment or PWM startup status. */
+static __attribute__((noinline)) mfoc_result_t start_identification_legacy(void)
+{
+    mfoc_result_t rc = mfoc_identification_Start(&s_motor.identification,
+        &s_motor.params, MFOC_IDENTIFICATION_RESISTANCE,
+        mfoc_core_GetBus(&s_motor.core));
+    if (rc == MFOC_RESULT_OK) {
+        rc = mfoc_motor_Start(&s_motor);
+        if (rc != MFOC_RESULT_OK) {
+            mfoc_identification_Stop(&s_motor.identification);
+        }
+    }
+    return rc;
+}
+
+/** @brief Exercise the Motor-owned experiment startup.
+ * @return Experiment or PWM startup status. */
+static __attribute__((noinline)) mfoc_result_t start_identification_motor(void)
+{
+    return mfoc_motor_StartIdentification(&s_motor,
+        MFOC_IDENTIFICATION_RESISTANCE);
+}
+#endif
+
 /** @brief Exercise one initialize, start, step and stop cycle.
  * @return Zero on success, or the first Motor error code. */
 int main(void)
 {
-    const mfoc_motor_cfg_t cfg = {
+    static const mfoc_motor_cfg_t cfg = {
         .params = {7U, MFOC_HALF, MFOC_ONE, MFOC_ONE, MFOC_HALF, MFOC_ZERO},
         .current_base_milliamp = 10000U,
         .voltage_base_millivolt = 12000U,
         .electrical_speed_base_hz =
             MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
-        .limits = {.i_max = MFOC_HALF},
+        .limits = {.i_max = MFOC_HALF, .speed_max = MFOC_ONE},
+        .speed_divider = 20U,
+        .speed = {MFOC_HALF, MFOC_ZERO, -MFOC_HALF, MFOC_HALF,
+                  -MFOC_HALF, MFOC_HALF},
+        .openloop = {MFOC_MOTOR_RUN_FREQ_HZ, MFOC_ZERO, MFOC_HALF},
         .core = {
             .d = {MFOC_HALF, MFOC_ZERO, -MFOC_ONE, MFOC_ONE,
                   -MFOC_ONE, MFOC_ONE},
@@ -109,6 +139,21 @@ int main(void)
     };
     mfoc_result_t rc = mfoc_motor_Init(&s_motor, &cfg);
     if (rc != MFOC_RESULT_OK) { return (int)rc; }
+#if MFOC_IDENTIFICATION_ENABLE && defined(MFOC_TEST_IDENTIFICATION_START)
+    rc = start_identification_legacy();
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+    rc = mfoc_motor_Stop(&s_motor);
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+    rc = start_identification_motor();
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+    rc = mfoc_motor_Stop(&s_motor);
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+    s_motor.identification.state = MFOC_IDENTIFICATION_DONE;
+    rc = start_identification_motor();
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+    rc = mfoc_motor_Stop(&s_motor);
+    if (rc != MFOC_RESULT_OK) { return (int)rc; }
+#endif
     rc = mfoc_motor_UpdateBus(&s_motor);
     if (rc != MFOC_RESULT_OK) { return (int)rc; }
     rc = mfoc_motor_Start(&s_motor);

@@ -43,6 +43,9 @@ static mfoc_result_t prepare(mfoc_scalar_t bus, mfoc_core_bus_coeff_t *coeff)
 }
 
 #define mfoc_port_tick read_clock
+#ifdef mfoc_core_PrepareBus
+#undef mfoc_core_PrepareBus
+#endif
 #define mfoc_core_PrepareBus prepare
 #include "../../../class/mfoc_board_bus.c"
 #undef mfoc_core_PrepareBus

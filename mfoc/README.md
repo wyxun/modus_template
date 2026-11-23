@@ -1,11 +1,13 @@
 # MFOC
 
-MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位置反馈、强拖启动和参数辨识所需的模块。本仓库的 STM32G431 应用位于 [`class/mfoc_app.c`](../class/mfoc_app.c)，可作为接入参考。
+MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位置反馈、强拖启动和参数辨识所需的模块。首次使用可从 [主机回放示例](examples/host_replay/README.md) 开始。
 
 ## 文档入口
 
 | 要做的事 | 阅读入口 |
 | --- | --- |
+| 运行主机示例并接线到自己的板 | [快速接入](docs/getting-started.md) · [扩展与迁移](docs/extension-guide.md) |
+| 确认实机支持、源码包身份及复验步骤 | [发布支持矩阵](docs/support-matrix.md) · [交付核对](docs/release-v1-checklist.md) · [变更记录](CHANGELOG.md) |
 | 理解核心架构、单拍数据流、状态所有权（持续完善） | [框架总览](docs/framework.md) |
 | 核对 PU 单位、Q15 范围、舍入与积分精度 | [数值契约](docs/numeric-contract.md) |
 | 阅读模块接口 | [Feedback 位置与速度反馈接口](docs/modules/feedback.md) · [Core](docs/framework.md#core) · [Identification](docs/framework.md#identification) |
@@ -29,11 +31,11 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | `position/` | 编码器及无感位置算法 |
 | `identification/` | 电机参数辨识 |
 | `port/` | 电流、母线、统一电角度/速度、PWM 和时钟的接入契约 |
-| `tests/`、`tools/` | 测试和代码生成工具 |
+| `tests/`、`tools/` | 主工程的测试和代码生成工具 |
 
 各模块的公共头文件位于其 `include/`，实现位于 `src/`。[`mfoc.h`](include/mfoc.h) 汇集基础数学及控制接口。使用 Motor 时还需包含 `mfoc_motor.h`。`mfoc.mk` 提供源码与头文件路径清单。
 
-独立工程可复制整个 `mfoc/` 目录，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和自行实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。使用自定义电机配置时，添加 `MFOC_MOTOR_CONFIG_FLAGS` 到库和应用的编译参数。主机示例使用 C11、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[主机回放示例](examples/host_replay/README.md) · [Port 接入指南](docs/port-contract.md)
+独立工程可使用导出的 `mfoc/` 源码包，在自己的 Makefile 中包含 `mfoc/mfoc.mk`，用 `MFOC_SOURCES`、`MFOC_INCLUDES` 和自行实现的 Port 编译链接。所有编译单元使用同一组数值后端、位置源和辨识开关。使用自定义电机配置时，添加 `MFOC_MOTOR_CONFIG_FLAGS` 到库和应用的编译参数。主机示例使用 C11、GNU Make 和标准数学库，直接链接库内 Motor、Feedback 与辨识实现。[主机回放示例](examples/host_replay/README.md) · [Port 接入指南](docs/port-contract.md)
 
 ## 配置 MFOC
 
@@ -52,7 +54,6 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | 配置 | 含义 | 当前默认值 |
 | --- | --- | --- |
 | `MFOC_SPEED_RUN_FREQ_HZ` | 速度环频率，按板级控制频率自动计算分频 | `1000U`，`0` 关闭速度模式 |
-| `MFOC_ISR_MEASURE` | 中断耗时统计开关 | `0`，G431 调试构建覆盖为 `1` |
 | `MFOC_IDENTIFICATION_ENABLE` | Motor 参数辨识流程 | `0` |
 | `MFOC_MOTOR_MODEL_UPDATE_ENABLE` | 停机后显式应用 PU 电机参数 | `0` |
 | `MFOC_FEEDBACK_ENABLE_POSITION` | 板级提供的统一位置反馈；旧 `ENABLE_ENCODER` 名称兼容 | `1` |
@@ -66,7 +67,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 ### 板级设置
 
-G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 同时提供给 PWM/ADC 和 MFOC。计时器频率和允许的调制上限也在板级设置。移植新板时可从库内模板取得这三项的写法，环路分频和诊断预算由库在编译期计算。[板级模板](config/board_template.h) · [板级配置方法](docs/configuration.md#board-settings)
+G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 同时提供给 PWM/ADC 和 MFOC。计时器频率和允许的调制上限也在板级设置。移植新板时可从库内模板取得控制频率和调制上限的写法，环路分频由库在编译期计算。中断耗时统计及其计时配置由目标工程设置。[板级模板](config/board_template.h) · [板级配置方法](docs/configuration.md#board-settings)
 
 ### 电机与标幺值
 
@@ -74,11 +75,11 @@ G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 
 
 电流使用 `I/Ibase`，母线使用 `Vdc/Vbase`，速度使用电角速度与电角速度基值之比。当前电流基值是相电流峰值；例如 `0.02 pu` 对应 `0.02 × 3.5 A = 0.07 A`。极对数用于机械角与电角的换算。
 
-当前示例应用的电流 PI、速度 PI、运行限值、采样频率和速度环分频在 [`class/mfoc_app.c`](../class/mfoc_app.c) 的 Motor 配置中设置；修改电机参数或控制频率后应重新整定并核对这些值。
+主工程示例应用的电流 PI、速度 PI、运行限值、采样频率和速度环分频在 `class/mfoc_app.c` 的 Motor 配置中设置；修改电机参数或控制频率后应重新整定并核对这些值。
 
 电机参数辨识支持单测 Rs、连续测 Rs/Ld/Lq、测磁链和测空轴惯量，四种操作共用一套启停和结果接口，均可关闭物理位置反馈。静止实验要求轴保持在对齐位置；磁链和惯量使用电压、电流估算转子运动。[实验操作与适用条件](docs/framework.md#identification) · [双后端软件回放](docs/validation/2026-11-19-p09-identification.md)
 
-需要停机更新时，库与调用方统一定义 `MFOC_MOTOR_MODEL_UPDATE_ENABLE=1`。同一台 Motor 的辨识完成并停机后，用 `mfoc_identification_GetResult(&motor.identification, &params)` 读取结果，成功后调用 `mfoc_motor_ApplyModel(&motor, &params)`。应用从文件或其他电机导入参数时，须先按目标 Motor 的 Init 基值换算为 PU。更改基值或极对数需要重新初始化。[接口契约](motor/include/mfoc_motor.h)
+需要停机更新时，库与调用方统一定义 `MFOC_MOTOR_MODEL_UPDATE_ENABLE=1`。同一台 Motor 的辨识完成并停机后，用 `mfoc_motor_GetIdentificationResult(&motor, &params)` 读取结果，成功后调用 `mfoc_motor_ApplyModel(&motor, &params)`。应用从文件或其他电机导入参数时，须先按目标 Motor 的 Init 基值换算为 PU。更改基值或极对数需要重新初始化。[接口契约](motor/include/mfoc_motor.h)
 
 ## 硬件端口
 
@@ -92,7 +93,7 @@ G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 
 4. 根据需要配置或更新母线值。`mfoc_motor_SetBus()` 接收正的 `Vdc/Vbase`；`mfoc_motor_UpdateBus()` 可读取已发布的母线采样并更新。动态母线异常的处理由应用结合硬件保护策略决定。
 5. 根据控制模式设置指令并启动；停止使用 `mfoc_motor_Stop()`，故障清除使用 `mfoc_motor_ClearFault()`。调用条件和返回值见 [`mfoc_motor.h`](motor/include/mfoc_motor.h)。
 
-本工程 G431 的应用和中断接线见 [应用](../class/mfoc_app.c) 与 [控制中断](../target/stm32g431/mfoc_motor_irq.c)。示例控制周期为 20 kHz，移植时应以实际采样和 PWM 时序配置为准。
+主工程 G431 的应用和中断接线位于 `class/mfoc_app.c` 和 `target/stm32g431/mfoc_motor_irq.c`。示例控制周期为 20 kHz，移植时应以实际采样和 PWM 时序配置为准。
 
 ### G431 示例命令
 
@@ -120,6 +121,6 @@ motor clear
 
 ## 测试入口
 
-从仓库根目录运行 `.\mfoc\tests\scripts\check_standalone.ps1`。脚本把库和主机示例复制到仓库外的临时目录，再构建、链接并执行反馈与辨识配置。开启辨识时，模拟功率级按上一拍实际提交的 duty 产生电流，经 Motor 完成 Rs 辨识并校验结果。[独立验收脚本](tests/scripts/check_standalone.ps1)
+从主工程根目录运行 `.\mfoc\tests\scripts\check_standalone.ps1`。脚本导出源码包、生成 SHA-256 清单，再从包的独立副本构建、链接并执行反馈与辨识配置。开启辨识时，模拟功率级按上一拍实际提交的 duty 产生电流，经 Motor 完成 Rs 辨识并校验结果。[导出和复验命令](docs/release-v1-checklist.md)
 
 主机回归入口 `tests/scripts/run_tests.ps1` 包含各算法、启动交接、PU 换算和独立构建。ARM 入口 `tests/scripts/check_arm.ps1` 负责链接和符号审计。实际采样时序、电流极性、中断耗时和无感接管在台架上验收。

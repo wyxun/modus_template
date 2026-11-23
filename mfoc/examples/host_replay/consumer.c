@@ -271,9 +271,8 @@ static void measure_rs(const mfoc_motor_cfg_t *cfg)
 {
     test_axis_t axis = {0};
     init_axis(&axis, cfg);
-    assert(mfoc_identification_Start(&axis.motor.identification, &cfg->params,
-        MFOC_IDENTIFICATION_RESISTANCE, MFOC_ONE) == MFOC_RESULT_OK);
-    assert(mfoc_motor_Start(&axis.motor) == MFOC_RESULT_OK);
+    assert(mfoc_motor_StartIdentification(&axis.motor,
+        MFOC_IDENTIFICATION_RESISTANCE) == MFOC_RESULT_OK);
     assert(mfoc_motor_Run(&axis.motor) == MFOC_RESULT_OK);
     for (unsigned i = 0U; i < 2U * MFOC_MOTOR_RUN_FREQ_HZ && axis.enabled;
          ++i) {
@@ -284,8 +283,8 @@ static void measure_rs(const mfoc_motor_cfg_t *cfg)
     }
     expect_idle(&axis);
     mfoc_motor_params_t result = {0};
-    assert(mfoc_identification_GetResult(&axis.motor.identification, &result)
-           == MFOC_RESULT_OK);
+    assert(mfoc_motor_GetIdentificationResult(&axis.motor, &result) ==
+           MFOC_RESULT_OK);
     assert(fabsf(mfoc_to_float(result.rs) - plant_rs_pu) < 0.01f);
     printf("Standalone Rs = %.4f PU (plant %.1f PU)\n",
            (double)mfoc_to_float(result.rs), (double)plant_rs_pu);

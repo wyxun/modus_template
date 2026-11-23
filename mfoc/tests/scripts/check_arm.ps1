@@ -1,4 +1,5 @@
-param([string]$Toolchain = (Split-Path (Get-Command clang).Source))
+param([string]$Toolchain = (Split-Path (Get-Command clang).Source),
+      [switch]$MeasureIdentificationStart)
 $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $repo = Split-Path -Parent (Split-Path -Parent $testsRoot)
@@ -62,6 +63,9 @@ foreach ($profile in $profiles) {
     $writable = @($symbols -cmatch '^\S+\s+[bBdDsScCgGvV]\s+[0-9a-fA-F]')
     if ($writable) { throw "Writable symbols in MFOC library: $writable" }
 
+    if ($MeasureIdentificationStart) {
+        $arguments += '-DMFOC_TEST_IDENTIFICATION_START=1'
+    }
     foreach ($source in @($port, $fixture)) {
         $object = Join-Path $output "$build-$([IO.Path]::GetFileNameWithoutExtension($source)).o"
         & $clang @arguments -c $source -o $object
@@ -142,7 +146,8 @@ if ($modelAsm -match '__aeabi_u?ldivmod') {
 # The partial link ends at the board Port and integer/memory runtime helpers.
 $expected = @('mfoc_port_current', 'mfoc_port_position', 'mfoc_port_pwm',
     'mfoc_port_pwm_stop', '__aeabi_ldivmod', '__aeabi_uldivmod', '__aeabi_lmul',
-    '__aeabi_idiv', '__aeabi_memclr4', '__aeabi_memclr8')
+    '__aeabi_idiv', '__aeabi_lasr', '__clzsi2',
+    '__aeabi_memclr4', '__aeabi_memclr8')
 $unexpected = @($external | Where-Object { $_ -cnotin $expected })
 if ($unexpected) { throw "Unexpected FIXED sampling dependencies: $unexpected" }
 Write-Output "Cortex-M0 FIXED linked sampling paths passed; external references: $external"
@@ -198,8 +203,10 @@ if ($portUndefined -match '__aeabi_[fd]|__(add|sub|mul|div|float|fix).*([sd]f)')
 }
 Write-Output 'MDI FIXED port: no soft-float helper symbols'
 $newTrig = Join-Path $output 'FIXED-mfoc_trig.o'
-$undefined = & $nm --undefined-only $newTrig
+$undefined = & $nm --undefined-only --just-symbol-name $newTrig
 if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect FIXED trig object' }
+# The ABI relocation is checked by the complete link. Audit code dependencies.
+$undefined = @($undefined | Where-Object { $_ -cnotmatch '^mfoc_abi_v1_' })
 if ($undefined) { throw "FIXED LUT must be self-contained: $undefined" }
 Write-Output 'Cortex-M0 FIXED LUT: no external/soft-float helper symbols'
 $piUndefined = & $nm --undefined-only (Join-Path $output 'FIXED-mfoc_pi.o')

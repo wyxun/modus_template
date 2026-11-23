@@ -158,12 +158,32 @@ mfoc_result_t mfoc_motor_ApplyModel(mfoc_motor_t *motor,
  * @param motor Initialized instance. @return Operation status.
  * @note Ordinary closed-loop startup preserves current/speed mode and enables
  * injection only with primary HFI. Forced and identification starts disable HFI.
- * Start runs an armed identification. AlignStart, OpenLoopStart,
- * SensorlessStart and HfiStart reject it before changing state or enabling PWM.
+ * Use StartIdentification to start an experiment. A low-level experiment
+ * already armed by the caller still owns Start, and all other startup
+ * entry points reject that reservation before enabling PWM.
  * Retains a previously accepted current command. Failure to write
  * or enable PWM trips the motor. Port Init must already have succeeded.
  * Call in foreground; no bus read or angle acquisition occurs here. */
 mfoc_result_t mfoc_motor_Start(mfoc_motor_t *motor);
+
+#if MFOC_IDENTIFICATION_ENABLE
+/** @brief Start a Motor-owned, foreground-polled identification from IDLE.
+ * @param motor Stopped instance without a fault or pending experiment.
+ * @param operation Resistance, electrical, flux or inertia experiment.
+ * @return Validation or PWM status. On failure the previous result survives.
+ * @note Serialized foreground call. Poll Motor Run and cancel with Stop.
+ * During startup a hardware failure still latches Motor's PWM fault. */
+mfoc_result_t mfoc_motor_StartIdentification(mfoc_motor_t *motor,
+    mfoc_identification_operation_t operation);
+
+/** @brief Copy the model from the latest successfully completed experiment.
+ * @param motor Valid Motor instance. @param params Destination in Motor PU.
+ * @return OK on completion or INVALID_STATE without changing the output.
+ * @note Read in foreground after Motor Run finishes. The result survives a
+ * PWM shutdown failure and can be consumed independently of Motor status. */
+mfoc_result_t mfoc_motor_GetIdentificationResult(const mfoc_motor_t *motor,
+    mfoc_motor_params_t *params);
+#endif
 
 /** @brief Disable PWM, clear command/integrals and retain any fault latch.
  * @param motor Initialized instance. @return Shutdown/reset status.

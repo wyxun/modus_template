@@ -7,6 +7,12 @@
 #include "mfoc_numeric.h"
 #include <stddef.h>
 
+#if defined(MFOC_ABI_ELF)
+/* One absolute definition belongs to the linked MFOC library. */
+__asm__(".globl " MFOC_ABI_STRING(MFOC_ABI_SIGNATURE) "\n"
+        MFOC_ABI_STRING(MFOC_ABI_SIGNATURE) " = 0");
+#endif
+
 mfoc_scalar_t mfoc_from_float(float value)
 {
 #if defined(MFOC_NUMERIC_FLOAT)

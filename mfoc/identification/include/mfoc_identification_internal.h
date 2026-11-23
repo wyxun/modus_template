@@ -9,6 +9,16 @@
 #include "mfoc_identification.h"
 #include "mfoc_motor_config_internal.h"
 
+#if !defined(MFOC_ABI_ELF)
+/* These internal stages exchange the configured experiment layout. */
+#define mfoc_identification_inductance_SeriesStep \
+    MFOC_ABI_ENTRY(mfoc_identification_inductance_SeriesStep)
+#define mfoc_identification_inductance_SeriesFinish \
+    MFOC_ABI_ENTRY(mfoc_identification_inductance_SeriesFinish)
+#define mfoc_identification_SampleStage \
+    MFOC_ABI_ENTRY(mfoc_identification_SampleStage)
+#endif
+
 /* Compile-time conversions for encoderless rotating experiments. */
 #define MFOC_IDENTIFICATION_SPEED_CAP_PU                                        \
     MFOC_SCALAR(200.0f / MFOC_MOTOR_BASE_ELECTRICAL_RAD_S)

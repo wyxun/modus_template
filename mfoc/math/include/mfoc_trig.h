@@ -8,12 +8,6 @@
 #define MFOC_TRIG_H
 #include "mfoc_angle.h"
 
-#define MFOC_TRIG_BACKEND_LIBM 0
-#define MFOC_TRIG_BACKEND_LUT 1
-#define MFOC_TRIG_BACKEND_EXTERNAL 2
-#ifndef MFOC_TRIG_BACKEND
-#define MFOC_TRIG_BACKEND MFOC_TRIG_BACKEND_LUT
-#endif
 #if MFOC_TRIG_BACKEND < 0 || MFOC_TRIG_BACKEND > 2
 #error "Unsupported mfoc trig backend"
 #endif

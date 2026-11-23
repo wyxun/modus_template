@@ -7,7 +7,7 @@
 | 项目构建者 | 构建参数和 `mfoc_config.h` | 设置速度环频率，选择位置反馈及库功能。`MFOC_NUMERIC=float/fixed` 选择数值后端，`MFOC_MOTOR_CONFIG` 选择电机配置。所有参与链接的编译单元使用一致配置。 |
 | 电机应用作者 | 电机 profile 和 `mfoc_motor_cfg_t` | 示例 profile 提供电流基值 mA、电压基值 mV、电频率基值 Hz，以及电机固有的极对数。应用填写三个基值字段和 `params.pole_pairs`，Motor_Init 在初始化 Port 时转交。 |
 | 板级移植者 | 目标构建配置、`mfoc_port.c` 和板级驱动 | 统一设置控制频率、计时器频率和调制上限。配置 ADC 通道、满量程、极性、母线分压、PWM 更新点和传感器参数。 |
-| 算法调试者 | 对应模块的默认值和项目编译宏 | 按需覆盖 Flux 增益、EKF 噪声参数和辨识实验参数。 |
+| 算法调试者 | 对应模块的默认值和项目编译宏 | 按需覆盖 Flux、HFI 增益、EKF 噪声参数和辨识实验参数。 |
 
 例如，使用 G431 编码器闭环时，让目标中所有 MFOC 源文件看到以下构建选项。
 
@@ -32,9 +32,9 @@
 
 运行 `make.bat` 时可以通过对应目标的 `*_CONTROL_HZ` 变量设置控制频率。例如 `make.bat TARGET_CHIP=stm32g431 STM32G431_CONTROL_HZ=20000`。更改频率时，确认定时器能产生该频率，且 PWM、ADC 触发和采样 ISR 步长一致，再核对 PI 的离散系数。perfc 计时频率应与移植实际使用的 tick 源一致。[G431 目标](../../target/stm32g431/target.mk) · [AT32F413 目标](../../target/at32f413/target.mk)
 
-接入独立工程时，可参考库内板级模板，通过编译定义为应用和库统一提供三项板级值，也可复制模板到板级目录，并对相关编译单元统一使用编译器的 `-include` 选项。模板的回退值为 20 kHz、170 MHz、`0.55f`，可用于主机示例。[板级模板](../config/board_template.h)
+接入独立工程时，可参考库内板级模板，为应用和库统一提供控制频率与调制上限。模板的回退值是 20 kHz 和 `0.55f`。应用若使用耗时诊断，其计时频率、开关和预算由应用及目标设定。[板级模板](../config/board_template.h)
 
-项目设置的速度环频率须为实际控制频率的整数分频，默认 1 kHz。20 kHz 控制频率下，每 20 拍运行一次速度环。填 `0` 会禁用示例应用的速度模式。控制与速度周期换算、速度环分频、默认 ISR 诊断预算和编译期检查由库内头文件提供。[库内配置](../include/mfoc_config_internal.h)
+项目设置的速度环频率须为实际控制频率的整数分频，默认 1 kHz。20 kHz 控制频率下，每 20 拍运行一次速度环。填 `0` 会禁用示例应用的速度模式。控制与速度周期换算、速度环分频和编译期检查由库内头文件提供。[库内配置](../include/mfoc_config_internal.h)
 
 <a id="motor-profile"></a>
 
@@ -56,12 +56,20 @@
 
 Flux 的观测器和 PLL 增益、EKF 的噪声和协方差、辨识的激励、限值和采样数由对应模块提供默认值。项目可在构建中覆盖已有定义，例如在 Make 目标中追加 `C_DEFS += -DMFOC_FLUX_PLL_KP=0.45f`，让库和应用看到同一值。根据实际电机与采样率验证调参结果。[Flux 默认值](../position/include/mfoc_flux.h) · [EKF 默认值](../position/include/mfoc_ekf.h) · [辨识默认值](../identification/include/mfoc_identification_algorithms.h)
 
+HFI 注入电压可覆盖 `MFOC_HFI_VOLTAGE_PU`。阈值和 PLL 增益使用后端标量，例如在项目配置中定义 `MFOC_HFI_PLL_KP` 为 `MFOC_SCALAR(0.05f)`。载波由 HFI 模块固定为八拍。启用极性辨识时，用统一的构建选项 `MFOC_HFI_ENABLE_POLARITY=1`。[HFI 默认值](../position/include/mfoc_hfi.h)
+
+## 链接配置检查
+
+链接检查覆盖 FLOAT/FIXED、反馈主后端及各项使能、辨识、模型更新、HFI 极性、PWM 预装载延迟、perfc FSM 和三角函数后端。目标和应用依然要统一采样率、标幺基值、电机参数、增益和 C ABI 编译选项。
+
+GNU/Clang ELF 构建每个匹配的配置合并为一个指针宽度的只读检查项（ARM Cortex-M 为 4 字节），保留原有 API 符号名称。链接应包含 `mfoc_numeric.c`。链接器须支持 GNU retain 和 COMDAT，检查在静态库与段裁剪下生效。Windows MinGW 用带配置签名的编译后符号绑定库调用与 Port，C 源码中的函数名不变。仅内联访问结构字段的 MinGW 编译单元依赖相同的构建配置。两种方式均不增加执行指令。[检查实现](../include/mfoc_abi.h)
+
 ## 使用头文件
 
 | 头文件 | 使用方式 |
 | --- | --- |
 | [mfoc_config.h](../mfoc_config.h) | 配置项目常用的速度环、反馈和功能开关。项目也可用构建宏覆盖这些默认值。 |
-| [mfoc.h](../include/mfoc.h) | 基础数值和控制公共入口。 |
+| [mfoc.h](../include/mfoc.h) | 基础数值和控制公共入口。需要电机参数时，显式包含电机配置选择头。 |
 | [mfoc_motor_config.h](../include/mfoc_motor_config.h) | 电机配置选择入口。应用和库从这里读取同一份配置。 |
 | [mfoc_port.h](../port/include/mfoc_port.h) | 板级实现与库共用的函数签名、上下文、单位和失败语义。新板实现这里声明的操作。 |
 | [mfoc_encoder.h](../position/include/mfoc_encoder.h) | 使用库 Encoder 的位置提供者包含此头，创建实例，通过 Init、Update、Step、CalibrateZero 操作。 |

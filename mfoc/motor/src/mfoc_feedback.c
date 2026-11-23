@@ -4,10 +4,63 @@
  * @author wyxun
  * @date 2026-10-21
  */
-#include "mfoc_feedback.h"
+#include "mfoc_feedback_internal.h"
 #include "../../include/mfoc_trace_internal.h"
 #include "mfoc_port.h"
 #include <stddef.h>
+#include <string.h>
+
+mfoc_result_t mfoc_feedback_Prepare(mfoc_feedback_prepared_t *prepared,
+    const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model)
+{
+    (void)prepared;
+    (void)cfg;
+    (void)model;
+#if MFOC_FEEDBACK_ENABLE_SMO
+    mfoc_result_t smo_rc = mfoc_smo_Init(&prepared->smo, &cfg->smo, model);
+    if (smo_rc != MFOC_RESULT_OK) { return smo_rc; }
+#endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    mfoc_result_t flux_rc = mfoc_flux_Init(&prepared->flux, &cfg->flux, model);
+    if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
+#endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    mfoc_result_t ekf_rc = mfoc_ekf_Init(&prepared->ekf, &cfg->ekf, model);
+    if (ekf_rc != MFOC_RESULT_OK) { return ekf_rc; }
+#endif
+    return MFOC_RESULT_OK;
+}
+
+void mfoc_feedback_InitPrepared(mfoc_feedback_t *feedback,
+    const mfoc_feedback_prepared_t *prepared, const mfoc_feedback_cfg_t *cfg)
+{
+    (void)prepared;
+    (void)cfg;
+#if MFOC_FEEDBACK_ENABLE_SMO
+    feedback->smo = prepared->smo;
+    feedback->smo_cfg = cfg->smo;
+    feedback->smo_status = MFOC_RESULT_INVALID_STATE;
+#endif
+#if MFOC_FEEDBACK_ENABLE_HFI
+    mfoc_hfi_Init(&feedback->hfi);
+#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI
+    feedback->normal_hfi_mode = MFOC_FEEDBACK_HFI_INJECT;
+#else
+    feedback->normal_hfi_mode = cfg->observe_hfi ? MFOC_FEEDBACK_HFI_OBSERVE :
+                                                  MFOC_FEEDBACK_HFI_OFF;
+#endif
+    feedback->hfi_mode = feedback->normal_hfi_mode;
+#endif
+#if MFOC_FEEDBACK_ENABLE_FLUX
+    feedback->flux = prepared->flux;
+    feedback->flux_cfg = cfg->flux;
+#endif
+#if MFOC_FEEDBACK_ENABLE_EKF
+    feedback->ekf = prepared->ekf;
+    feedback->ekf_cfg = cfg->ekf;
+#endif
+    feedback->initialized = true;
+}
 
 /** @brief Initialize enabled algorithms without runtime callbacks.
  * @param feedback Instance. @param cfg Settings. @param model Motor data.
@@ -18,35 +71,11 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
     if (feedback == NULL || cfg == NULL || model == NULL) {
         return MFOC_RESULT_NULL;
     }
-    mfoc_feedback_t next = {0};
-#if MFOC_FEEDBACK_ENABLE_SMO
-    mfoc_result_t smo_rc = mfoc_smo_Init(&next.smo, &cfg->smo, model);
-    if (smo_rc != MFOC_RESULT_OK) { return smo_rc; }
-    next.smo_cfg = cfg->smo;
-    next.smo_status = MFOC_RESULT_INVALID_STATE;
-#endif
-#if MFOC_FEEDBACK_ENABLE_HFI
-    mfoc_hfi_Init(&next.hfi);
-#if MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_HFI
-    next.normal_hfi_mode = MFOC_FEEDBACK_HFI_INJECT;
-#else
-    next.normal_hfi_mode = cfg->observe_hfi ? MFOC_FEEDBACK_HFI_OBSERVE :
-                                             MFOC_FEEDBACK_HFI_OFF;
-#endif
-    next.hfi_mode = next.normal_hfi_mode;
-#endif
-#if MFOC_FEEDBACK_ENABLE_FLUX
-    mfoc_result_t flux_rc = mfoc_flux_Init(&next.flux, &cfg->flux, model);
-    if (flux_rc != MFOC_RESULT_OK) { return flux_rc; }
-    next.flux_cfg = cfg->flux;
-#endif
-#if MFOC_FEEDBACK_ENABLE_EKF
-    mfoc_result_t ekf_rc = mfoc_ekf_Init(&next.ekf, &cfg->ekf, model);
-    if (ekf_rc != MFOC_RESULT_OK) { return ekf_rc; }
-    next.ekf_cfg = cfg->ekf;
-#endif
-    next.initialized = true;
-    *feedback = next;
+    mfoc_feedback_prepared_t prepared = {0};
+    mfoc_result_t rc = mfoc_feedback_Prepare(&prepared, cfg, model);
+    if (rc != MFOC_RESULT_OK) { return rc; }
+    memset(feedback, 0, sizeof(*feedback));
+    mfoc_feedback_InitPrepared(feedback, &prepared, cfg);
     return MFOC_RESULT_OK;
 }
 

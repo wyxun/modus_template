@@ -60,6 +60,59 @@ LUT 基础矩阵的 40 组构建覆盖 HFI 和辨识开关。HFI 为主反馈时
 
 用 STM32G431 工程入口重新构建默认 Flux `BUILD=release` 固件。FLOAT 的 `.bin` 为 25,836 B，FIXED 为 27,760 B，两份均与修改前逐字节相同。实际栈峰值与 PWM 截止余量按 P10 的板上方案验收。
 
+## V1 初始化栈复测（2026-11-23）
+
+以 `cf50772` 为对照，使用 Embedded LLVM 19.1.5、`-O2`、LUT 和
+相同的 POS 主反馈回放。全开构建编入该数值格式支持的全部观测器、
+辨识和模型更新，初始化同时配置速度 PI 和 OpenLoop。Motor 和
+Feedback 在 Port 就绪后才写入新实例，算法系数只计算一次。主机
+FLOAT、FIXED 用例覆盖后序观测器拒绝、OpenLoop 拒绝、Port Init
+最后失败及 Port 时钟不可用，失败时保留原 Motor 的每个字节。
+
+| 构建 | Init 局部栈，改前 → 改后 | Init 含子调用峰值，改前 → 改后 |
+| --- | ---: | ---: |
+| Cortex-M0 FIXED 全开 | 968 → 400 B | 1544 → 816 B |
+| Cortex-M4F FLOAT 全开 | 1208 → 584 B | 1784 → 904 B |
+| Cortex-M4F FIXED 全开 | 952 → 384 B | 1448 → 768 B |
+
+局部栈取编译器 `.su`，含子调用的峰值取链接 ELF 在 Unicorn 中
+从 `mfoc_motor_Init` 入口至返回的最大 SP 落差，使用可完成校准和
+采样的 Port 模板钩子。G431 Flux 的 `-Os` 对照中，Init 局部栈
+为 FLOAT 520 → 272 B，FIXED 528 → 280 B。三个全开构建和两个
+G431 Flux 构建的 `mfoc_motor_Step`、`mfoc_feedback_Step` 指令
+和重定位逐项一致。
+
+辨识的新 Motor 入口在前台保存终态和已有结果。开桥失败时释放辨识
+占用并恢复结果，Motor 仍保留 PWM 故障。用同一静止 Port 回放两次
+调用启动和新入口，计数包括子调用。新入口数字依次为无旧结果、有
+旧结果时的指令数。
+
+| 构建 | 原启动指令 | 新启动指令 | 含子调用峰值，改前 → 改后 |
+| --- | ---: | ---: | ---: |
+| Cortex-M0 FIXED 全开 | 415 | 452 / 468 | 120 → 192 B |
+| Cortex-M4F FLOAT 全开 | 216 | 246 / 250 | 104 → 152 B |
+| Cortex-M4F FIXED 全开 | 207 | 237 / 241 | 104 → 152 B |
+
+这笔开销发生在空闲 Motor 的前台启动。回放不含目标板开桥握手的
+实际等待。主机用例另外核对了开桥失败后的恢复，以及算完但自动关桥
+失败时仍能读取结果。
+
+在仓库根目录执行。将 `$arm` 设为检查脚本最后打印的 ARM 产物目录。
+用 `FIXED-all-observers.elf --core m0` 或
+`M4F-FIXED.elf --core m4` 替换 ELF 及核心参数即可测其余全开组合。
+
+```powershell
+./mfoc/tests/scripts/check_arm.ps1 -MeasureIdentificationStart
+uv run --with unicorn --with pyelftools python mfoc/tests/arm/motor_stack_replay.py `
+    "$arm/FLOAT.elf" --core m4 --function mfoc_motor_Init `
+    --function start_identification_legacy --function start_identification_motor
+```
+
+复查旧基线时，把同一份 `mfoc/tests/arm/link_smoke.c` 放进
+`cf50772` 的源码副本，使用基线的 ARM 检查脚本构建 ELF，并运行
+上面的回放，只传 `--function mfoc_motor_Init`。基线脚本未登记
+HFI 所用的两个整数辅助符号，四种 ELF 在该符号检查之前已生成。
+
 ## 验收边界
 
 - HFI 和 Motor 辨识仍使用编译期 profile。同一个程序中的启动、SMO、Flux、EKF 可按实例配置。旋转辨识的跨基值回放使用分别匹配各套基值的构建。

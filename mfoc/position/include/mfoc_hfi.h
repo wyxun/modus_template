@@ -22,42 +22,75 @@
 #define MFOC_HFI_VOLTAGE_PU 0.04f
 #endif
 #define MFOC_HFI_VOLTAGE MFOC_SCALAR(MFOC_HFI_VOLTAGE_PU)
+#ifndef MFOC_HFI_RESPONSE_MIN
 #define MFOC_HFI_RESPONSE_MIN MFOC_SCALAR(0.002f)
+#endif
+#ifndef MFOC_HFI_SALIENCY_MIN
 #define MFOC_HFI_SALIENCY_MIN MFOC_SCALAR(0.04f)
+#endif
 /* +1 for Ld < Lq, -1 for Ld > Lq; must match measured HF saliency. */
+#ifndef MFOC_HFI_SALIENCY_SIGN
 #define MFOC_HFI_SALIENCY_SIGN 1
+#endif
 /* Per completed carrier group; retained during the two-interval experiment.
  * Tracker corrections run at MFOC_HFI_SAMPLE_HZ / CARRIER_SAMPLES; a group
  * takes CARRIER_SAMPLES control periods, so retune after a rate change. */
+#ifndef MFOC_HFI_PLL_KP
 #define MFOC_HFI_PLL_KP MFOC_SCALAR(0.05f)
+#endif
+#ifndef MFOC_HFI_PLL_KI
 #define MFOC_HFI_PLL_KI MFOC_SCALAR(0.02f)
+#endif
+#ifndef MFOC_HFI_SPEED_MAX
 #define MFOC_HFI_SPEED_MAX MFOC_SCALAR(0.05f)
+#endif
+#ifndef MFOC_HFI_LOCK_ERROR
 #define MFOC_HFI_LOCK_ERROR MFOC_SCALAR(0.01f) /* Electrical turns. */
+#endif
+#ifndef MFOC_HFI_LOCK_CYCLES
 #define MFOC_HFI_LOCK_CYCLES 64U
+#endif
+#ifndef MFOC_HFI_STARTUP_MS
 #define MFOC_HFI_STARTUP_MS 500U
-
-/* 0 skips polarity pulses: valid then means axis lock only, with an unresolved
- * half-turn ambiguity. 1 requires magnetic polarity identification as well. */
-#ifndef MFOC_HFI_ENABLE_POLARITY
-#define MFOC_HFI_ENABLE_POLARITY 0
 #endif
 
+/* With polarity disabled, a valid result still has half-turn ambiguity. */
 #if MFOC_HFI_ENABLE_POLARITY
 /* At rest, compare equal-duration opposite d-axis pulses after current decay.
  * +d normally reinforces magnet flux, reduces Ld and gives a larger response.
  * Set SIGN=-1 only if the measured saturation characteristic is reversed.
  * Pulse current limit must be below the Motor/board limit. No amplitude ramp
  * or automatic retry: insufficient saturation leaves the estimate invalid. */
+#ifndef MFOC_HFI_POLARITY_VOLTAGE
 #define MFOC_HFI_POLARITY_VOLTAGE MFOC_SCALAR(0.10f)
+#endif
+#ifndef MFOC_HFI_POLARITY_SAMPLES
 #define MFOC_HFI_POLARITY_SAMPLES 4U
+#endif
+#ifndef MFOC_HFI_POLARITY_PAIRS
 #define MFOC_HFI_POLARITY_PAIRS 3U
+#endif
+#ifndef MFOC_HFI_POLARITY_SIGN
 #define MFOC_HFI_POLARITY_SIGN 1
+#endif
+#ifndef MFOC_HFI_POLARITY_CONTRAST
 #define MFOC_HFI_POLARITY_CONTRAST MFOC_SCALAR(0.05f)
+#endif
+#ifndef MFOC_HFI_POLARITY_CURRENT_MAX
 #define MFOC_HFI_POLARITY_CURRENT_MAX MFOC_SCALAR(0.10f)
+#endif
+#ifndef MFOC_HFI_REST_CURRENT
 #define MFOC_HFI_REST_CURRENT MFOC_SCALAR(0.003f)
+#endif
+#ifndef MFOC_HFI_REST_VOLTAGE
 #define MFOC_HFI_REST_VOLTAGE MFOC_SCALAR(0.01f)
+#endif
+#ifndef MFOC_HFI_REST_MS
 #define MFOC_HFI_REST_MS 3U
+#endif
+#ifndef MFOC_HFI_REST_SPEED
 #define MFOC_HFI_REST_SPEED MFOC_SCALAR(0.0005f)
+#endif
 #endif
 
 /** @brief ISR-owned injection sequence; failure is latched until Init. */

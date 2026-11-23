@@ -47,6 +47,37 @@ static void expect_rejection(mfoc_motor_t *motor,
     assert(memcmp(port, &motor_port_fake, sizeof(port)) == 0);
 }
 
+/* An earlier observer may have prepared state before a later one rejects. */
+static void check_init_rollback(mfoc_motor_t *motor,
+                                 const mfoc_motor_cfg_t *cfg)
+{
+    unsigned char saved[sizeof(*motor)];
+    memcpy(saved, motor, sizeof(saved));
+    mfoc_motor_cfg_t bad = *cfg;
+#if MFOC_FEEDBACK_ENABLE_EKF
+    bad.feedback.ekf.r[2] = 0.0f;
+#else
+    bad.feedback.flux.gain = MFOC_ZERO;
+#endif
+    const unsigned port_inits = motor_port_fake.port_inits;
+    assert(mfoc_motor_Init(motor, &bad) == MFOC_RESULT_INVALID_ARGUMENT);
+    assert(port_inits == motor_port_fake.port_inits);
+    assert(memcmp(saved, motor, sizeof(saved)) == 0);
+
+    bad = *cfg;
+    bad.openloop.sample_hz = MFOC_MOTOR_RUN_FREQ_HZ;
+    bad.openloop.accel = MFOC_ZERO;
+    assert(mfoc_motor_Init(motor, &bad) == MFOC_RESULT_INVALID_ARGUMENT);
+    assert(port_inits == motor_port_fake.port_inits);
+    assert(memcmp(saved, motor, sizeof(saved)) == 0);
+
+    motor_port_fake.port_init = MFOC_RESULT_IO;
+    assert(mfoc_motor_Init(motor, cfg) == MFOC_RESULT_IO);
+    assert(port_inits + 1U == motor_port_fake.port_inits);
+    assert(memcmp(saved, motor, sizeof(saved)) == 0);
+    motor_port_fake.port_init = MFOC_RESULT_OK;
+}
+
 static void check_incompatible_models(mfoc_motor_t *motor,
                                       const mfoc_motor_params_t *model)
 {
@@ -190,6 +221,7 @@ int main(void)
     expect_rejection(&motor, &model, MFOC_RESULT_INVALID_STATE);
     assert(mfoc_motor_Stop(&motor) == MFOC_RESULT_OK);
     check_incompatible_models(&motor, &model);
+    check_init_rollback(&motor, &cfg);
 
     cfg.params = model;
     assert(mfoc_motor_Init(&reference, &cfg) == MFOC_RESULT_OK);

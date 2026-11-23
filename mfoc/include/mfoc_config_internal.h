@@ -17,6 +17,14 @@
 #define MFOC_FEEDBACK_FLUX 4
 #define MFOC_FEEDBACK_EKF 5
 
+/* Stable values for the target's trigonometric binding. */
+#define MFOC_TRIG_BACKEND_LIBM 0
+#define MFOC_TRIG_BACKEND_LUT 1
+#define MFOC_TRIG_BACKEND_EXTERNAL 2
+#ifndef MFOC_TRIG_BACKEND
+#define MFOC_TRIG_BACKEND MFOC_TRIG_BACKEND_LUT
+#endif
+
 /* Preserve the former encoder-specific names for existing projects. */
 #define MFOC_FEEDBACK_ENCODER MFOC_FEEDBACK_POSITION
 #ifndef MFOC_FEEDBACK_ENABLE_POSITION
@@ -68,11 +76,6 @@
 #define MFOC_SPEED_LOOP_DIVIDER \
     (MFOC_MOTOR_RUN_FREQ_HZ / MFOC_SPEED_RUN_FREQ_HZ)
 #define MFOC_SPEED_RUN_PERIOD_US (1000000U / MFOC_SPEED_RUN_FREQ_HZ)
-#endif
-
-/* The diagnostic budget defaults to one control period in perfc ticks. */
-#ifndef MFOC_ISR_BUDGET_TICKS
-#define MFOC_ISR_BUDGET_TICKS (MFOC_PERFC_HZ / MFOC_MOTOR_RUN_FREQ_HZ)
 #endif
 
 #endif

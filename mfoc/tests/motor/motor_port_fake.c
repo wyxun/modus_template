@@ -5,6 +5,7 @@
  * @date 2026-10-20
  */
 #include "mfoc_port.h"
+#include "../../motor/src/mfoc_feedback_internal.h"
 #include "motor_port_fake.h"
 #include <assert.h>
 #include <stddef.h>
@@ -53,7 +54,10 @@ mfoc_result_t mfoc_port_current(mfoc_uvw_t *current)
 mfoc_tick_t mfoc_port_tick(void) { return motor_port_fake.time_ms; }
 
 /** @brief Give the injected clock scale. @return Ticks per second. */
-uint32_t mfoc_port_tick_frequency(void) { return 1000U; }
+uint32_t mfoc_port_tick_frequency(void)
+{
+    return motor_port_fake.clock_unavailable ? 0U : 1000U;
+}
 
 #if MFOC_FEEDBACK_ENABLE_POSITION
 /** @brief Record foreground position refresh. @return Injected result. */
@@ -91,16 +95,17 @@ mfoc_result_t mfoc_port_position_calibrate_zero(mfoc_angle_t angle)
 
 #if !defined(MFOC_TEST_REAL_FEEDBACK)
 /** @brief Initialize the test-only feedback service.
- * @param feedback Instance. @param cfg Captured settings.
+ * @param prepared Unused scratch. @param cfg Captured settings.
  * @param model Motor constants. @return OK, or INVALID_ARGUMENT for a model
  * the real Feedback would refuse through its enabled observers.
  * @note Motor delegates model validation to Feedback, so this fake repeats the
  * same acceptance checks; otherwise motor parameter cases stop being covered. */
-mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
+mfoc_result_t mfoc_feedback_Prepare(mfoc_feedback_prepared_t *prepared,
     const mfoc_feedback_cfg_t *cfg, const mfoc_motor_params_t *model)
 {
+    (void)prepared;
     motor_port_fake.feedback_cfg = *cfg;
-    if (feedback == NULL || model == NULL ||
+    if (model == NULL ||
         model->pole_pairs == 0U ||
         !mfoc_scalar_is_finite(model->rs) || model->rs <= MFOC_ZERO ||
         !mfoc_scalar_is_finite(model->ld) || model->ld <= MFOC_ZERO ||
@@ -109,8 +114,15 @@ mfoc_result_t mfoc_feedback_Init(mfoc_feedback_t *feedback,
         !mfoc_scalar_is_finite(model->inertia) || model->inertia < MFOC_ZERO) {
         return MFOC_RESULT_INVALID_ARGUMENT;
     }
-    feedback->initialized = true;
     return MFOC_RESULT_OK;
+}
+
+void mfoc_feedback_InitPrepared(mfoc_feedback_t *feedback,
+    const mfoc_feedback_prepared_t *prepared, const mfoc_feedback_cfg_t *cfg)
+{
+    (void)prepared;
+    (void)cfg;
+    feedback->initialized = true;
 }
 
 /** @brief Reset HFI state before the Motor's normal startup.

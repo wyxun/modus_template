@@ -411,20 +411,8 @@ static void _mfoc_app_CmdMotor(const char *args)
             return;
         }
         if (!mshell_AtEnd(cursor)) { MLOGF(W, "invalid arguments\r\n"); return; }
-        mfoc_motor_t *motor = &tMfocApp.motor;
-        mfoc_result_t rc = MFOC_RESULT_INVALID_STATE;
-        __IRQ_SAFE {
-            if (motor->state == MFOC_MOTOR_IDLE && motor->faults == 0U) {
-                rc = mfoc_identification_Start(&motor->identification,
-                    &motor->params, op, mfoc_core_GetBus(&motor->core));
-            }
-        }
-        if (rc == MFOC_RESULT_OK) {
-            rc = mfoc_motor_Start(motor);
-            if (rc != MFOC_RESULT_OK) {
-                __IRQ_SAFE { mfoc_identification_Stop(&motor->identification); }
-            }
-        }
+        mfoc_result_t rc = mfoc_motor_StartIdentification(&tMfocApp.motor,
+                                                          op);
         tMfocApp.result = rc;
         MLOGF(I, "motor identify result=%d\r\n", (int)rc);
         return;

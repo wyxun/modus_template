@@ -37,6 +37,11 @@
 #define MFOC_FEEDBACK_ENABLE_EKF 0
 #endif
 
+/* 0 locks the axis only, 1 requires magnetic polarity identification. */
+#ifndef MFOC_HFI_ENABLE_POLARITY
+#define MFOC_HFI_ENABLE_POLARITY 0
+#endif
+
 /* Include the experiment workspace in Motor only when enabled. */
 #ifndef MFOC_IDENTIFICATION_ENABLE
 #define MFOC_IDENTIFICATION_ENABLE 0
@@ -45,11 +50,6 @@
 /* Enable the foreground API for replacing an idle Motor's PU parameters. */
 #ifndef MFOC_MOTOR_MODEL_UPDATE_ENABLE
 #define MFOC_MOTOR_MODEL_UPDATE_ENABLE 0
-#endif
-
-/* Enable ISR timing counters and reports in builds that need them. */
-#ifndef MFOC_ISR_MEASURE
-#define MFOC_ISR_MEASURE 0
 #endif
 
 #include "include/mfoc_config_internal.h"
