@@ -5,6 +5,7 @@
  * @date 2026-10-25
  */
 #include "mfoc_identification_algorithms.h"
+#include "mfoc_motor_config_internal.h"
 #include <stddef.h>
 
 #define RS_SETTLE (MFOC_IDENTIFICATION_SAMPLE_HZ *                              \

@@ -7,6 +7,11 @@
 #ifndef MFOC_CONFIG_H
 #define MFOC_CONFIG_H
 
+/* Optional tuning header shared by the application and all library sources. */
+#ifdef MFOC_PROJECT_CONFIG
+#include MFOC_PROJECT_CONFIG
+#endif
+
 /* Speed-loop rate in Hz. Set to 0 to disable the default speed mode.
  * A nonzero rate must divide the board's control interrupt rate. */
 #ifndef MFOC_SPEED_RUN_FREQ_HZ

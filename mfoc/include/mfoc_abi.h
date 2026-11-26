@@ -165,8 +165,6 @@ __asm__(".pushsection .rodata.mfoc_abi,\"aGR\",%progbits,mfoc_ref_"
 #define mfoc_pi_Step MFOC_ABI_ENTRY(mfoc_pi_Step)
 #define mfoc_core_Init MFOC_ABI_ENTRY(mfoc_core_Init)
 #define mfoc_core_PrepareBus MFOC_ABI_ENTRY(mfoc_core_PrepareBus)
-#define mfoc_core_BenchHalfVoltageLimit \
-    MFOC_ABI_ENTRY(mfoc_core_BenchHalfVoltageLimit)
 #define mfoc_core_SetBus MFOC_ABI_ENTRY(mfoc_core_SetBus)
 #define mfoc_core_Reset MFOC_ABI_ENTRY(mfoc_core_Reset)
 #define mfoc_core_Step MFOC_ABI_ENTRY(mfoc_core_Step)

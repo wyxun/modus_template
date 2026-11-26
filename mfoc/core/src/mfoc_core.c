@@ -161,18 +161,6 @@ mfoc_result_t mfoc_core_SetBus(mfoc_core_t *c, mfoc_scalar_t bus)
     return _mfoc_core_PrepareBus(bus, &c->bus_coeff);
 }
 
-#if MFOC_P10_LIMIT
-void mfoc_core_BenchHalfVoltageLimit(mfoc_core_t *c,
-                                    mfoc_core_bus_coeff_t *saved)
-{
-    *saved = c->bus_coeff;
-#if defined(MFOC_NUMERIC_FLOAT)
-    c->bus_coeff.u_max_sq *= 0.25f;
-#else
-    c->bus_coeff.u_max /= 2;
-#endif
-}
-#endif
 
 /** @brief Reset both PI integrators.
  * @param c Initialized instance. @return Reset result. */

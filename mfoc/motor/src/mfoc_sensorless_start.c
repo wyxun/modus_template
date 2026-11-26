@@ -1,7 +1,7 @@
 /** @file mfoc_sensorless_start.c
  * @brief Forced ramp and sensorless acquisition control. */
 #include "mfoc_sensorless_start.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_sensorless_start_config.h"
 
 /** @brief Precompute timing and current adaptation coefficients. */
 void mfoc_sensorless_start_Init(mfoc_sensorless_start_t *s, uint32_t fs)

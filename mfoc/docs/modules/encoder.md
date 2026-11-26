@@ -14,7 +14,7 @@ Encoder 把带时间戳的单圈机械角换算为本控制拍的电角度和电
 
 ## 从一次采样到控制拍
 
-1. **初始化。** 应用调用 `mfoc_motor_Init()`。G431 Port 用 Motor 的极对数、电速度基值和板级时钟频率初始化 Encoder。板级配置给出机械方向、初始电零位、测速滤波系数及超时。实例覆盖前台采样与控制中断的整个使用期。[G431 Port](../../../peripheral/stm32g431/mfoc/mfoc_port.c)
+1. **初始化。** 应用调用 `mfoc_motor_Init()`。G431 Port 用 Motor 的极对数、电速度基值和板级时钟频率初始化 Encoder。板级配置给出机械方向、初始电零位、测速滤波系数及超时。实例覆盖前台采样与控制中断的整个使用期。[G431 Port](../../port/projects/g431_2804/board/mfoc_port.c)
 2. **前台采样。** `mfoc_motor_Run()` 调用 `mfoc_port_position_run()`。G431 距上次轮询满 1 ms 后读取 AS5600，把机械角和读取完成时的 64 位 tick 交给 `mfoc_encoder_Update()`。Encoder 用相邻样本的最短角差和实际时间差测速，以系数 0.25 滤波，发布机械角、速度和采样时刻。相邻有效读数之间的转动须小于半个机械周，才能由单圈角判明方向。[Encoder 实现](../../position/src/mfoc_encoder.c)
 3. **控制中断。** 需要反馈时，`mfoc_feedback_Step()` 调用 `mfoc_port_position(&angle, &speed)`。Port 把当前 tick 传给同一实例的 `mfoc_encoder_Step()`。Step 从已发布的样本按滤波速度外推到当前拍，乘极对数、减电零位，给出电角度，并返回已算好的 PU 速度。选中 POSITION 时，两者直接成为 `mfoc_feedback_output_t.angle` 和 `speed`。例如默认 20 kHz 电流环下，相隔 1 ms 的两次读数之间，每个需要反馈的控制拍都能得到对应时刻的角度。[Feedback 实现](../../motor/src/mfoc_feedback.c)
 

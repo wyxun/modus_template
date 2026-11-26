@@ -13,6 +13,7 @@
 #include "perf_counter.h"
 #include "mdebug_cm.h"
 #include "mdi/instance.h"
+#include "mfoc_safety.h"
 
 extern void modus_Clock(void);
 
@@ -32,6 +33,7 @@ void PendSV_Handler(void)           {}
 
 void SysTick_Handler(void)
 {
+    mfoc_at32_safety_Tick();
     perfc_port_insert_to_system_timer_insert_ovf_handler();
     modus_Clock();
 }

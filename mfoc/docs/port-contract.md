@@ -1,6 +1,6 @@
 # MFOC 硬件接口移植指南
 
-本文给板级移植者使用。MFOC 发布公共 Port 头和一份移植模板，每个功率板提供自己的实现。G431 的实现依赖这块板的 ADC、PWM、I2C 与时钟，随目标工程编译。接口语义见 [mfoc_port.h](../port/include/mfoc_port.h)，可对照 [G431 实现](../../peripheral/stm32g431/mfoc/mfoc_port.c)。
+本文给板级移植者使用。MFOC 发布公共 Port 头和一份移植模板，每个功率板提供自己的实现。G431 的实现依赖这块板的 ADC、PWM、I2C 与时钟，随目标工程编译。接口语义见 [mfoc_port.h](../port/include/mfoc_port.h)，可对照 [G431 实现](../port/projects/g431_2804/board/mfoc_port.c)。
 
 ## 新板从哪里开始
 
@@ -9,6 +9,21 @@
 3. 启用物理位置时，按第 4 节框图选一路位置源，再照第 5 节的接线表和示例填写模板。编码器输入机械角，霍尔输入三位电平和边沿捕获时刻。两者向 Feedback 提供相同单位的电角度和速度。
 4. 将库源文件和**本板的一份 Port 实现**加入同一构建。仓库的 `mfoc.mk` 提供库源清单，G431 在 `MFOC_TARGET_SOURCES` 中单独指定自己的 `mfoc_port.c` 和中断入口。可复制的模板留作源文件样例。见 [G431 目标配置](../../target/stm32g431/target.mk)。
 5. 板级先准备时钟、采样触发，保持相输出关闭，再由应用调用 `mfoc_motor_Init()`。在前台调用 `mfoc_motor_Run()`，在每次电流帧完成后的控制中断调用 `mfoc_motor_Step()`。台架核对采样点、PWM 更新点及有效输出的先后关系。
+
+### 主工程共用的 ADC 控制中断
+
+`port/modus/mfoc_motor_irq.c` 实现两块板共用的电流帧处理流程。
+板的 `mfoc_motor_irq_binding.h` 在编译期提供中断向量、Motor 实例、
+帧就绪、帧开始及帧应答。更换电机时，由项目选择电机与反馈配置。
+新增主控时，为该板提供 Port 和这些绑定，并在该目标上核对 IRQ
+优先级、帧应答和 PWM 截止点。
+
+这份 IRQ 源码服务于本仓库的 MODUS 应用，连接应用的波形、时钟与
+母线更新。独立集成按自己的中断控制器处理采样与应答，在完整帧
+上调用同一个 `mfoc_motor_Step()`。
+[共用流程](../port/modus/mfoc_motor_irq.c) ·
+[G431 绑定](../port/projects/g431_2804/board/mfoc_motor_irq_binding.h) ·
+[AT32F413 绑定](../port/projects/f413_5562/board/mfoc_motor_irq_binding.h)
 
 ## 1. 边界与对象归属
 
@@ -54,7 +69,7 @@ Encoder 和 Hall 算法由库提供，目标适配持有选用的组件实例，
 
 Motor 软件故障清除与板级锁存确认分别生效。
 
-**PWM 生效区间。** G431 默认在下一次 TIM1 顶部自然更新事件统一装载三相预装载值。目标为应用和库共同定义 `MFOC_PWM_PRELOAD_DELAY=1`。第 `k` 拍提交的 duty 驱动 `[k+1,k+2)`，Port 在晚写、采样跳拍或门控失效时返回错误，由 Motor 关桥。开桥前先确认初始 duty 已转移。AT32F413 和默认 Port 模板沿用现有生效约定，提交值用于 `[k,k+1)`。
+**PWM 生效区间。** G431 默认在下一次 TIM1 顶部自然更新事件统一装载三相预装载值。目标为应用和库共同定义 `MFOC_PWM_PRELOAD_DELAY=1`。第 `k` 拍提交的 duty 驱动 `[k+1,k+2)`，Port 在晚写、采样跳拍或门控失效时返回错误，由 Motor 关桥。开桥前先确认初始 duty 已转移。AT32F413 现有顶部更新移植候选也使用延迟模型，但尚未实现每拍写入截止检查，需完成时序验收后才能声称满足该契约；默认 Port 模板沿用提交值用于 `[k,k+1)` 的约定。
 
 `electrical_speed_base_hz` 是电气周波每秒，`omega_base = 2*pi*electrical_speed_base_hz`；用电气 Hz 相除与角速度相除得到相同 PU。BAM32 用整个 `uint32_t` 表示一电气周，按无符号模运算回绕。FLOAT/FIXED 共用接口；`mfoc_scalar_t` 分别使用 float 和库定义的 Q15 缩放有符号存储。
 

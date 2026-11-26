@@ -5,8 +5,9 @@ $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-pu-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 Write-Output "PU test artifacts: $output"
 
-$modules = @('math', 'control', 'core', 'motor', 'port', 'position')
-$includes = @("-I$library", "-I$library/include") + @($modules | ForEach-Object {
+$modules = @('math', 'control', 'core', 'motor', 'position')
+$includes = @("-I$library", "-I$library/include",
+    "-I$library/port/include") + @($modules | ForEach-Object {
     "-I$library/$_/include"
 })
 $sources = @(Get-ChildItem -File ($modules | ForEach-Object {

@@ -24,12 +24,7 @@
 #include "stm32g4xx_hal.h"
 #include "stm32g4xx_ll_tim.h"
 #include "stm32g4xx_ll_bus.h"
-#if MFOC_P10_TIMING
-#include "mfoc_p10_timing.h"
-#endif
-#if MFOC_G431_PWM_PHASE
-#include "mfoc/mfoc_pwm_phase.h"
-#endif
+#include "mfoc_pwm_phase.h"
 
 /* Timer clock, then a center-aligned period that follows the MFOC control
  * rate: PWM rate == ADC trigger rate == current-loop rate.
@@ -62,11 +57,7 @@ void haltim1_Init(void)
     tim_init.CounterMode       = LL_TIM_COUNTERMODE_CENTER_DOWN;
     tim_init.Autoreload        = TIM1_PERIOD;
     tim_init.ClockDivision     = LL_TIM_CLOCKDIVISION_DIV2;
-#if MFOC_G431_PWM_PHASE == 2
     tim_init.RepetitionCounter = 0; /* LL_TIM_Init issues the first UG. */
-#else
-    tim_init.RepetitionCounter = 1;
-#endif
     LL_TIM_Init(TIM1, &tim_init);
     LL_TIM_DisableARRPreload(TIM1);
 
@@ -87,11 +78,9 @@ void haltim1_Init(void)
     LL_TIM_OC_DisableFast(TIM1, LL_TIM_CHANNEL_CH2);
     LL_TIM_OC_Init(TIM1, LL_TIM_CHANNEL_CH3, &oc);
     LL_TIM_OC_DisableFast(TIM1, LL_TIM_CHANNEL_CH3);
-#if MFOC_G431_PWM_PHASE
     LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH1);
     LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH2);
     LL_TIM_OC_EnablePreload(TIM1, LL_TIM_CHANNEL_CH3);
-#endif
 
     /* CH4: PWM2 with compare = PERIOD - HTMIN (trigger before PWM center) */
     oc.OCMode       = LL_TIM_OCMODE_PWM2;
@@ -100,11 +89,7 @@ void haltim1_Init(void)
     LL_TIM_OC_DisableFast(TIM1, LL_TIM_CHANNEL_CH4);
 
     /* Both ADCs select TIM1_CC4 directly. TIM2 captures UEV from TRGO. */
-#if MFOC_G431_PWM_PHASE
     LL_TIM_SetTriggerOutput(TIM1, LL_TIM_TRGO_UPDATE);
-#else
-    LL_TIM_SetTriggerOutput(TIM1, LL_TIM_TRGO_OC4REF);
-#endif
     LL_TIM_SetTriggerOutput2(TIM1, LL_TIM_TRGO2_RESET);
 
     /* ---- Break inputs from COMP1/2/4 (overcurrent protection) ---- */
@@ -172,15 +157,7 @@ void haltim1_Init(void)
     HAL_NVIC_SetPriority(TIM1_BRK_TIM15_IRQn, 2, 0);
 
     /* Start counter (phase outputs disabled until MDI_PWM_Enable) */
-#if MFOC_G431_PWM_PHASE
     mfoc_g431_pwm_StartCounter();
-#else
-    LL_TIM_GenerateEvent_UPDATE(TIM1);
-    LL_TIM_EnableCounter(TIM1);
-#endif
-#if MFOC_P10_TIMING
-    mfoc_p10_Init();
-#endif
 }
 
 void haltim1_EnableISR(void)

@@ -1,3 +1,4 @@
 {
-    "workbench.colorTheme": "Solarized Light"
+    "workbench.colorTheme": "Solarized Light",
+    "cmake.sourceDirectory": "E:/Project/modus_template/vendor/cortex-m/AT32F403A_407_Firmware_Library/libraries/cmsis/dsp/Source"
 }

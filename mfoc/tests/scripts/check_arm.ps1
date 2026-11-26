@@ -159,7 +159,9 @@ $portIncludes = @('mfoc', 'mfoc/include', 'mfoc/math/include',
     'modus/src/utilities', 'peripheral/stm32g431',
     'vendor/cortex-m/cmsis_device_g4/Include', 'vendor/cortex-m/cmsis_core') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
-$irqIncludes = @('target/stm32g431', 'mfoc/core/include', 'mfoc/motor/include',
+$g431Board = 'mfoc/port/projects/g431_2804/board'
+$irqIncludes = @('target/stm32g431', $g431Board,
+    'mfoc/core/include', 'mfoc/motor/include',
     'mfoc/position/include', 'mfoc/identification/include',
     'class', 'modus/src/mdebug', 'modus/lib/plooc') |
     ForEach-Object { "-I$(Join-Path $repo $_)" }
@@ -169,7 +171,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         -mfloat-abi=hard -mfpu=fpv4-sp-d16 -std=gnu11 -O2 -ffp-contract=off `
         -Wall -Wextra -Werror "-DMFOC_NUMERIC_$numeric=1" `
         -DMFOC_APP_ENABLED=1 -D__NO_USE_LOG__ @portIncludes `
-        -c (Join-Path $repo 'peripheral/stm32g431/mfoc/mfoc_port.c') -o $object
+        -c (Join-Path $repo "$g431Board/mfoc_port.c") -o $object
     if ($LASTEXITCODE -ne 0) { throw "MDI port ARM build failed: $numeric" }
     Write-Output "$numeric MDI port / G431 object compilation passed"
     $irqObject = Join-Path $output "$numeric-mfoc_motor_irq_g431.o"
@@ -178,7 +180,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         -Wall -Wextra -Werror "-DMFOC_NUMERIC_$numeric=1" `
         -D__COMPILER_HAS_GNU_EXTENSIONS__=1 `
         @portIncludes @irqIncludes `
-        -c (Join-Path $repo 'target/stm32g431/mfoc_motor_irq.c') -o $irqObject
+        -c (Join-Path $repo 'mfoc/port/modus/mfoc_motor_irq.c') -o $irqObject
     if ($LASTEXITCODE -ne 0) { throw "Motor IRQ ARM build failed: $numeric" }
     $symbols = @(& $nm --defined-only $irqObject)
     if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect Motor IRQ symbols' }

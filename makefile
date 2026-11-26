@@ -37,6 +37,15 @@ TARGET = template
 TARGET_CHIP ?= stm32g431
 CLASS_SOURCES = class/template_class.c template_driver.c
 
+MFOC_DEFAULT_PROJECT_stm32g431 := g431_2804
+MFOC_DEFAULT_PROJECT_at32f413 := f413_5562
+MFOC_SELECTED_PROJECT := $(or $(strip $(MFOC_PROJECT)),$(MFOC_DEFAULT_PROJECT_$(TARGET_CHIP)))
+ifneq ($(MFOC_SELECTED_PROJECT),)
+MFOC_PROJECT_DIR := mfoc/port/projects/$(MFOC_SELECTED_PROJECT)
+MFOC_PROJECT_BOARD := $(MFOC_PROJECT_DIR)/board
+MFOC_PROJECT_MK := $(MFOC_PROJECT_DIR)/project.mk
+include $(MFOC_PROJECT_MK)
+endif
 include target/$(TARGET_CHIP)/target.mk
 
 # P12 comparison build. The production choice follows the overlap measurements.
@@ -305,7 +314,8 @@ endif
 # Triggers recompile whenever target, flags, backend, or motor profile changes.
 # ------------------------------------------------------------------------------
 BUILD_CONFIG_SIGNATURE = target_$(TARGET_CHIP)-build_$(BUILD)-num_$(MFOC_NUMERIC)\
-                        -mod_$(MODUS_ENABLE)$(TARGET_CONFIG_SIGNATURE)
+                        -mod_$(MODUS_ENABLE)-project_$(MFOC_SELECTED_PROJECT)\
+                        $(TARGET_CONFIG_SIGNATURE)$(MFOC_PROJECT_CONFIG_SIGNATURE)
 ifneq ($(strip $(MFOC_O2_OBJECT)),)
     BUILD_CONFIG_SIGNATURE += -o2_$(MFOC_O2_OBJECT)
 endif
@@ -334,9 +344,19 @@ else
 endif
 
 $(OBJECTS): $(CONFIG_STAMP) makefile target/$(TARGET_CHIP)/target.mk \
-            $(wildcard config.local.mk)
+            $(MFOC_PROJECT_MK) $(wildcard config.local.mk)
 
--include $(OBJECTS:.o=.d)
+# Read dependency files only when their recorded source matches this build.
+# A moved source must rebuild its object even after an interrupted build.
+c_dep = $(BUILD_DIR)/$(notdir $(1:.c=.d))
+c_dep_source = $(abspath $(firstword $(filter %.c,$(subst \,/,$(file <$(call c_dep,$(1)))))))
+C_DEPENDENCIES := $(foreach source,$(C_SOURCES),$(if $(filter $(abspath $(source)),$(call c_dep_source,$(source))),$(call c_dep,$(source))))
+C_OBJECTS = $(addprefix $(BUILD_DIR)/,$(notdir $(C_SOURCES:.c=.o)))
+
+.PHONY: FORCE_C_DEPS
+$(filter-out $(C_DEPENDENCIES:.d=.o),$(C_OBJECTS)): FORCE_C_DEPS
+
+-include $(C_DEPENDENCIES)
 
 $(BUILD_DIR)/%.o: %.c $(CONFIG_STAMP) | $(BUILD_DIR)
 	$(CC) -c $(CFLAGS) -MMD -MP -o $@ $<

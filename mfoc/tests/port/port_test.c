@@ -48,7 +48,7 @@ static const mfoc_port_cfg_t s_cfg = {
     .pole_pairs = 7U,
 };
 
-#include "../../../peripheral/stm32g431/mfoc/mfoc_port.c"
+#include "../../port/projects/g431_2804/board/mfoc_port.c"
 #include "../../../peripheral/stm32g431/mdi/state.c"
 #include "../../../peripheral/stm32g431/mdi/service.c"
 

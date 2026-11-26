@@ -87,7 +87,9 @@ typedef struct {
  * Step runs in one highest-priority, nonreentrant control ISR. There is no
  * library interrupt masking. Live command updates run in that ISR; other
  * foreground mutations are serialized by the application. Stop publishes a
- * nonrunning state before resetting Core; Start publishes RUNNING last. */
+ * nonrunning state before resetting Core. Start publishes RUNNING after Port
+ * success by default. A Port that re-enables the control IRQ during Start
+ * selects MFOC_PORT_IRQ_DURING_START to publish before the Port call. */
 typedef struct {
     mfoc_motor_params_t params;
     mfoc_motor_limits_t limits;

@@ -6,13 +6,12 @@
  */
 #include "mfoc_motor.h"
 #include "mfoc_feedback_internal.h"
-#include "../../include/mfoc_trace_internal.h"
 #if MFOC_IDENTIFICATION_ENABLE
 #include "mfoc_identification_internal.h"
 #endif
 #include "mfoc_port.h"
 #include "mfoc_transform.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_sensorless_start_config.h"
 #include "mfoc_modulation.h"
 #include <stddef.h>
 #include <string.h>
@@ -174,14 +173,23 @@ static mfoc_result_t _mfoc_motor_StartPwm(mfoc_motor_t *motor)
     mfoc_result_t rc = mfoc_core_Reset(&motor->core);
     if (rc == MFOC_RESULT_OK) {
         const mfoc_uvw_t neutral = {MFOC_HALF, MFOC_HALF, MFOC_HALF};
+#if defined(MFOC_PORT_IRQ_DURING_START) && MFOC_PORT_IRQ_DURING_START
+        /* The Port can enable its ADC IRQ before returning. */
+        _mfoc_motor_ResetOutputs(motor);
+        motor->state = MFOC_MOTOR_RUNNING;
+#endif
         rc = mfoc_port_pwm_start(&neutral);
     }
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }
+#if defined(MFOC_PORT_IRQ_DURING_START) && MFOC_PORT_IRQ_DURING_START
+    if (motor->faults != 0U) { return MFOC_RESULT_SAFETY; }
+#else
     /* The first sample can straddle gate enable. Its predecessor is invalid. */
     _mfoc_motor_ResetOutputs(motor);
     motor->state = MFOC_MOTOR_RUNNING;
+#endif
     return MFOC_RESULT_OK;
 }
 
@@ -765,11 +773,8 @@ static mfoc_result_t _mfoc_motor_SelectReference(mfoc_motor_t *motor,
 #endif
     if (motor->mode == MFOC_MOTOR_MODE_SPEED) {
         if (count == 0U) {
-            MFOC_TRACE_BEGIN(SPEED);
             mfoc_pi_Step(&motor->speed, motor->speed_ref, feedback->speed,
                          &motor->speed_iq);
-            MFOC_TRACE_END(SPEED);
-            MFOC_TRACE_EVENT(SPEED_PI);
             count = motor->speed_divider;
         }
         input->ref = (mfoc_dq_t){MFOC_ZERO, motor->speed_iq};
@@ -792,9 +797,7 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
         return MFOC_RESULT_INVALID_STATE;
     }
     mfoc_uvw_t current;
-    MFOC_TRACE_BEGIN(CURRENT);
     mfoc_result_t rc = mfoc_port_current(&current);
-    MFOC_TRACE_END(CURRENT);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_SAMPLE, rc);
     }
@@ -824,10 +827,8 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             .applied_excitation = motor->previous_excitation,
 #endif
         };
-        MFOC_TRACE_BEGIN(IDENTIFICATION);
         frame.control = mfoc_identification_StepFrame(
             &motor->identification, frame, &sample, &request);
-        MFOC_TRACE_END(IDENTIFICATION);
 #if MFOC_PWM_PRELOAD_DELAY
         if (motor->identification.state == MFOC_IDENTIFICATION_ERROR) {
             /* Neutral preload cannot cancel the pulse already in flight. */
@@ -847,9 +848,7 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             core_input.u_inject_ab = (mfoc_ab_t){0};
             core_input.ref = request.i_ref;
             core_input.angle = request.angle;
-            MFOC_TRACE_BEGIN(CORE);
             mfoc_core_Step(&motor->core, &core_input, &output);
-            MFOC_TRACE_END(CORE);
             break;
         }
         }
@@ -865,10 +864,8 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
             mfoc_feedback_output_t feedback = {0};
             mfoc_feedback_input_t feedback_input = {
                 .i_ab_k = &core_input.i, .u_ab_previous = u_ab_previous};
-            MFOC_TRACE_BEGIN(FEEDBACK);
             rc = mfoc_feedback_Step(&motor->feedback, &feedback_input,
                                     &feedback);
-            MFOC_TRACE_END(FEEDBACK);
             core_input.angle = feedback.angle;
             core_input.u_inject_ab = feedback.u_inject_ab;
             rc = _mfoc_motor_SelectReference(motor, &feedback, rc,
@@ -877,13 +874,9 @@ mfoc_result_t mfoc_motor_Step(mfoc_motor_t *motor)
                 return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_FEEDBACK, rc);
             }
         }
-        MFOC_TRACE_BEGIN(CORE);
         mfoc_core_Step(&motor->core, &core_input, &output);
-        MFOC_TRACE_END(CORE);
     }
-    MFOC_TRACE_BEGIN(PWM);
     rc = mfoc_port_pwm(&output.duty);
-    MFOC_TRACE_END(PWM);
     if (rc != MFOC_RESULT_OK) {
         return _mfoc_motor_Fail(motor, MFOC_MOTOR_FAULT_PWM, rc);
     }

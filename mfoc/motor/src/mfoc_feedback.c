@@ -5,7 +5,7 @@
  * @date 2026-10-21
  */
 #include "mfoc_feedback_internal.h"
-#include "../../include/mfoc_trace_internal.h"
+#include "mfoc_motor_config_internal.h"
 #include "mfoc_port.h"
 #include <stddef.h>
 #include <string.h>
@@ -158,9 +158,7 @@ static inline bool _mfoc_feedback_StepHfi(mfoc_feedback_t *feedback,
         feedback->hfi_output = (mfoc_hfi_output_t){0};
         return false;
     }
-    MFOC_TRACE_BEGIN(HFI);
     mfoc_hfi_Step(&feedback->hfi, current, voltage, &feedback->hfi_output);
-    MFOC_TRACE_END(HFI);
     return true;
 }
 #endif
@@ -177,10 +175,8 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #if MFOC_FEEDBACK_ENABLE_POSITION &&                                         \
     (MFOC_FEEDBACK_BACKEND == MFOC_FEEDBACK_POSITION ||                       \
      MFOC_DEBUG_POSITION_WAVEFORM)
-    MFOC_TRACE_BEGIN(POSITION);
     mfoc_result_t position_status = mfoc_port_position(
         &next.angle, &next.speed);
-    MFOC_TRACE_END(POSITION);
     (void)position_status;
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_HFI ||                     \
@@ -190,9 +186,7 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #endif
 #if MFOC_FEEDBACK_ENABLE_SMO
     if (voltage != NULL) {
-        MFOC_TRACE_BEGIN(SMO);
         mfoc_smo_Step(&feedback->smo, current, voltage, &feedback->smo_output);
-        MFOC_TRACE_END(SMO);
         feedback->smo_status = MFOC_RESULT_OK;
     } else {
         mfoc_smo_Reset(&feedback->smo);
@@ -202,10 +196,8 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #endif
 #if MFOC_FEEDBACK_ENABLE_FLUX
     if (voltage != NULL) {
-        MFOC_TRACE_BEGIN(FLUX);
         mfoc_flux_Step(&feedback->flux, current, voltage,
                        &feedback->flux_output);
-        MFOC_TRACE_END(FLUX);
     } else {
         mfoc_flux_Reset(&feedback->flux);
         feedback->flux_output = (mfoc_flux_output_t){0};
@@ -213,9 +205,7 @@ mfoc_result_t mfoc_feedback_Step(mfoc_feedback_t *feedback,
 #endif
 #if MFOC_FEEDBACK_ENABLE_EKF
     if (voltage != NULL) {
-        MFOC_TRACE_BEGIN(EKF);
         mfoc_ekf_Step(&feedback->ekf, current, voltage, &feedback->ekf_output);
-        MFOC_TRACE_END(EKF);
     } else {
         mfoc_ekf_Reset(&feedback->ekf);
         feedback->ekf_output = (mfoc_ekf_output_t){0};

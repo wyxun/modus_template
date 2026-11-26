@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := run
 MFOC_ROOT ?= ../..
+MFOC_MOTOR_CONFIG ?= $(MFOC_ROOT)/port/template/motor_template.h
 include $(MFOC_ROOT)/mfoc.mk
 
 ifeq ($(origin CC),default)

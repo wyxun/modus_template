@@ -28,7 +28,8 @@ endif
 C_DEFS += -DAT32F413_CONTROL_HZ=$(AT32F413_CONTROL_HZ)U \
     -DAT32F413_BOARD_HALL=$(AT32F413_MFOC_HALL) \
     -DMFOC_MOTOR_RUN_FREQ_HZ=AT32F413_CONTROL_HZ \
-    -DMFOC_PERFC_HZ=200000000U -DMFOC_CORE_M_MAX=0.35f
+    -DMFOC_PERFC_HZ=200000000U -DMFOC_CORE_M_MAX=0.35f \
+    -DMFOC_PWM_PRELOAD_DELAY=1 -DMFOC_PORT_IRQ_DURING_START=1
 C_DEFS += -DMFOC_APP_ENABLED=1 -DMFOC_APP_ENCODER_DIAGNOSTIC=0 \
     -DMFOC_USE_PERFC_FSM=1 -DMFOC_TRIG_BACKEND=1
 ifeq ($(AT32F413_MFOC_HALL),1)
@@ -59,7 +60,7 @@ IT_C         = target/at32f413/at32f413_it.c
 
 
 # Chip-specific include paths
-TARGET_INCLUDES = -I$(DRV_INC) -Itarget/at32f413
+TARGET_INCLUDES = -I$(DRV_INC) -Itarget/at32f413 -I$(MFOC_PROJECT_BOARD)
 ifeq ($(AT32F413_MFOC_HALL),1)
     TARGET_INCLUDES += -I"$(AT32F413_HALL_CONFIG_DIR)"
 endif
@@ -144,8 +145,9 @@ CHIP_SOURCES = $(DRV_SOURCES)
 
 include mfoc/mfoc.mk
 # Both ADC vectors use the same compile-time bound Motor IRQ body.
-MFOC_TARGET_SOURCES = target/stm32g431/mfoc_motor_irq.c \
-    peripheral/at32f413/mfoc/mfoc_port.c
+MFOC_TARGET_SOURCES = $(MFOC_ROOT)/port/modus/mfoc_motor_irq.c \
+    $(MFOC_PROJECT_BOARD)/mfoc_port.c \
+    $(MFOC_PROJECT_BOARD)/mfoc_safety.c
 CLASS_SOURCES = class/mfoc_app.c class/mfoc_debug.c
 
 # 启用 MODUS 默认内置的 perf_counter 移植

@@ -183,6 +183,11 @@ mfoc_result_t mfoc_port_pwm_start(const mfoc_uvw_t *initial_duty)
     ++motor_port_fake.enables;
     /* A failed enable may still require shutdown. */
     motor_port_fake.enabled = true;
+    if (motor_port_fake.step_during_enable != NULL) {
+        mfoc_motor_t *motor = motor_port_fake.step_during_enable;
+        motor_port_fake.step_during_enable = NULL;
+        motor_port_fake.step_during_enable_result = mfoc_motor_Step(motor);
+    }
     return motor_port_fake.enable;
 }
 

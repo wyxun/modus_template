@@ -9,6 +9,26 @@
 
 #include <mfoc_motor_config.h>
 
+/* Shared acceptance bounds for stopped model updates and identification. */
+#ifndef MFOC_MOTOR_RS_MIN_PU
+#define MFOC_MOTOR_RS_MIN_PU 0.05f
+#endif
+#ifndef MFOC_MOTOR_RS_MAX_PU
+#define MFOC_MOTOR_RS_MAX_PU 8.0f
+#endif
+#ifndef MFOC_MOTOR_L_MIN_PU
+#define MFOC_MOTOR_L_MIN_PU 0.0001f
+#endif
+#ifndef MFOC_MOTOR_L_MAX_PU
+#define MFOC_MOTOR_L_MAX_PU 16.0f
+#endif
+#ifndef MFOC_MOTOR_FLUX_MAX_PU
+#define MFOC_MOTOR_FLUX_MAX_PU 16.0f
+#endif
+#ifndef MFOC_MOTOR_INERTIA_MAX_PU
+#define MFOC_MOTOR_INERTIA_MAX_PU 1024.0f
+#endif
+
 /* 将电流基值从 mA 换算为 A。 */
 #define MFOC_MOTOR_BASE_CURRENT_AMP                                             \
     ((float)MFOC_MOTOR_BASE_CURRENT_MILLIAMP / 1000.0f)

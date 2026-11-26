@@ -54,13 +54,13 @@ Motor 在 PWM 提交成功后用最终占空比和本拍母线快照重建模型
 两处接线细节：
 
 - 辨识叶子按需要读取 `u_ab_previous`。磁链辨识把这份电压投影到区间中点的 dq 坐标系，见 [`mfoc_identification_algorithms.h`](../identification/include/mfoc_identification_algorithms.h)。
-- G431 的 [中断入口](../../target/stm32g431/mfoc_motor_irq.c) 绑定应用实例与 ADC 帧握手，按配置执行应用波形和耗时统计。库通过 `mfoc_motor_Step()` 提供单拍控制入口。
+- G431 的 [中断入口](../port/modus/mfoc_motor_irq.c) 绑定应用实例与 ADC 帧握手，按配置执行应用波形和耗时统计。库通过 `mfoc_motor_Step()` 提供单拍控制入口。
 
 ## 2. 三条全局约定
 
 ### 2.1 标幺与基值
 
-电机模型和控制量使用 Motor 初始化时约定的标幺基值。G431 的基值取自工程配置。辨识可以更新这套基值上的电机参数。电流基值是**相电流峰值**，Clarke 为幅值不变形式。[G431 默认电机配置](../config/motors/motor_2804.h)
+电机模型和控制量使用 Motor 初始化时约定的标幺基值。G431 的基值取自工程配置。辨识可以更新这套基值上的电机参数。电流基值是**相电流峰值**，Clarke 为幅值不变形式。[G431 默认电机配置](../port/projects/g431_2804/motor_2804.h)
 
 | 量 | 基值 | PU 定义 | 说明 |
 | --- | --- | --- | --- |
@@ -306,7 +306,7 @@ Motor 开 PWM 前把实验电流上限压到本实例的 `i_max` 以内。采样
 | `mfoc_port_pwm_start` | 初始 duty 生效后使能输出 | 启动前台 |
 | `mfoc_port_pwm_stop` | 关相输出，保留采样触发 | 任意 |
 
-板级负责 ADC 触发与 PWM 更新时序、启动时先写比较值再开门、电流极性与 ADC 标度，并保证校零期间无其他帧消费者。电流和母线的板级标度见 [G431 Port 实现](../../peripheral/stm32g431/mfoc/mfoc_port.c)。Port 不替 Motor 决定启动时机，也不清除硬件故障锁存。
+板级负责 ADC 触发与 PWM 更新时序、启动时先写比较值再开门、电流极性与 ADC 标度，并保证校零期间无其他帧消费者。电流和母线的板级标度见 [G431 Port 实现](../port/projects/g431_2804/board/mfoc_port.c)。Port 不替 Motor 决定启动时机，也不清除硬件故障锁存。
 
 ## 7. 角度源仲裁：这一拍用谁的角度
 
@@ -321,7 +321,7 @@ Motor 在每个采样拍按以下顺序选定控制角和最终 dq 电流参考�
 | 5 | HFI 主反馈获取期 | HFI 当前估计角，`(0, 0)`；两个电流 PI 继续运行并叠加载波 | HFI 发布注入请求。速度 PI 与分频冻结 |
 | 6 | 正常闭环（含 HFI 锁定首拍） | 所选主反馈的角；电流模式用 `current_cmd`，速度模式用 `(0, speed_iq)` | 主反馈供控制，速度 PI 仅在分频到期时使用反馈速度 |
 
-ACQUIRE 捕获成功后，Motor 按 `MFOC_START_BLEND_TURNS_S` 将 `forced - observed` 的偏移量逐拍缩至零，随后用 `mfoc_pi_Track` 衔接速度环。速度连续处于窗口内满 `MFOC_START_STABLE_MS` 后，启动状态回到 NONE。[捕获判据与超时处置](modules/feedback.md#handover) · [默认接管参数](../config/motors/motor_2804.h)
+ACQUIRE 捕获成功后，Motor 按 `MFOC_START_BLEND_TURNS_S` 将 `forced - observed` 的偏移量逐拍缩至零，随后用 `mfoc_pi_Track` 衔接速度环。速度连续处于窗口内满 `MFOC_START_STABLE_MS` 后，启动状态回到 NONE。[捕获判据与超时处置](modules/feedback.md#handover) · [默认接管参数](../motor/include/mfoc_sensorless_start_config.h)
 
 后续接入 MTPA 或弱磁时，参考生成放在 Motor 正常闭环选定电流命令或速度 PI 的 Iq 之后、向 Core 交付 `core_input.ref` 之前。在这里组合 Id 与 Iq 并施加电流约束。外部命令保存在 `current_cmd`，启动、获取和辨识各自使用表中的参考。[编码器与 SMO 的使用方](modules/feedback.md#feedback-consumers)
 

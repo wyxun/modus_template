@@ -7,7 +7,13 @@
 #ifndef MFOC_CONFIG_INTERNAL_H
 #define MFOC_CONFIG_INTERNAL_H
 
-#include "../config/board_template.h"
+/* The board may provide its actual control rate and modulation ceiling. */
+#ifndef MFOC_MOTOR_RUN_FREQ_HZ
+#define MFOC_MOTOR_RUN_FREQ_HZ 20000U
+#endif
+#ifndef MFOC_CORE_M_MAX
+#define MFOC_CORE_M_MAX 0.55f
+#endif
 
 /* Stable values for MFOC_FEEDBACK_BACKEND. */
 #define MFOC_FEEDBACK_NONE 0

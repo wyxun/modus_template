@@ -16,13 +16,14 @@ $includes = @('modus/src', 'modus/src/utilities', 'modus/src/mdebug',
     ForEach-Object { "-I$(Join-Path $repo $_)" }
 $numerics = if ($Ekf) { @('FLOAT') } else { @('FLOAT', 'FIXED') }
 $alternateConfig = (Join-Path $testsRoot 'motor/motor_config_test.h').Replace('\', '/')
+$referenceConfig = (Join-Path $repo 'mfoc/port/projects/g431_2804/motor_2804.h').Replace('\', '/')
 foreach ($numeric in $numerics) {
   foreach ($case in @(@(0, 0, 0), @(1, 0, 0), @(1, 1, 0), @(0, 0, 1))) {
     $shell, $timing, $alternate = $case
     $exe = Join-Path $output "app-$numeric-$shell-$timing-$alternate.exe"
     $logFlags = @()
     if ($shell -eq 0) { $logFlags = @('-D__NO_USE_LOG__') }
-    $profileFlags = @()
+    $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$referenceConfig>")
     if ($alternate) {
         $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$alternateConfig>",
             '-DMFOC_TEST_ALTERNATE_MOTOR=1', '-DMFOC_IDENTIFICATION_ENABLE=1')

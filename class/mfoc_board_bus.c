@@ -4,9 +4,6 @@
 #include "mfoc_board_bus.h"
 #include "mfoc_port.h"
 #include <stdatomic.h>
-#if MFOC_P10_PHASE
-#include "mfoc_trace_binding.h"
-#endif
 
 typedef struct {
     mfoc_tick_t started;
@@ -109,8 +106,5 @@ mfoc_result_t mfoc_board_bus_Apply(mfoc_core_t *core)
     first_frame = false;
     expires = deadline;
     applied = seq;
-#if MFOC_P10_PHASE
-    g_p10_bus_applied = true;
-#endif
     return MFOC_RESULT_OK;
 }

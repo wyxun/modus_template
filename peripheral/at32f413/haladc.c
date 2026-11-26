@@ -12,7 +12,7 @@
  *   PC0 — ADC1 CH10 Potentiometer (ordinary)
  *
  * ADC clock = PCLK2 / 8 = 100MHz / 8 = 12.5MHz
- * Preempt trigger source: TMR1 CH4
+ * Preempt trigger source: natural TMR1 top update (TRGO)
  */
 
 #include "at32f413.h"
@@ -115,10 +115,11 @@ void haladc_Init(void)
     adc_preempt_channel_set(ADC1, ADC_CHANNEL_1, 2, ADC_SAMPLETIME_1_5);   /* Phase B */
     adc_preempt_channel_set(ADC1, ADC_CHANNEL_2, 3, ADC_SAMPLETIME_1_5);   /* Phase C */
 
-    /* Preempt trigger: TMR1 CH4 */
-    adc_preempt_conversion_trigger_set(ADC1, ADC12_PREEMPT_TRIG_TMR1CH4, TRUE);
+    /* The PWM timer verifies the top-update phase before enabling TRGO. */
+    adc_preempt_conversion_trigger_set(ADC1, ADC12_PREEMPT_TRIG_TMR1TRGOUT,
+                                       FALSE);
 
-    /* Disable preempt auto mode to allow external TMR1 CH4 trigger */
+    /* Disable preempt auto mode to allow the external update trigger. */
     adc_preempt_auto_mode_enable(ADC1, FALSE);
 
     /* ---- Voltage monitor on preempt (overcurrent) ---- */
@@ -146,4 +147,11 @@ void mdi_at32_adc_EnableControlIRQ(void)
         adc_interrupt_enable(ADC1, ADC_PCCE_INT, TRUE);
         nvic_irq_enable(ADC1_2_IRQn, 1, 0);
     }
+}
+
+void mdi_at32_adc_DisableControlIRQ(void)
+{
+    NVIC_DisableIRQ(ADC1_2_IRQn);
+    adc_interrupt_enable(ADC1, ADC_PCCE_INT, FALSE);
+    NVIC_ClearPendingIRQ(ADC1_2_IRQn);
 }

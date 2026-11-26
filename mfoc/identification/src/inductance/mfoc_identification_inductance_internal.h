@@ -6,6 +6,7 @@
 #define MFOC_IDENTIFICATION_INDUCTANCE_INTERNAL_H
 
 #include "mfoc_identification_algorithms.h"
+#include "mfoc_motor_config_internal.h"
 
 /** @brief Evaluate L = dt_pu * sum(u - Rs*i_mean) / (i_end - i_start).
  * @param sum_u Integrated voltage. @param sum_i_twice Trapezoid endpoints.

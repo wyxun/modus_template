@@ -12,6 +12,9 @@
 #include "mfoc_numeric.h"
 #include "mfoc_config.h"
 #include "mfoc_motor_config_internal.h"
+#if defined(AT32F413RCT7)
+#include "mfoc_safety.h"
+#endif
 #ifndef MFOC_APP_ENCODER_DIAGNOSTIC
 #define MFOC_APP_ENCODER_DIAGNOSTIC 1
 #endif
@@ -27,6 +30,18 @@
 #endif
 #include <math.h>
 #include <stddef.h>
+
+#if defined(MFOC_APP_5562_HALL)
+#if !MFOC_FEEDBACK_ENABLE_POSITION ||                                          \
+    MFOC_FEEDBACK_BACKEND != MFOC_FEEDBACK_POSITION ||                         \
+    MFOC_FEEDBACK_ENABLE_SMO || MFOC_FEEDBACK_ENABLE_FLUX ||                    \
+    MFOC_FEEDBACK_ENABLE_EKF || MFOC_FEEDBACK_ENABLE_HFI
+#error "The 5562 Hall project requires Hall-only feedback"
+#endif
+#if MFOC_IDENTIFICATION_ENABLE && !defined(MFOC_APP_RS_DIAGNOSTIC)
+#error "The 5562 Hall project requires the Rs diagnostic to enable identification"
+#endif
+#endif
 
 #if defined(AT32F413_BUS_NOMINAL_MV)
 _Static_assert(MFOC_MOTOR_BASE_VOLTAGE_MILLIVOLT == AT32F413_BUS_NOMINAL_MV,
@@ -108,6 +123,16 @@ int mfoc_app_Run(uintptr_t object)
     if (app == NULL || app->state != MFOC_APP_IDLE) {
         return MODUS_EFAIL;
     }
+#if defined(AT32F413RCT7)
+    /* A missing ADC stream cannot report its own shutdown in the ADC IRQ. */
+    if (app->motor.state == MFOC_MOTOR_RUNNING &&
+        mfoc_at32_safety_GetFault() != MFOC_AT32_SAFETY_NONE) {
+        mfoc_result_t stop = mfoc_motor_Trip(&app->motor,
+                                            MFOC_MOTOR_FAULT_SAMPLE);
+        app->result = stop == MFOC_RESULT_OK ? MFOC_RESULT_SAFETY : stop;
+        return MODUS_EFAIL;
+    }
+#endif
 #if MFOC_RUNTIME_BUS
     mfoc_board_bus_sample_t sample;
     if (mfoc_board_bus_Poll(&sample)) { (void)mfoc_board_bus_Publish(&sample); }
@@ -119,25 +144,65 @@ int mfoc_app_Run(uintptr_t object)
     return app->result == MFOC_RESULT_OK ? MODUS_SUCCESS : MODUS_EFAIL;
 }
 
-/* Motor data and PU bases come from the 2804 datasheet in motor_config.
- * Ld/Lq share its phase inductance; encoder zero/direction need validation.
- * Inherited PI gains are starting values, not validated bench tuning.
- * ki_ts is Ki * T: re-derive it whenever MFOC_MOTOR_RUN_FREQ_HZ changes. */
+/* Rescale the inherited gains if the project selects a new current base.
+ * The discrete ki_ts values assume the existing current and speed rates. */
+#ifndef MFOC_APP_CURRENT_BASE_RATIO
+#if defined(MFOC_APP_PI_REFERENCE_MILLIAMP)
+#define MFOC_APP_CURRENT_BASE_RATIO                                          \
+    ((float)MFOC_MOTOR_BASE_CURRENT_MILLIAMP / MFOC_APP_PI_REFERENCE_MILLIAMP)
+#else
+#define MFOC_APP_CURRENT_BASE_RATIO 1.0f
+#endif
+#endif
+#ifndef MFOC_APP_CURRENT_LIMIT_PU
+#define MFOC_APP_CURRENT_LIMIT_PU (0.14f / MFOC_APP_CURRENT_BASE_RATIO)
+#endif
+#ifndef MFOC_APP_SPEED_CURRENT_LIMIT_PU
+#define MFOC_APP_SPEED_CURRENT_LIMIT_PU (0.10f / MFOC_APP_CURRENT_BASE_RATIO)
+#endif
+#if !defined(MFOC_APP_D_PI) || !defined(MFOC_APP_Q_PI)
 #define MFOC_APP_CURRENT_PI { \
-    .kp = MFOC_SCALAR(0.472810f), \
-    .ki_ts = MFOC_SCALAR(0.070097f), \
+    .kp = MFOC_SCALAR(0.472810f * MFOC_APP_CURRENT_BASE_RATIO), \
+    .ki_ts = MFOC_SCALAR(0.070097f * MFOC_APP_CURRENT_BASE_RATIO), \
     .out_min = MFOC_SCALAR(-0.55f), .out_max = MFOC_SCALAR(0.55f), \
     .i_min = MFOC_SCALAR(-0.50f), .i_max = MFOC_SCALAR(0.50f)}
+#endif
+#ifndef MFOC_APP_D_PI
+#define MFOC_APP_D_PI MFOC_APP_CURRENT_PI
+#endif
+#ifndef MFOC_APP_Q_PI
+#define MFOC_APP_Q_PI MFOC_APP_CURRENT_PI
+#endif
 
-/* Reuse the 1 kHz speed profile from motor_config.h on a 400 Hz base.
- * ki_ts is Ki / MFOC_SPEED_RUN_FREQ_HZ: re-derive it if that rate changes. */
+/* The speed PI produces a current command, so its scaling is inverse. */
+#ifndef MFOC_APP_SPEED_PI
 #define MFOC_APP_SPEED_PI { \
-    .kp = MFOC_SCALAR(0.6489304f), \
-    .ki_ts = MFOC_SCALAR(0.010193372f), \
-    .out_min = MFOC_SCALAR(-0.10f), .out_max = MFOC_SCALAR(0.10f), \
-    .i_min = MFOC_SCALAR(-0.10f), .i_max = MFOC_SCALAR(0.10f)}
+    .kp = MFOC_SCALAR(0.6489304f / MFOC_APP_CURRENT_BASE_RATIO), \
+    .ki_ts = MFOC_SCALAR(0.010193372f / MFOC_APP_CURRENT_BASE_RATIO), \
+    .out_min = MFOC_SCALAR(-MFOC_APP_SPEED_CURRENT_LIMIT_PU), \
+    .out_max = MFOC_SCALAR(MFOC_APP_SPEED_CURRENT_LIMIT_PU), \
+    .i_min = MFOC_SCALAR(-MFOC_APP_SPEED_CURRENT_LIMIT_PU), \
+    .i_max = MFOC_SCALAR(MFOC_APP_SPEED_CURRENT_LIMIT_PU)}
+#endif
 
+#ifndef MFOC_APP_SPEED_MAX
 #define MFOC_APP_SPEED_MAX MFOC_SCALAR(0.7583333f)
+#endif
+#ifndef MFOC_APP_SMO_CUTOFF_RAD_S
+#define MFOC_APP_SMO_CUTOFF_RAD_S 4000U
+#endif
+#ifndef MFOC_APP_SMO_GAIN_V
+#define MFOC_APP_SMO_GAIN_V 5.0f
+#endif
+#ifndef MFOC_APP_SMO_BOUNDARY_PU
+#define MFOC_APP_SMO_BOUNDARY_PU 0.1f
+#endif
+#ifndef MFOC_APP_SMO_CURRENT_LIMIT_PU
+#define MFOC_APP_SMO_CURRENT_LIMIT_PU 1.0f
+#endif
+#ifndef MFOC_APP_OPENLOOP_ACCEL_PU_S
+#define MFOC_APP_OPENLOOP_ACCEL_PU_S 0.2f
+#endif
 
 MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
     .motor = {
@@ -153,18 +218,21 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
             .flux = MFOC_SCALAR(MFOC_MOTOR_FLUX_PU),
             .inertia = MFOC_SCALAR(MFOC_MOTOR_INERTIA_PU),
         },
-        .limits = {.i_max = MFOC_SCALAR(0.14f),
-            .speed_max = MFOC_APP_SPEED_MAX},
+        .limits = {
+            .i_max = MFOC_SCALAR(MFOC_APP_CURRENT_LIMIT_PU),
+            .speed_max = MFOC_APP_SPEED_MAX,
+        },
         .core = {
-            .d = MFOC_APP_CURRENT_PI, .q = MFOC_APP_CURRENT_PI,
+            .d = MFOC_APP_D_PI, .q = MFOC_APP_Q_PI,
             .bus = MFOC_ONE,
         },
         .feedback = {.smo = {
             .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
-            .cutoff_rad_s = 4000U,
-            .h = MFOC_SCALAR(5.0f / MFOC_MOTOR_BASE_VOLTAGE_VOLT),
-            .boundary = MFOC_SCALAR(0.1f), .i_limit = MFOC_ONE,
+            .cutoff_rad_s = MFOC_APP_SMO_CUTOFF_RAD_S,
+            .h = MFOC_SCALAR(MFOC_APP_SMO_GAIN_V / MFOC_MOTOR_BASE_VOLTAGE_VOLT),
+            .boundary = MFOC_SCALAR(MFOC_APP_SMO_BOUNDARY_PU),
+            .i_limit = MFOC_SCALAR(MFOC_APP_SMO_CURRENT_LIMIT_PU),
         }, .flux = {
             .sample_hz = MFOC_MOTOR_RUN_FREQ_HZ,
             .speed_base_hz = MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
@@ -187,7 +255,7 @@ MODUS_DECLARE_OBJECT(mfoc_app, MfocApp,
         .speed_divider = MFOC_SPEED_LOOP_DIVIDER,
         .openloop = {MFOC_MOTOR_RUN_FREQ_HZ,
             MFOC_SCALAR(MFOC_MOTOR_BASE_ELECTRICAL_HZ),
-            MFOC_SCALAR(0.2f)},
+            MFOC_SCALAR(MFOC_APP_OPENLOOP_ACCEL_PU_S)},
     },
 )
 
@@ -395,19 +463,26 @@ static void _mfoc_app_CmdMotor(const char *args)
     float q = 0.0f;
     bool valid = false;
 
-#if MFOC_P10_PHASE && MFOC_IDENTIFICATION_ENABLE
+#if MFOC_IDENTIFICATION_ENABLE && defined(MFOC_APP_RS_DIAGNOSTIC)
     if (mshell_ConsumeWord(&cursor, "identify")) {
+        if (mshell_ConsumeWord(&cursor, "status") && mshell_AtEnd(cursor)) {
+            mfoc_motor_params_t result = {0};
+            mfoc_result_t rc = mfoc_motor_GetIdentificationResult(
+                &tMfocApp.motor, &result);
+            long rs_mohm = rc == MFOC_RESULT_OK ?
+                (long)(mfoc_to_float(result.rs) *
+                       MFOC_MOTOR_BASE_RESISTANCE_OHM * 1000.0f + 0.5f) : 0L;
+            MLOGF(I, "identify state=%u stage=%u result=%d rs_mohm=%ld\r\n",
+                (unsigned)tMfocApp.motor.identification.state,
+                (unsigned)tMfocApp.motor.identification.stage,
+                (int)rc, rs_mohm);
+            return;
+        }
         mfoc_identification_operation_t op;
         if (mshell_ConsumeWord(&cursor, "rs")) {
             op = MFOC_IDENTIFICATION_RESISTANCE;
-        } else if (mshell_ConsumeWord(&cursor, "electrical")) {
-            op = MFOC_IDENTIFICATION_ELECTRICAL;
-        } else if (mshell_ConsumeWord(&cursor, "flux")) {
-            op = MFOC_IDENTIFICATION_FLUX;
-        } else if (mshell_ConsumeWord(&cursor, "inertia")) {
-            op = MFOC_IDENTIFICATION_INERTIA;
         } else {
-            MLOGF(W, "motor identify rs|electrical|flux|inertia\r\n");
+            MLOGF(W, "motor identify rs|status\r\n");
             return;
         }
         if (!mshell_AtEnd(cursor)) { MLOGF(W, "invalid arguments\r\n"); return; }

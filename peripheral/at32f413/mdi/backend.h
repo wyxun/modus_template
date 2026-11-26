@@ -174,10 +174,11 @@ MDI_INLINE void mdi_at32_adc_AckCurrentFrame(void)
 #endif
 }
 
-/** @brief Transfer frame ownership from foreground calibration to the IRQ.
- * @note Call after the first successful bridge arm. Later starts keep the IRQ.
- */
+/** @brief Transfer frame ownership from foreground synchronization to IRQ. */
 void mdi_at32_adc_EnableControlIRQ(void);
+
+/** @brief Pause the ADC control IRQ while keeping hardware triggering. */
+void mdi_at32_adc_DisableControlIRQ(void);
 
 /** @brief Start a regular scan and invalidate its old DMA sample.
  * @return MDI_OK after issuing the software trigger.
@@ -224,8 +225,8 @@ MDI_INLINE bool mdi_at32f413_control_clock_ready(void)
 
 /** Bind the advanced timer's MOE gate and hardware Break.
  * ClearFault acknowledges Break only with the gate closed and input inactive.
- * Enable applies staged compares before opening MOE. SafeStop closes MOE
- * while leaving the timer and ADC trigger running. Arm/reset are foreground.
+ * Enable opens MOE after the caller verifies the natural preload transfer.
+ * SafeStop closes MOE and leaves the timer and ADC trigger running.
  */
 #define MDI_AT32_PWM_LIFECYCLE_BIND(NAME, TIMER, BREAK_ACTIVE)                  \
     MDI_INLINE bool MDI_OP(NAME, _pwm_IsEnabled)(void)                         \
@@ -256,9 +257,8 @@ MDI_INLINE bool mdi_at32f413_control_clock_ready(void)
             return MDI_BUSY;                                                   \
         }                                                                       \
         if (MDI_PWM_IsEnabled(NAME)) { return MDI_OK; }                         \
-        (TIMER)->swevt = TMR_OVERFLOW_SWTRIG;                                    \
         (TIMER)->brk_bit.oen = 1U;                                              \
-        if (!MDI_PWM_IsEnabled(NAME) || ((TIMER)->ists & TMR_BRK_FLAG) != 0U) { \
+        if (!MDI_PWM_IsEnabled(NAME) || MDI_PWM_FaultActive(NAME)) {            \
             (void)MDI_PWM_SafeStop(NAME);                                       \
             return MDI_BUSY;                                                   \
         }                                                                       \

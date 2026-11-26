@@ -86,8 +86,9 @@ if ($VerifyPackage) {
     foreach ($file in @('mfoc.mk', 'mfoc_config.h', 'README.md', 'CHANGELOG.md')) {
         Copy-Item -LiteralPath (Join-Path $library $file) -Destination $package
     }
-    foreach ($module in @('config', 'include', 'control', 'core', 'identification',
-                           'math', 'motor', 'port', 'position', 'docs')) {
+    foreach ($module in @('include', 'control', 'core', 'identification', 'math',
+                           'motor', 'port/include', 'port/template', 'position',
+                           'docs')) {
         $source = Join-Path $library $module
         $extensions = if ($module -eq 'docs') { @('.md') } else { @('.c', '.h', '.inc') }
         foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse) {
@@ -99,6 +100,8 @@ if ($VerifyPackage) {
             Copy-Item -LiteralPath $file.FullName -Destination $destination
         }
     }
+    Copy-Item -LiteralPath (Join-Path $library 'port/README.md') `
+        -Destination (Join-Path $package 'port/README.md')
     foreach ($file in Get-ChildItem -LiteralPath $library -File) {
         if ($file.BaseName -in @('LICENSE', 'LICENCE', 'COPYING', 'NOTICE')) {
             Copy-Item -LiteralPath $file.FullName -Destination $package

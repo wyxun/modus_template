@@ -14,7 +14,7 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | 配置无感观测器，核对估算角速和有效条件 | [Flux 非线性磁链观测器](docs/modules/flux.md) · [SMO 滑模反电势观测器](docs/modules/smo.md) |
 | 接入有感位置源，理解角速如何进入 Feedback | [Encoder 位置组件](docs/modules/encoder.md) · [Hall 位置组件](docs/modules/hall.md) |
 | 选择反馈源、设置基值或修改板级换算 | [Port 相关配置和头文件](docs/configuration.md) |
-| 把库接到新的功率板 | [硬件接口移植指南](docs/port-contract.md) · [可复制的 C 模板](port/template/mfoc_port_template.c) |
+| 选择电机项目或接入新的功率板 | [Port 目录与用法](port/README.md) · [硬件接口移植指南](docs/port-contract.md) |
 | 核对 G431 的主机测试、构建和验证范围 | [Port 迁移验证记录](docs/validation/2026-11-10-port-migration.md) |
 
 ## 目录与接口
@@ -23,8 +23,9 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 | --- | --- |
 | `mfoc_config.h` | 项目常用设置，包括速度环、反馈选择和功能开关 |
 | `include/` | 公共入口、电机配置选择入口及库内共用的配置派生头 |
-| `config/board_template.h` | 板级配置模板和独立构建的默认值 |
-| `config/motors/` | 2804 默认配置和可复制的电机配置模板 |
+| `port/template/` | 可复制的 Port 源码和电机参数模板 |
+| `port/modus/` | MODUS 应用共用的 ADC 控制 IRQ |
+| `port/projects/` | 项目构建入口、本项目的电机参数和 Hall 校准 |
 | `math/`、`control/` | 数值、坐标变换、PI 和调制 |
 | `core/` | 电流环及电压调制计算 |
 | `motor/` | 电机运行、反馈选择与启动流程 |
@@ -67,11 +68,11 @@ MFOC 是面向电机控制的嵌入式 C 库，包含电流环、速度环、位
 
 ### 板级设置
 
-G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 同时提供给 PWM/ADC 和 MFOC。计时器频率和允许的调制上限也在板级设置。移植新板时可从库内模板取得控制频率和调制上限的写法，环路分频由库在编译期计算。中断耗时统计及其计时配置由目标工程设置。[板级模板](config/board_template.h) · [板级配置方法](docs/configuration.md#board-settings)
+G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 同时提供给 PWM/ADC 和 MFOC。计时器频率和允许的调制上限也在板级设置。移植新板时按配置指南定义控制频率和调制上限，环路分频由库在编译期计算。中断耗时统计及其计时配置由目标工程设置。[板级配置方法](docs/configuration.md#board-settings)
 
 ### 电机与标幺值
 
-默认使用 2804 的电机配置。换电机时复制模板，按结构体字段顺序填写电机参数、基值及启动参数，再用 `MFOC_MOTOR_CONFIG` 指定新头文件。应用、HFI 和辨识在同一次构建中使用同一份配置，单位换算和其余 PU 基值在编译期推导。[默认配置](config/motors/motor_2804.h) · [电机配置模板](config/motors/motor_template.h) · [配置选择](docs/configuration.md#motor-profile)
+本仓库主工程为 G431 和 AT32 的参考构建选择 2804，显式项目可选择其他电机。独立库的物理电机参数由调用方通过 `mfoc_motor_Init()` 提供。需要编译期配置时可复制模板，再用 `MFOC_MOTOR_CONFIG` 指定新头文件。应用、HFI 和辨识在同一次构建中读取相同的配置，单位换算和系数继续在编译期推导。[电机配置模板](port/template/motor_template.h) · [配置选择](docs/configuration.md#motor-profile)
 
 电流使用 `I/Ibase`，母线使用 `Vdc/Vbase`，速度使用电角速度与电角速度基值之比。当前电流基值是相电流峰值；例如 `0.02 pu` 对应 `0.02 × 3.5 A = 0.07 A`。极对数用于机械角与电角的换算。
 
@@ -93,7 +94,9 @@ G431 和 AT32F413 的控制频率默认都是 20 kHz，由各自的 `target.mk` 
 4. 根据需要配置或更新母线值。`mfoc_motor_SetBus()` 接收正的 `Vdc/Vbase`；`mfoc_motor_UpdateBus()` 可读取已发布的母线采样并更新。动态母线异常的处理由应用结合硬件保护策略决定。
 5. 根据控制模式设置指令并启动；停止使用 `mfoc_motor_Stop()`，故障清除使用 `mfoc_motor_ClearFault()`。调用条件和返回值见 [`mfoc_motor.h`](motor/include/mfoc_motor.h)。
 
-主工程 G431 的应用和中断接线位于 `class/mfoc_app.c` 和 `target/stm32g431/mfoc_motor_irq.c`。示例控制周期为 20 kHz，移植时应以实际采样和 PWM 时序配置为准。
+主工程的应用位于 `class/mfoc_app.c`，G431 和 AT32F413 的 MFOC
+接线位于各自项目的 `board/`。两板共用控制 IRQ，默认控制周期为 50 µs。
+[选择功率板和电机项目](docs/configuration.md#仓库内的板与电机项目)
 
 ### G431 示例命令
 

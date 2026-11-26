@@ -5,6 +5,7 @@
  * @date 2026-11-20
  */
 #include "mfoc_port.h"
+#include "mfoc_safety.h"
 #include "mdi/instance.h"
 #if MFOC_RUNTIME_BUS
 #include "mfoc_board_bus.h"
@@ -16,9 +17,11 @@
 #if defined(AT32F413_BUS_NOMINAL_MV)
 #define TEST_BUS_BASE_MV 24000U
 #define TEST_BUS_RAW 1536U
+#define TEST_HALL_TIMEOUT_MS 1000
 #else
 #define TEST_BUS_BASE_MV 12000U
 #define TEST_BUS_RAW 768U
+#define TEST_HALL_TIMEOUT_MS 100
 #endif
 
 uint32_t SystemCoreClock = 200000000U;
@@ -32,6 +35,10 @@ volatile uint16_t g_ahwAt32AdcOrdinary[AT32_ADC_ORDINARY_COUNT];
 static int64_t s_ticks;
 static bool s_frame_ready;
 static bool s_irq;
+static bool s_guard_armed;
+static bool s_start_window = true;
+static bool s_break_after_wait;
+static mfoc_result_t s_wait_result = MFOC_RESULT_OK;
 #if AT32F413_BOARD_HALL
 void TMR3_GLOBAL_IRQHandler(void);
 test_timer_t test_hall_timer;
@@ -83,8 +90,42 @@ bool perfc_is_time_out_ms(uint32_t ms, int64_t *timestamp, bool repeat)
 
 void mdi_at32_adc_EnableControlIRQ(void)
 {
-    assert(s_gate && test_timer.swevt == TMR_OVERFLOW_SWTRIG);
+    assert(s_gate && s_guard_armed && test_timer.swevt == 0U);
     s_irq = true;
+}
+
+void mdi_at32_adc_DisableControlIRQ(void)
+{
+    s_irq = false;
+}
+
+mfoc_result_t mfoc_at32_safety_WaitStart(void)
+{
+    assert(!s_gate && !s_irq && !s_guard_armed);
+    assert(test_timer.swevt == 0U);
+    if (s_break_after_wait) {
+        test_gpio.idt &= ~GPIO_PINS_12;
+        test_timer.ists |= TMR_BRK_FLAG;
+    }
+    return s_wait_result;
+}
+
+bool mfoc_at32_safety_StartWindowOpen(void)
+{
+    return s_start_window;
+}
+
+void mfoc_at32_safety_Arm(uint32_t u, uint32_t v, uint32_t w)
+{
+    assert(!s_gate && !s_irq && !s_guard_armed);
+    assert(u == 2048U && v == 2052U && w == 2044U);
+    s_guard_armed = true;
+}
+
+void mfoc_at32_safety_Disarm(void)
+{
+    assert(!s_gate);
+    s_guard_armed = false;
 }
 
 #if AT32F413_BOARD_HALL
@@ -142,7 +183,8 @@ static void check_hall_capture(const mfoc_uvw_t *duty)
     assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
     assert(fabsf(mfoc_to_float(speed) + 1.0f / 4.8f) < 0.00005f);
     /* The timeout is measured from the capture, not IRQ service. */
-    s_ticks = (t + 100000) * AT32_HALL_TICKS_PER_US;
+    s_ticks = (t + TEST_HALL_TIMEOUT_MS * INT64_C(1000)) *
+        AT32_HALL_TICKS_PER_US;
     assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
     ++s_ticks;
     assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_SAFETY);
@@ -194,6 +236,26 @@ static void check_hall_capture(const mfoc_uvw_t *duty)
     hall_edge(t += 2000, 6U, 0U);
     assert(mfoc_port_position_run() == MFOC_RESULT_SAFETY);
     assert(mfoc_port_pwm_start(duty) == MFOC_RESULT_SAFETY && !s_gate);
+}
+
+/** @brief Check the default and motor-configured Hall expiry boundaries. */
+static void check_hall_timeout(void)
+{
+    s_manual_clock = true;
+    test_gpio.idt = GPIO_PINS_4 | GPIO_PINS_12;
+    assert(mfoc_port_position_calibrate_zero((mfoc_angle_t){0U}) ==
+           MFOC_RESULT_OK);
+    mfoc_angle_t angle = {0U};
+    mfoc_scalar_t speed = MFOC_ONE;
+    s_ticks += (int64_t)(SystemCoreClock / 1000U) * TEST_HALL_TIMEOUT_MS;
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_OK);
+    assert(angle.wBam32 == UINT32_C(0x15555555) && speed == MFOC_ZERO);
+    ++s_ticks;
+    angle.wBam32 = 42U;
+    speed = MFOC_ONE;
+    assert(mfoc_port_position(&angle, &speed) == MFOC_RESULT_SAFETY);
+    assert(angle.wBam32 == 42U && speed == MFOC_ONE);
+    s_manual_clock = false;
 }
 #endif
 
@@ -289,9 +351,24 @@ int main(void)
     assert(!s_gate && !s_irq);
     assert(test_timer.swevt == 0U);
     test_gpio.idt |= GPIO_PINS_12;
+    s_wait_result = MFOC_RESULT_IO;
+    assert(mfoc_port_pwm_start(&duty) == MFOC_RESULT_IO);
+    assert(!s_gate && !s_irq && !s_guard_armed);
+    s_wait_result = MFOC_RESULT_OK;
+    s_start_window = false;
+    assert(mfoc_port_pwm_start(&duty) == MFOC_RESULT_SAFETY);
+    assert(!s_gate && !s_irq && !s_guard_armed);
+    s_start_window = true;
+    s_break_after_wait = true;
+    assert(mfoc_port_pwm_start(&duty) == MFOC_RESULT_SAFETY);
+    assert(!s_gate && !s_irq && !s_guard_armed);
+    assert((test_timer.ists & TMR_BRK_FLAG) != 0U);
+    s_break_after_wait = false;
+    test_gpio.idt |= GPIO_PINS_12;
+
     test_timer.ists = TMR_BRK_FLAG;
     assert(mfoc_port_pwm_start(&duty) == MFOC_RESULT_OK);
-    assert(s_gate && s_irq);
+    assert(s_gate && s_irq && s_guard_armed);
     assert((test_timer.ists & TMR_BRK_FLAG) == 0U);
 #if MFOC_RUNTIME_BUS
     mfoc_core_t control = {0};
@@ -312,7 +389,7 @@ int main(void)
     assert(s_gate && test_timer.c3dt == PWM_PERIOD / 2U);
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
-    assert(!s_gate && s_irq);
+    assert(!s_gate && !s_irq && !s_guard_armed);
 #if defined(AT32F413_BUS_NOMINAL_MV)
     /* First and last ADC codes inside the 18–30 V window. */
     const uint16_t accepted_bus_raw[] = {1153U, 1920U};
@@ -337,6 +414,7 @@ int main(void)
     assert(mfoc_port_pwm_stop() == MFOC_RESULT_OK);
 #if MFOC_FEEDBACK_ENABLE_POSITION
     check_hall_capture(&duty);
+    check_hall_timeout();
 #endif
     puts("AT32F413 Port voltage, current and gate contract passed");
     return 0;

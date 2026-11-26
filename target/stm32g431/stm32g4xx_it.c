@@ -97,9 +97,7 @@ void DMA1_Channel6_IRQHandler(void)         {}
 void USB_HP_IRQHandler(void)                {}
 void USB_LP_IRQHandler(void)                {}
 void EXTI9_5_IRQHandler(void)               {}
-#if !MFOC_P10_PHYSICAL && !MFOC_P10_KCL && !MFOC_P10_EXIT_WITNESS
 void TIM2_IRQHandler(void)                  {}
-#endif
 void TIM3_IRQHandler(void)                  {}
 void TIM4_IRQHandler(void)                  {}
 void I2C1_EV_IRQHandler(void)               {}

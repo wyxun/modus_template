@@ -1,5 +1,6 @@
 param([string[]]$Tests = @('openloop', 'core', 'board_bus', 'motor', 'motor_run',
-    'motor_control', 'motor_irq', 'voltage_interval', 'motor_identification',
+    'motor_control', 'motor_irq', 'motor_start_irq', 'voltage_interval',
+    'motor_identification',
     'identification_rs', 'identification_inductance', 'identification_inertia',
     'hfi_motor'),
     [ValidateSet(0, 1)][int]$Hfi = 1,
@@ -15,11 +16,9 @@ $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
 $repo = Split-Path -Parent $library
-$profileFlags = @()
-if ($MotorConfig) {
-    $profile = (Resolve-Path -LiteralPath $MotorConfig).Path.Replace('\', '/')
-    $profileFlags = @("-DMFOC_MOTOR_CONFIG=<$profile>")
-}
+if (!$MotorConfig) { $MotorConfig = "$library/port/projects/g431_2804/motor_2804.h" }
+$profile = (Resolve-Path -LiteralPath $MotorConfig).Path.Replace('\', '/')
+$profileFlags = @("-DMFOC_MOTOR_CONFIG=<$profile>")
 if ($ControlHz) { $profileFlags += "-DMFOC_MOTOR_RUN_FREQ_HZ=${ControlHz}U" }
 if ($PwmPreloadDelay) { $profileFlags += '-DMFOC_PWM_PRELOAD_DELAY=1' }
 $perfcFlags = @()
@@ -51,6 +50,10 @@ foreach ($numeric in $numerics) {
     }
     $exe = Join-Path $output "$test-$numeric.exe"
     $irqArguments = @()
+    if ($test -eq 'motor_start_irq') {
+      $irqArguments = @('-DMFOC_PORT_IRQ_DURING_START=1',
+          '-DMFOC_PWM_PRELOAD_DELAY=1')
+    }
     if ($test -eq 'board_bus') {
       $irqArguments = @("-I$repo/class", '-DMFOC_PERFC_HZ=170000000U')
     }
@@ -58,7 +61,8 @@ foreach ($numeric in $numerics) {
       $irqArguments = @('-DMFOC_ISR_MEASURE=0',
           "-I$testsRoot/irq_binding",
           "-I$repo/target/stm32g431",
-          "$repo/target/stm32g431/mfoc_motor_irq.c")
+          "-I$library/port/modus",
+          "$library/port/modus/mfoc_motor_irq.c")
     }
     $feedbackArguments = @()
     $modelUpdate = $test -eq 'motor_model_update'

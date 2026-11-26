@@ -48,7 +48,7 @@ date: 2026-11-10
 具体依据：
 
 - `mfoc/motor/src/mfoc_motor.c` 的 Step 同时采样、计算、提交 PWM；直接引用 perfc 进行前台计时。
-- `peripheral/stm32g431/mfoc/mfoc_port.c` 同时处理 AS5600 配置、约 100 ms 校零、ADC 转 PU、母线标定、PWM 和时间；含板级单例状态。
+- `mfoc/port/projects/g431_2804/board/mfoc_port.c` 同时处理 AS5600 配置、约 100 ms 校零、ADC 转 PU、母线标定、PWM 和时间；含板级单例状态。
 - `mfoc/motor/include/mfoc_feedback.h` 消费完整 Core 输出；辨识主入口消费前拍请求电压；独立磁链叶又依赖 Core 输出。
 - `mfoc/math/include/mfoc_numeric.h` 的 `mfoc_mul_pu` 在 FIXED 下限制输入到 ±1，FLOAT 下直接相乘；PU 并不意味着数值必须在 ±1 内。
 - `mfoc/control/src/mfoc_pi.c` 的 FIXED 每拍积分增量先量化再累加，小误差可能始终无法积累；HFI 已有局部宽积分实践。
@@ -362,7 +362,7 @@ flowchart TB
 
 - [x] 约定校准、PU 换算及物理量准备的所有者。对应 R2、R3、R4。
 
-整理 `peripheral/stm32g431/mfoc/mfoc_port.c` 及配置：硬件驱动获取原始值，Port 完成零偏、相序、极性与 PU 换算后提供控制量。板级绑定持有零偏、预计算增益和准备状态。重复的纯换算数学可以复用，但不预设新增 `sampling` 对象、目录或逐拍数据包装层。
+整理 `mfoc/port/projects/g431_2804/board/mfoc_port.c` 及配置：硬件驱动获取原始值，Port 完成零偏、相序、极性与 PU 换算后提供控制量。板级绑定持有零偏、预计算增益和准备状态。重复的纯换算数学可以复用，但不预设新增 `sampling` 对象、目录或逐拍数据包装层。
 
 物理量和 PU 换算只在边界发生，ADC 量程不等于运行电流限值，测量不被静默裁成 ±1 PU。校准在 Motor_Init 调用的 Port 准备过程中完成，明确采样数、终止和失败行为，不占用高频计算；需要异步准备的目标另行明确完成契约，不能未准备好却返回初始化成功。母线刷新率及有感位置处理由各自提供者落实，不要求所有量每拍重采或随数据附带时间。
 
@@ -370,7 +370,7 @@ flowchart TB
 
 <a id="p03-verification"></a>
 
-**2026-11-12 软件验收。** 在 `928e111` 上从仓库根目录运行 `.\mfoc\tests\scripts\run_port_tests.ps1`，FLOAT 与 FIXED 均通过。测试运行实际 G431 Port 实现，以主机寄存器模型提供 ADC 帧、PWM 状态和时钟。[实现](../../peripheral/stm32g431/mfoc/mfoc_port.c) · [验收用例](../../mfoc/tests/port/port_test.c)
+**2026-11-12 软件验收。** 在 `928e111` 上从仓库根目录运行 `.\mfoc\tests\scripts\run_port_tests.ps1`，FLOAT 与 FIXED 均通过。测试运行实际 G431 Port 实现，以主机寄存器模型提供 ADC 帧、PWM 状态和时钟。[实现](../../mfoc/port/projects/g431_2804/board/mfoc_port.c) · [验收用例](../../mfoc/tests/port/port_test.c)
 
 | 检查 | 验证结果 |
 | --- | --- |
@@ -384,7 +384,7 @@ flowchart TB
 
 - [ ] 当前应用迁移到新契约并保住实机基线。对应 R2、R3、R5。
 
-修改 `peripheral/stm32g431/mfoc/mfoc_port.c`、`target/stm32g431/mfoc_motor_irq.c`、`target/stm32g431/mfoc_motor_irq_binding.h`、`class/mfoc_app.c`。库外保留目标驱动与直接调用；Port 初始化组合公共换算配置与专用位置配置，调用驱动完成 AS5600 配置并初始化位置组件。位置实例由集成侧持有，port_position_run 与 port_position 绑定该同一实例，分别完成前台更新及高频结果输出；IRQ/波形仍归目标集成。原机械角诊断转接相应驱动/位置源诊断，不把新电角度接口当作机械角接口使用。沿用经整理的 Motor Init/Run/Step 编排，应用不额外调用一套位置调度，不复制控制算法。
+修改 `mfoc/port/projects/g431_2804/board/mfoc_port.c`、`mfoc/port/modus/mfoc_motor_irq.c`、`mfoc/port/projects/g431_2804/board/mfoc_motor_irq_binding.h`、`class/mfoc_app.c`。库外保留目标驱动与直接调用；Port 初始化组合公共换算配置与专用位置配置，调用驱动完成 AS5600 配置并初始化位置组件。位置实例由集成侧持有，port_position_run 与 port_position 绑定该同一实例，分别完成前台更新及高频结果输出；IRQ/波形仍归目标集成。原机械角诊断转接相应驱动/位置源诊断，不把新电角度接口当作机械角接口使用。沿用经整理的 Motor Init/Run/Step 编排，应用不额外调用一套位置调度，不复制控制算法。
 
 修改 `mfoc/tests/port/port_test.c`、`mfoc/tests/motor/motor_irq_test.c`；新增 `mfoc/tests/port/port_contract_test.c`。
 
@@ -693,7 +693,7 @@ FLOAT、FIXED 均通过同实例 1 PU、2 PU 两轮辨识，各轮两档均采�
 
 #### G431 三相 ADC 换算验收（2026-11-19）
 
-`mfoc_port_current` 的三相 ADC 与校准偏置改用有符号 32 位求差，沿用已有 14 位范围保证。FLOAT 每相由一条 `vcvt.f32.s32` 转为浮点再乘原增益。FIXED 每相保留有符号 64 位乘积，除以 32768 时仍向零截断。[采样实现](../../peripheral/stm32g431/mfoc/mfoc_port.c)
+`mfoc_port_current` 的三相 ADC 与校准偏置改用有符号 32 位求差，沿用已有 14 位范围保证。FLOAT 每相由一条 `vcvt.f32.s32` 转为浮点再乘原增益。FIXED 每相保留有符号 64 位乘积，除以 32768 时仍向零截断。[采样实现](../../mfoc/port/projects/g431_2804/board/mfoc_port.c)
 
 | G431 后端 | 函数体静态指令 | 成功帧路径指令 | 帧未就绪路径指令 | 未初始化路径指令 | 函数自身最大栈帧 |
 | --- | ---: | ---: | ---: | ---: | ---: |
@@ -732,7 +732,7 @@ FLOAT、FIXED 主机回归、独立库回归、Arm 目标检查和 G431 两种 r
 
 #### G431 编码器角与波形共用同拍读数（2026-11-19）
 
-FLOAT 角度波形使用 Feedback 在当前 ADC 帧调用 `mfoc_port_position` 时取得的 BAM32 电角和有效状态。缓存属于 G431 的采样中断，每个就绪帧结束时作废，波形停采、抽取跳过和缓冲区满也一样。纯对齐、辨识等跳过 Feedback 的拍，只有实际采集时才读编码器，并将缺少同拍来源的观测角和角差标为无效。无 ADC 帧不推进角度波形。SMO 主反馈仍使用 SMO 控制角。[G431 位置入口](../../peripheral/stm32g431/mfoc/mfoc_port.c) · [波形](../../class/mfoc_debug.c) · [采样 IRQ](../../target/stm32g431/mfoc_motor_irq.c)
+FLOAT 角度波形使用 Feedback 在当前 ADC 帧调用 `mfoc_port_position` 时取得的 BAM32 电角和有效状态。缓存属于 G431 的采样中断，每个就绪帧结束时作废，波形停采、抽取跳过和缓冲区满也一样。纯对齐、辨识等跳过 Feedback 的拍，只有实际采集时才读编码器，并将缺少同拍来源的观测角和角差标为无效。无 ADC 帧不推进角度波形。SMO 主反馈仍使用 SMO 控制角。[G431 位置入口](../../mfoc/port/projects/g431_2804/board/mfoc_port.c) · [波形](../../class/mfoc_debug.c) · [采样 IRQ](../../mfoc/port/modus/mfoc_motor_irq.c)
 
 用 Makefile 和 Clang 19.1.5 `-Os` 构建前后两套 G431 固件。下表用 Cortex-M4 指令模拟从 `mfoc_motor_IRQHandler` 入口执行至返回，“写 PWM”计至最后一次写入 TIM1 比较寄存器（含该指令）。模拟 ADC 就绪和 SysTick 寄存器，执行固件自己的时钟、编码器、SMO、PWM 和波形代码。普通拍为 SMO 有效、测速窗未更新的代表输入。栈为该路径入口 SP 至最低 SP 的差，不含硬件异常入栈和抢占。指令数用于同输入前后比较，板上周期待测。
 
@@ -788,7 +788,7 @@ G431 默认以 20 kHz 运行电流环、10 kHz 采集波形。上述普通输入
 
 - [ ] 在第二款芯片实施新适配，并完成最终发布配置的实机矩阵。对应 R2、R3、R5、R7、R8。
 
-在现有 `peripheral/at32f413/` 和 `target/at32f413/` 接入 AT-MOTOR-EVB V1.1。复用 ADC、PWM 和系统驱动，在 `peripheral/at32f413/mfoc/` 提供 Port。新增该目标的 Port 契约测试及 `mfoc/docs/validation/` 下记录。若板级适配遇到算法接口缺口，回到对应工作包解决。
+在 `peripheral/at32f413/` 和 `target/at32f413/` 接入 AT-MOTOR-EVB V1.1。复用 ADC、PWM 和系统驱动，在 `mfoc/port/projects/f413_5562/board/` 提供 Port。新增该目标的 Port 契约测试及 `mfoc/docs/validation/` 下记录。若板级适配遇到算法接口缺口，回到对应工作包解决。
 
 第二芯片至少验证 FIXED 基础闭环、启停/故障、采样/PWM 区间以及一种有效反馈路径；每款板明确公布可运行功能与频率。G431 参考板完成首版全部必做功能，包括 HFI 与四组辨识。算法级 FLOAT/FIXED 回归覆盖四组辨识；发布矩阵中额外声称实机支持的组合必须补对应板上记录。
 

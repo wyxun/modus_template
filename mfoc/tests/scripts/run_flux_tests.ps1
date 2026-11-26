@@ -1,6 +1,7 @@
 $ErrorActionPreference = 'Stop'
 $testsRoot = Split-Path -Parent $PSScriptRoot
 $library = Split-Path -Parent $testsRoot
+$referenceConfig = (Join-Path $library 'port/projects/g431_2804/motor_2804.h').Replace('\', '/')
 $output = Join-Path ([IO.Path]::GetTempPath()) ('mfoc-flux-' + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $output | Out-Null
 $base = @(Get-ChildItem "$library/math/src/*.c", "$library/control/src/*.c" |
@@ -39,6 +40,7 @@ foreach ($numeric in @('FLOAT', 'FIXED')) {
         $exe = Join-Path $output "$numeric-$encoder-$smo-$hfi-$backend.exe"
         & gcc -std=gnu11 -O2 -Wall -Wextra -Werror -ffp-contract=off `
             "-DMFOC_NUMERIC_$numeric=1" -DMFOC_TRIG_BACKEND=1 `
+            "-DMFOC_MOTOR_CONFIG=<$referenceConfig>" `
             -DMFOC_FEEDBACK_ENABLE_FLUX=1 `
             "-DMFOC_FEEDBACK_ENABLE_POSITION=$encoder" `
             "-DMFOC_FEEDBACK_ENABLE_SMO=$smo" `

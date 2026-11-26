@@ -65,7 +65,7 @@ Motor 持有 `mfoc_feedback_t`，板级 Port 持有 Encoder 或 Hall。接入物
 
 ## 编码器和 SMO 的使用方
 
-下表按 G431 已编入 POSITION 和 SMO 的情况列出采样 ISR 的使用方。调用 Feedback 时会读一次 Port 电角度和速度；SMO 有前区间模型电压时推进，无历史时复位。[Feedback 选源](../../motor/src/mfoc_feedback.c) · [G431 位置 Port](../../../peripheral/stm32g431/mfoc/mfoc_port.c)
+下表按 G431 已编入 POSITION 和 SMO 的情况列出采样 ISR 的使用方。调用 Feedback 时会读一次 Port 电角度和速度；SMO 有前区间模型电压时推进，无历史时复位。[Feedback 选源](../../motor/src/mfoc_feedback.c) · [G431 位置 Port](../../port/projects/g431_2804/board/mfoc_port.c)
 
 | 控制阶段 | 编码器角速 | SMO 角速 |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ G431 的 FLOAT 角度波形使用本次 ADC 中断中 Feedback 读取的物理�
 
 1. **RAMP。** 保持结束后按 OpenLoop 角加速，到目标速度才进入 ACQUIRE 并开始接管超时计时。
 2. **ACQUIRE，捕获前。** 观测器须返回 `OK`，强拖角与反馈角的最短角差须在捕获角窗内，且速度差不超过 `abs(speed_ref) × MFOC_START_SPEED_WINDOW`。例如当前配置下，目标为 0.5 PU 时，速度误差最多为 0.05 PU，角差最多为 10°。未满足时继续使用强拖角，直至捕获或超时。
-3. **捕获后。** 记录强拖角相对反馈角的偏移，逐拍将偏移缩至零。偏移归零后 Motor 使速度 PI 跟踪当前 q 轴参考并进入速度模式。速度在窗口内连续满足稳定时长后，退出启动状态。捕获后再丢反馈、接管超时或常规闭环丢反馈，都走 `MFOC_MOTOR_FAULT_FEEDBACK` 关断路径。[接管状态机](../../motor/src/mfoc_sensorless_start.c) · [默认窗口与时限配置](../../config/motors/motor_2804.h)
+3. **捕获后。** 记录强拖角相对反馈角的偏移，逐拍将偏移缩至零。偏移归零后 Motor 使速度 PI 跟踪当前 q 轴参考并进入速度模式。速度在窗口内连续满足稳定时长后，退出启动状态。捕获后再丢反馈、接管超时或常规闭环丢反馈，都走 `MFOC_MOTOR_FAULT_FEEDBACK` 关断路径。[接管状态机](../../motor/src/mfoc_sensorless_start.c) · [默认窗口与时限配置](../../motor/include/mfoc_sensorless_start_config.h)
 
 ## 主机验证
 

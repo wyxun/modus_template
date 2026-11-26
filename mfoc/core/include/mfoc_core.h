@@ -95,13 +95,6 @@ static inline mfoc_scalar_t mfoc_core_GetBus(const mfoc_core_t *c)
     return c->bus_coeff.bus;
 }
 
-#if MFOC_P10_LIMIT
-/** @brief Temporarily halve the voltage radius during an instrumented frame.
- * @param c Valid instance. @param saved Coefficients to restore after Step.
- * @note The bus and its reciprocal still describe the physical DC link. */
-void mfoc_core_BenchHalfVoltageLimit(mfoc_core_t *c,
-                                    mfoc_core_bus_coeff_t *saved);
-#endif
 
 /** @brief Update bus coefficients without changing PI state.
  * @param c Initialized instance. @param bus Finite positive Vdc/Vbase.

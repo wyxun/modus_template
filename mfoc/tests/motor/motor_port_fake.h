@@ -35,6 +35,8 @@ typedef struct {
     mfoc_angle_t held_angle;
     unsigned enables;
     unsigned disables;
+    mfoc_motor_t *step_during_enable;
+    mfoc_result_t step_during_enable_result;
     mfoc_motor_t *step_during_disable;
     mfoc_result_t port_init;
     bool clock_unavailable;

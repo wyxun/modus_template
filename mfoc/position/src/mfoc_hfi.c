@@ -6,7 +6,6 @@
  */
 #include "mfoc_hfi.h"
 #include "mfoc_trig.h"
-#include "../../include/mfoc_trace_internal.h"
 #include <limits.h>
 #include <stddef.h>
 
@@ -220,10 +219,8 @@ static void _mfoc_hfi_Demodulate(mfoc_hfi_t *hfi, const mfoc_ab_t *i,
     if (hfi->carrier == 0U) {
         mfoc_angle_t angle = {0U};
         if (_mfoc_hfi_Axis(hfi, &angle)) {
-            MFOC_TRACE_EVENT(HFI_EIGHTH_OK);
             _mfoc_hfi_Track(hfi, angle);
         } else {
-            MFOC_TRACE_EVENT(HFI_EIGHTH_WEAK);
             hfi->lock_count = 0U;
             if (hfi->state == MFOC_HFI_TRACK) {
                 hfi->state = MFOC_HFI_FAILED;

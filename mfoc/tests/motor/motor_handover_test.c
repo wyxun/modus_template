@@ -1,7 +1,7 @@
 /** @file motor_handover_test.c
  * @brief Sensorless scheduling with injected feedback, no motor plant. */
 #include "mfoc_motor.h"
-#include "mfoc_motor_config.h"
+#include "mfoc_sensorless_start_config.h"
 #include "motor_port_fake.h"
 #include <assert.h>
 #include <math.h>

@@ -5,7 +5,6 @@
  * @date 2026-10-23
  */
 #include "mfoc_smo.h"
-#include "../../include/mfoc_trace_internal.h"
 #include <stddef.h>
 
 #if defined(__clang__)
@@ -165,7 +164,6 @@ void mfoc_smo_Step(mfoc_smo_t *smo, const mfoc_ab_t *i,
             mfoc_angle_diff(out->angle, smo->previous_angle));
         ++smo->speed_count;
         if (smo->speed_count >= smo->c.speed_span) {
-            MFOC_TRACE_EVENT(SMO_WINDOW);
             smo->held_speed = mfoc_mul_wide(smo->angle_sum,
                                             smo->c.speed_scale);
             smo->phase_advance = mfoc_angle_atan2(

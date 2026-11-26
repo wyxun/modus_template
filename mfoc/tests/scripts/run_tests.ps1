@@ -75,7 +75,6 @@ foreach ($backend in @(0, 2, 3, 4, 5)) {
 & (Join-Path $PSScriptRoot 'run_ekf_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_hfi_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_port_tests.ps1')
-& (Join-Path $PSScriptRoot 'run_g431_p10_window_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_at32f413_port_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_app_tests.ps1')
 & (Join-Path $PSScriptRoot 'run_debug_tests.ps1')
